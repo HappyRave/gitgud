@@ -55,6 +55,8 @@
       console.log('[Detail] Selected repo changed from', previousRepo, 'to', selectedRepo);
       selectedFiles = new Set();
       lastSelectedIndex = -1;
+      selectedFileForDiff = null;
+      fileDiff = null;
       previousRepo = selectedRepo;
     }
   });
@@ -130,12 +132,22 @@
       const newSet = new Set(selectedFiles);
       newSet.delete(file.path);
       selectedFiles = newSet;
+      // Clear diff if showing this file
+      if (selectedFileForDiff?.path === file.path) {
+        selectedFileForDiff = null;
+        fileDiff = null;
+      }
     }
   }
 
   async function unstageFile(file: FileStatus) {
     if (selectedRepo) {
       await repoStore.unstageFile(selectedRepo, file.path);
+      // Clear diff if showing this file
+      if (selectedFileForDiff?.path === file.path) {
+        selectedFileForDiff = null;
+        fileDiff = null;
+      }
     }
   }
 
@@ -145,6 +157,8 @@
         await repoStore.stageFile(selectedRepo, file.path);
       }
       selectedFiles = new Set();
+      selectedFileForDiff = null;
+      fileDiff = null;
     }
   }
 
@@ -154,6 +168,8 @@
         await repoStore.stageFile(selectedRepo, filePath);
       }
       selectedFiles = new Set();
+      selectedFileForDiff = null;
+      fileDiff = null;
     }
   }
 
@@ -162,6 +178,8 @@
       await repoStore.commit(selectedRepo, commitMessage);
       commitMessage = '';
       showCommitDialog = false;
+      selectedFileForDiff = null;
+      fileDiff = null;
     }
   }
 
@@ -212,6 +230,8 @@
           const result = await repoStore.push(selectedRepo);
           console.log('Push successful:', result);
         }
+        selectedFileForDiff = null;
+        fileDiff = null;
       } catch (err) {
         const errorStr = String(err);
         // If authentication is required, show credentials dialog
@@ -242,6 +262,8 @@
         
         showCredentialsDialog = false;
         await repoStore.selectRepository(selectedRepo);
+        selectedFileForDiff = null;
+        fileDiff = null;
       } catch (error) {
         console.error('Push with credentials failed:', error);
       }
