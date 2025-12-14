@@ -235,11 +235,12 @@
             username: gitUsername,
             password: gitPassword
           });
-          await repoStore.selectRepository(selectedRepo);
+          await repoStore.refreshRepository(selectedRepo);
         } else {
           // Otherwise try without credentials (works for SSH)
           const result = await repoStore.push(selectedRepo);
           console.log('Push successful:', result);
+          await repoStore.refreshRepository(selectedRepo);
         }
         selectedFileForDiff = null;
         fileDiff = null;
@@ -272,7 +273,7 @@
         }
         
         showCredentialsDialog = false;
-        await repoStore.selectRepository(selectedRepo);
+        await repoStore.refreshRepository(selectedRepo);
         selectedFileForDiff = null;
         fileDiff = null;
       } catch (error) {
