@@ -12,7 +12,7 @@
   import { 
     GitBranch, TrendingUp, TrendingDown, RefreshCw, Download, Upload, 
     FileIcon, Plus, Minus, GitCommit, Clock, User, Hash, AlertCircle,
-    CheckCircle, FileEdit, FileX, FilePlus, X
+    CheckCircle, FileEdit, FileX, FilePlus, X, MoreVertical, Send
   } from 'lucide-svelte';
 
   let { selectedRepo, repoStatus, commits, branches, loading, error } = $derived($repoStore);
@@ -180,6 +180,17 @@
       showCommitDialog = false;
       selectedFileForDiff = null;
       fileDiff = null;
+    }
+  }
+
+  async function handleCommitAndPush() {
+    if (selectedRepo && commitMessage.trim()) {
+      await repoStore.commit(selectedRepo, commitMessage);
+      commitMessage = '';
+      selectedFileForDiff = null;
+      fileDiff = null;
+      // Then push
+      await handlePush();
     }
   }
 
@@ -369,10 +380,6 @@
           <Button variant="outline" size="sm" onclick={handlePush} disabled={loading}>
             <Upload class="h-4 w-4 mr-1" />
             Push
-          </Button>
-          <Button size="sm" onclick={() => showCommitDialog = true} disabled={stagedFiles.length === 0}>
-            <GitCommit class="h-4 w-4 mr-1" />
-            Commit
           </Button>
         </div>
       </div>
@@ -712,6 +719,56 @@
       </div>
     {/if}
   </div>
+
+  <!-- Commit Bar (Bottom) -->
+  {#if stagedFiles.length > 0}
+    <div class="border-t border-border bg-muted/20 p-3 flex-shrink-0">
+      <div class="flex gap-2 items-end">
+        <div class="flex-1">
+          <label for="commit-message" class="text-xs text-muted-foreground mb-1 block">
+            Commit message ({stagedFiles.length} file{stagedFiles.length !== 1 ? 's' : ''} staged)
+          </label>
+          <input
+            id="commit-message"
+            type="text"
+            bind:value={commitMessage}
+            placeholder="Enter commit message..."
+            class="w-full px-3 py-2 rounded-md border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+            onkeydown={(e) => {
+              if (e.key === 'Enter' && commitMessage.trim()) {
+                handleCommit();
+              }
+            }}
+          />
+        </div>
+        <Button 
+          onclick={handleCommit}
+          disabled={!commitMessage.trim()}
+          class="px-4"
+        >
+          <GitCommit class="h-4 w-4 mr-2" />
+          Commit
+        </Button>
+        <Button 
+          onclick={handleCommitAndPush}
+          disabled={!commitMessage.trim() || !repoStatus?.has_remote}
+          variant="secondary"
+          class="px-4"
+        >
+          <Send class="h-4 w-4 mr-2" />
+          Commit & Push
+        </Button>
+        <Button 
+          variant="ghost" 
+          size="icon"
+          class="flex-shrink-0"
+          title="More commit options"
+        >
+          <MoreVertical class="h-4 w-4" />
+        </Button>
+      </div>
+    </div>
+  {/if}
   {/if}
 </div>
 
