@@ -38,6 +38,11 @@ fn get_git_version_cmd() -> Result<GitVersionInfo, String> {
 }
 
 #[tauri::command]
+fn get_file_diff_cmd(path: String, file_path: String, staged: bool) -> Result<FileDiff, String> {
+    get_file_diff(&path, &file_path, staged)
+}
+
+#[tauri::command]
 fn pull_cmd(path: String) -> Result<String, String> {
     pull(&path)
 }
@@ -107,6 +112,7 @@ pub fn run() {
             push_cmd,
             get_git_version_cmd,
             push_with_credentials_cmd,
+            get_file_diff_cmd,
             get_branches_cmd,
             checkout_branch_cmd,
             clone_repository_cmd,

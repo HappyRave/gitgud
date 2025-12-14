@@ -47,6 +47,22 @@ pub struct RepoStatus {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct DiffLine {
+    pub old_line_num: Option<usize>,
+    pub new_line_num: Option<usize>,
+    pub content: String,
+    pub line_type: String, // "add", "delete", "context", "hunk"
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct FileDiff {
+    pub old_content: String,
+    pub new_content: String,
+    pub patch: String,
+    pub lines: Vec<DiffLine>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct BranchInfo {
     pub name: String,
     pub is_current: bool,
@@ -164,7 +180,7 @@ pub fn get_repo_status(repo_path: &str) -> Result<RepoStatus, String> {
     for entry in statuses.iter() {
         let status = entry.status();
         let file_path = entry.path().unwrap_or("").to_string();
-        
+
         println!(
             "[Rust] Raw entry: {} with status bits: {:?}",
             file_path, status
@@ -239,6 +255,130 @@ pub fn get_repo_status(repo_path: &str) -> Result<RepoStatus, String> {
     }
 
     Ok(result)
+}
+
+pub fn get_file_diff(repo_path: &str, file_path: &str, staged: bool) -> Result<FileDiff, String> {
+    let repo = Repository::open(repo_path).map_err(|e| e.to_string())?;
+
+    let mut diff_options = git2::DiffOptions::new();
+    diff_options.pathspec(file_path);
+    diff_options.context_lines(3);
+
+    let diff = if staged {
+        // Diff between HEAD and index (staged changes)
+        let head_tree = repo.head().and_then(|head| head.peel_to_tree()).ok();
+        repo.diff_tree_to_index(head_tree.as_ref(), None, Some(&mut diff_options))
+    } else {
+        // Diff between index and working directory (unstaged changes)
+        repo.diff_index_to_workdir(None, Some(&mut diff_options))
+    }
+    .map_err(|e| e.to_string())?;
+
+    let mut patch = String::new();
+    let mut diff_lines: Vec<DiffLine> = Vec::new();
+    let mut old_line_num: usize = 0;
+    let mut new_line_num: usize = 0;
+
+    diff.print(git2::DiffFormat::Patch, |_delta, hunk, line| {
+        let content = String::from_utf8_lossy(line.content());
+        let origin = line.origin();
+
+        // Handle hunk headers to reset line numbers
+        if let Some(h) = hunk {
+            if origin == 'F' || origin == 'H' {
+                old_line_num = h.old_start() as usize;
+                new_line_num = h.new_start() as usize;
+                diff_lines.push(DiffLine {
+                    old_line_num: None,
+                    new_line_num: None,
+                    content: format!(
+                        "@@ -{},{} +{},{} @@",
+                        h.old_start(),
+                        h.old_lines(),
+                        h.new_start(),
+                        h.new_lines()
+                    ),
+                    line_type: "hunk".to_string(),
+                });
+                return true;
+            }
+        }
+
+        match origin {
+            '+' => {
+                patch.push_str(&format!("+{}", content));
+                diff_lines.push(DiffLine {
+                    old_line_num: None,
+                    new_line_num: Some(new_line_num),
+                    content: content.to_string(),
+                    line_type: "add".to_string(),
+                });
+                new_line_num += 1;
+            }
+            '-' => {
+                patch.push_str(&format!("-{}", content));
+                diff_lines.push(DiffLine {
+                    old_line_num: Some(old_line_num),
+                    new_line_num: None,
+                    content: content.to_string(),
+                    line_type: "delete".to_string(),
+                });
+                old_line_num += 1;
+            }
+            ' ' => {
+                patch.push_str(&format!(" {}", content));
+                diff_lines.push(DiffLine {
+                    old_line_num: Some(old_line_num),
+                    new_line_num: Some(new_line_num),
+                    content: content.to_string(),
+                    line_type: "context".to_string(),
+                });
+                old_line_num += 1;
+                new_line_num += 1;
+            }
+            _ => {
+                patch.push_str(&content);
+            }
+        }
+        true
+    })
+    .map_err(|e| e.to_string())?;
+
+    // Get old and new content
+    let file_full_path = Path::new(repo_path).join(file_path);
+    let new_content = if file_full_path.exists() {
+        std::fs::read_to_string(&file_full_path).unwrap_or_default()
+    } else {
+        String::new()
+    };
+
+    let old_content = if staged {
+        // Get content from HEAD
+        repo.head()
+            .and_then(|head| head.peel_to_tree())
+            .and_then(|tree| tree.get_path(Path::new(file_path)))
+            .and_then(|entry| repo.find_blob(entry.id()))
+            .map(|blob| String::from_utf8_lossy(blob.content()).to_string())
+            .unwrap_or_default()
+    } else {
+        // Get content from index
+        repo.index()
+            .and_then(|index| {
+                index
+                    .get_path(Path::new(file_path), 0)
+                    .ok_or_else(|| git2::Error::from_str("File not in index"))
+            })
+            .and_then(|entry| repo.find_blob(entry.id))
+            .map(|blob| String::from_utf8_lossy(blob.content()).to_string())
+            .unwrap_or_default()
+    };
+
+    Ok(FileDiff {
+        old_content,
+        new_content,
+        patch,
+        lines: diff_lines,
+    })
 }
 
 pub fn stage_file(repo_path: &str, file_path: &str) -> Result<(), String> {

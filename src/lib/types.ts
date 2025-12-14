@@ -41,3 +41,17 @@ export interface GitVersionInfo {
   version: string;
   path: string;
 }
+
+export interface DiffLine {
+  old_line_num: number | null;
+  new_line_num: number | null;
+  content: string;
+  line_type: 'add' | 'delete' | 'context' | 'hunk';
+}
+
+export interface FileDiff {
+  old_content: string;
+  new_content: string;
+  patch: string;
+  lines: DiffLine[];
+}

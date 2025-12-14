@@ -1,6 +1,6 @@
 <script lang="ts">
   import { repoStore } from '$lib/stores/repoStore';
-  import type { FileStatus } from '$lib/types';
+  import type { FileStatus, FileDiff } from '$lib/types';
   import { invoke } from '@tauri-apps/api/core';
   import { Store } from '@tauri-apps/plugin-store';
   import { Button } from '$lib/components/ui/button';
@@ -12,7 +12,7 @@
   import { 
     GitBranch, TrendingUp, TrendingDown, RefreshCw, Download, Upload, 
     FileIcon, Plus, Minus, GitCommit, Clock, User, Hash, AlertCircle,
-    CheckCircle, FileEdit, FileX, FilePlus
+    CheckCircle, FileEdit, FileX, FilePlus, X
   } from 'lucide-svelte';
 
   let { selectedRepo, repoStatus, commits, branches, loading, error } = $derived($repoStore);
@@ -25,6 +25,9 @@
   let gitUsername = $state('');
   let gitPassword = $state('');
   let credentialStore: Store | null = $state(null);
+  let selectedFileForDiff: FileStatus | null = $state(null);
+  let fileDiff: FileDiff | null = $state(null);
+  let loadingDiff = $state(false);
   
   // Initialize credential store
   $effect(() => {
@@ -90,11 +93,35 @@
       selectedFiles = newSet;
       console.log('[FileClick] New selection size:', selectedFiles.size);
     } else {
-      // Normal click: single selection
+      // Normal click: single selection and show diff
       console.log('[FileClick] Single selection:', file.path);
       selectedFiles = new Set([file.path]);
       lastSelectedIndex = index;
+      loadFileDiff(file);
     }
+  }
+
+  async function loadFileDiff(file: FileStatus) {
+    if (!selectedRepo) return;
+    loadingDiff = true;
+    selectedFileForDiff = file;
+    try {
+      fileDiff = await invoke<FileDiff>('get_file_diff_cmd', {
+        path: selectedRepo,
+        filePath: file.path,
+        staged: file.staged
+      });
+    } catch (err) {
+      console.error('Failed to load diff:', err);
+      fileDiff = null;
+    } finally {
+      loadingDiff = false;
+    }
+  }
+
+  function closeDiffPane() {
+    selectedFileForDiff = null;
+    fileDiff = null;
   }
 
   async function stageFile(file: FileStatus) {
@@ -359,21 +386,22 @@
     {/if}
 
     <!-- Tabs -->
-    <Tabs.Root value={activeTab} onValueChange={(v) => activeTab = (v as typeof activeTab) || 'changes'} class="flex-1 flex flex-col min-h-0">
-      <Tabs.List class="w-full justify-start border-b px-4 flex-shrink-0">
-        <Tabs.Trigger value="changes">
-          Changes {#if repoStatus?.files.length}{`(${repoStatus.files.length})`}{/if}
-        </Tabs.Trigger>
-        <Tabs.Trigger value="history">
-          History {#if commits.length}{`(${commits.length})`}{/if}
-        </Tabs.Trigger>
-        <Tabs.Trigger value="branches">
-          Branches {#if branches.length}{`(${branches.length})`}{/if}
-        </Tabs.Trigger>
-      </Tabs.List>
+    <div class="flex-1 flex overflow-hidden">
+      <Tabs.Root value={activeTab} onValueChange={(v) => activeTab = (v as typeof activeTab) || 'changes'} class="flex-1 flex flex-col min-h-0">
+        <Tabs.List class="w-full justify-start border-b px-4 flex-shrink-0">
+          <Tabs.Trigger value="changes">
+            Changes {#if repoStatus?.files.length}{`(${repoStatus.files.length})`}{/if}
+          </Tabs.Trigger>
+          <Tabs.Trigger value="history">
+            History {#if commits.length}{`(${commits.length})`}{/if}
+          </Tabs.Trigger>
+          <Tabs.Trigger value="branches">
+            Branches {#if branches.length}{`(${branches.length})`}{/if}
+          </Tabs.Trigger>
+        </Tabs.List>
 
-      <ScrollArea class="flex-1">
-        <div class="p-4">
+        <ScrollArea class="flex-1">
+          <div class="p-4">
           <!-- Changes Tab -->
           <Tabs.Content value="changes" class="mt-0">
             {#if stagedFiles.length === 0 && unstagedFiles.length === 0}
@@ -590,6 +618,78 @@
         </div>
       </ScrollArea>
     </Tabs.Root>
+
+    <!-- Diff Pane -->
+    {#if selectedFileForDiff && fileDiff}
+      <div class="w-1/2 border-l border-border flex flex-col overflow-hidden">
+        <div class="p-3 border-b border-border flex items-center justify-between bg-muted/30 flex-shrink-0">
+          <div class="flex items-center gap-2">
+            <FileEdit class="h-4 w-4" />
+            <span class="font-medium text-sm">{selectedFileForDiff.path}</span>
+            <Badge variant={selectedFileForDiff.staged ? "default" : "secondary"} class="text-xs">
+              {selectedFileForDiff.status}
+            </Badge>
+          </div>
+          <Button variant="ghost" size="icon" class="h-7 w-7" onclick={closeDiffPane}>
+            <X class="h-4 w-4" />
+          </Button>
+        </div>
+        
+        <div class="flex-1 overflow-y-auto bg-background">
+          {#if loadingDiff}
+            <div class="flex items-center justify-center h-full">
+              <span class="text-sm text-muted-foreground">Loading diff...</span>
+            </div>
+          {:else if fileDiff.lines && fileDiff.lines.length > 0}
+            <div class="font-mono text-xs">
+              {#each fileDiff.lines as line}
+                {#if line.line_type === 'hunk'}
+                  <div class="bg-muted/50 px-2 py-1 text-muted-foreground border-y border-border sticky top-0">
+                    {line.content}
+                  </div>
+                {:else}
+                  <div class="flex hover:bg-muted/30 {
+                    line.line_type === 'add' ? 'bg-green-50 dark:bg-green-950/30' :
+                    line.line_type === 'delete' ? 'bg-red-50 dark:bg-red-950/30' :
+                    ''
+                  }">
+                    <!-- Old line number -->
+                    <div class="w-12 flex-shrink-0 text-right px-2 py-0.5 select-none border-r border-border/50 text-muted-foreground/60 {
+                      line.line_type === 'add' ? 'bg-green-100 dark:bg-green-950/50' :
+                      line.line_type === 'delete' ? 'bg-red-100 dark:bg-red-950/50' :
+                      'bg-muted/20'
+                    }">
+                      {line.old_line_num ?? ''}
+                    </div>
+                    <!-- New line number -->
+                    <div class="w-12 flex-shrink-0 text-right px-2 py-0.5 select-none border-r border-border text-muted-foreground/60 {
+                      line.line_type === 'add' ? 'bg-green-100 dark:bg-green-950/50' :
+                      line.line_type === 'delete' ? 'bg-red-100 dark:bg-red-950/50' :
+                      'bg-muted/20'
+                    }">
+                      {line.new_line_num ?? ''}
+                    </div>
+                    <!-- Content -->
+                    <div class="flex-1 px-3 py-0.5 whitespace-pre-wrap break-all {
+                      line.line_type === 'add' ? 'text-green-700 dark:text-green-400' :
+                      line.line_type === 'delete' ? 'text-red-700 dark:text-red-400' :
+                      'text-foreground'
+                    }">
+                      {line.content}
+                    </div>
+                  </div>
+                {/if}
+              {/each}
+            </div>
+          {:else}
+            <div class="flex items-center justify-center h-full">
+              <span class="text-sm text-muted-foreground">No changes to display</span>
+            </div>
+          {/if}
+        </div>
+      </div>
+    {/if}
+  </div>
   {/if}
 </div>
 
