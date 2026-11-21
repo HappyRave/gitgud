@@ -6,6 +6,8 @@ gitgud is a desktop Git GUI. The repo was wiped on 2026-11-21 for a fresh start;
 prototype is still in git history (`5f1257d` and before). **Everything below is the plan — not
 scaffolded yet.** Update this file as pieces land.
 
+The approved product spec is `docs/spec.md` (2026-11-21); design verdicts are in `docs/lab/decisions.md`.
+
 ## Stack
 
 - Tauri 2 shell, Rust backend, SvelteKit frontend (Svelte 5, `adapter-static`), pnpm.

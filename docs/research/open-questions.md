@@ -9,7 +9,7 @@ pick, the pick is kept for the record.
 | # | Question | Answer (decided 2026-11-21) | Source |
 |---|---|---|---|
 | Q1 | The name: `zeuros/gitgud` (Git GUI, 2024, 18★) launched on HN 2026-10-17 with "undo any action". Rename? | **Keep "gitgud" for good**, accepting the clash. (Claude's pick was a working name until going public.) | [HN](https://news.ycombinator.com/item?id=50132140), [repo](https://github.com/zeuros/gitgud) |
-| Q2 | Which host do your Unity repos use? | **Bitbucket and GitHub.** Lock features target both. `open`: confirm Bitbucket's LFS lock API support before the spec relies on it. | gamedev.md §2.9 |
+| Q2 | Which host do your Unity repos use? | **Bitbucket and GitHub.** Follow-up 2026-11-21: the Bitbucket repos are on **Bitbucket Cloud** (Max: "Bitbucket Cloud"), which has no LFS lock API (gamedev.md §2.9), so lock features work on the GitHub repos only (spec O1). | gamedev.md §2.9 |
 | Q3 | Solo, or with artists/designers? | **Solo first, artists later** (artist mode after v1). | gamedev.md §6 |
 | Q4 | Lore (Epic, 2026): ignore, or keep `gitgud-core` VCS-agnostic? | **Ignore, Git-only core.** | gamedev.md §2.5 |
 | Q5 | Unity editor package in v1? | **After v1.** v1 = locks inside gitgud only. | gamedev.md T13 |
