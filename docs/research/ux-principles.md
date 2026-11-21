@@ -291,7 +291,7 @@ Labels: `fact` (sourced) · `Claude's pick` · `open`.
 
 - `open` — **Name clash:** a "GitGud" open-source Git GUI with undo for any action was posted on HN on
   2026-10-17 ([HN](https://news.ycombinator.com/item?id=50132140), repo `zeuros/gitgud`); a commenter
-  lists other existing gitgud projects. Max should decide whether to rename before going public.
+  lists other existing gitgud projects. Decided 2026-11-21 (Q1): keep the name gitgud.
 - `open` — Fluent 2 has no published Compact token set for web; WinUI Compact numbers were not
   extracted. Arc, Figma and Raycast's keyboard docs were not fetched in this pass.
 - Apple HIG content came from its JSON data endpoint; Atlassian Sourcetree threads are 2013–2019 and

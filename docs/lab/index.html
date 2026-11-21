@@ -1,0 +1,1162 @@
+<title>gitgud Lab</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: a lab notebook column; each variant = label + idea + a scaled 1280x760 app mock + trade-offs; states drawn on the pick; open questions last */
+:root {
+  --bg: #f4f5f8; --panel: #ffffff; --line: #dde1e8; --fg: #18202c; --muted: #5a6577;
+  --accent: #e0561f; --accent-ink: #ffffff; --pick: #efe6ff; --pick-ink: #5b2fa6; --open: #fff1d6; --open-ink: #8a5a00;
+  /* app mock tokens */
+  --a-bg: #f7f8fa; --a-panel: #ffffff; --a-line: #e3e6ec; --a-fg: #1b2330; --a-muted: #687386; --a-sel: #e4edfb; --a-hover: #f0f2f6;
+  --a-add: #e3f5ea; --a-add-ink: #1d6b3f; --a-del: #fbe6e4; --a-warn: #fff0d9; --a-warn-ink: #8a5300; --a-bad: #fde4df; --a-bad-ink: #a32f17;
+  --l0: #0072b2; --l1: #d55e00; --l2: #009e73; --l3: #cc79a7; --l4: #e69f00;
+  --display: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
+  --body: "Inter", "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", Consolas, "Courier New", monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #10141b; --panel: #171d26; --line: #29313d; --fg: #e4e8ef; --muted: #96a0b0;
+  --accent: #ff7a45; --accent-ink: #1a0d06; --pick: #2c2141; --pick-ink: #cdb4ff; --open: #3a2d12; --open-ink: #f5c86a;
+  --a-bg: #14181f; --a-panel: #1a1f28; --a-line: #2a313c; --a-fg: #dde2ea; --a-muted: #8b95a5; --a-sel: #22324b; --a-hover: #20262f;
+  --a-add: #173326; --a-add-ink: #7fd9a6; --a-del: #3a1f1c; --a-warn: #3a2b12; --a-warn-ink: #f2c46a; --a-bad: #3d1f18; --a-bad-ink: #ff9d80;
+  --l0: #56b4e9; --l1: #ff8c42; --l2: #2fd3a0; --l3: #e59bc8; --l4: #f0c040; color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #10141b; --panel: #171d26; --line: #29313d; --fg: #e4e8ef; --muted: #96a0b0;
+  --accent: #ff7a45; --accent-ink: #1a0d06; --pick: #2c2141; --pick-ink: #cdb4ff; --open: #3a2d12; --open-ink: #f5c86a;
+  --a-bg: #14181f; --a-panel: #1a1f28; --a-line: #2a313c; --a-fg: #dde2ea; --a-muted: #8b95a5; --a-sel: #22324b; --a-hover: #20262f;
+  --a-add: #173326; --a-add-ink: #7fd9a6; --a-del: #3a1f1c; --a-warn: #3a2b12; --a-warn-ink: #f2c46a; --a-bad: #3d1f18; --a-bad-ink: #ff9d80;
+  --l0: #56b4e9; --l1: #ff8c42; --l2: #2fd3a0; --l3: #e59bc8; --l4: #f0c040; color-scheme: dark; }
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font: 15px/1.55 var(--body); }
+.wrap { max-width: 1240px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 28px 72px; }
+h1, h2, h3 { font-family: var(--display); letter-spacing: -.01em; text-wrap: balance; }
+h1 { font-size: clamp(28px, 4vw, 40px); line-height: 1.1; margin: 4px 0 10px; }
+h2 { font-size: 24px; margin: 0; }
+h3 { font-size: 17px; margin: 0; }
+p { margin: 0; max-width: 72ch; }
+.eyebrow { font: 600 11.5px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.tag { display: inline-block; font: 600 11px var(--mono); padding: 2px 7px; border-radius: 4px; white-space: nowrap; vertical-align: 1px; }
+.t-pick { background: var(--pick); color: var(--pick-ink); }
+.t-prop { background: var(--open); color: var(--open-ink); }
+.t-dec { background: var(--panel); color: var(--muted); border: 1px solid var(--line); }
+header.top { display: grid; gap: 10px; padding-bottom: 22px; border-bottom: 1px solid var(--line); }
+header.top p { color: var(--muted); }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 14px; font-size: 13px; color: var(--muted); align-items: center; }
+.toc { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.toc a { font: 500 13px var(--body); color: var(--fg); text-decoration: none; border: 1px solid var(--line); background: var(--panel); border-radius: 999px; padding: 3px 11px; }
+.toc a:hover { border-color: var(--fg); }
+.toc a.pick { border-color: var(--pick-ink); color: var(--pick-ink); }
+section.v { display: grid; gap: 14px; padding-block: 34px 8px; }
+.vhead { display: flex; flex-wrap: wrap; gap: 10px; align-items: baseline; }
+.vhead .lab { font: 700 15px var(--mono); color: var(--accent); }
+.idea { color: var(--muted); }
+.cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 28px; font-size: 14px; }
+.cols h4 { margin: 0 0 4px; font: 600 11.5px var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.cols ul { margin: 0; padding-left: 18px; display: grid; gap: 3px; }
+.pickline { background: var(--pick); color: var(--pick-ink); border-radius: 8px; padding: 10px 14px; font-size: 14px; }
+.states { display: grid; grid-template-columns: minmax(0, 1fr); gap: 32px; }
+.state { display: grid; gap: 8px; min-width: 0; }
+.state p { font-size: 13.5px; color: var(--muted); }
+ol.q { margin: 0; padding-left: 22px; display: grid; gap: 8px; max-width: 80ch; }
+ol.q li::marker { font: 600 13px var(--mono); color: var(--accent); }
+.note { font-size: 13px; color: var(--muted); }
+.round { display: grid; gap: 8px; padding-top: 44px; margin-top: 20px; border-top: 2px solid var(--fg); }
+h2.big { font-size: clamp(24px, 3.2vw, 32px); }
+.idea code, .state p code, ol.q code { font: 12.5px var(--mono); background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+/* round 2 additions */
+.row.faded { opacity: .45; }
+.row.ghost .t { font-style: italic; }
+.ref.after { border-style: dashed; }
+.tg { font: 10px var(--mono); color: var(--a-muted); border: 1px dashed var(--a-line); border-radius: 3px; padding: 0 4px; flex: none; }
+.banner.plan { background: var(--a-sel); color: var(--a-fg); }
+.row .sub .t.edit { flex: 1 1 auto; min-width: 170px; }
+.edit { border: 1.5px solid var(--l0); border-radius: 4px; padding: 1px 6px; background: var(--a-panel); color: var(--a-fg); font-style: normal; }
+.plan .pr { display: grid; grid-template-columns: 14px 74px 58px minmax(0, 1fr) auto; gap: 8px; align-items: center; min-height: 30px; padding: 3px 10px; border-bottom: 1px solid var(--a-line); }
+.plan .pr.sel { background: var(--a-sel); }
+.plan .grip { color: var(--a-muted); letter-spacing: -2px; }
+.act { display: inline-flex; gap: 5px; align-items: center; font: 600 11px var(--body); padding: 2px 6px; border-radius: 4px; border: 1px solid var(--a-line); }
+.act b { font: 600 10px var(--mono); border-radius: 3px; padding: 0 4px; background: var(--a-hover); }
+.act.p { color: var(--a-fg); } .act.r { color: var(--l0); border-color: currentColor; } .act.f, .act.s { color: var(--l4); border-color: currentColor; } .act.d { color: var(--a-bad-ink); border-color: currentColor; }
+.pred { font-size: 11px; white-space: nowrap; }
+.pred.ok { color: var(--a-add-ink); } .pred.bad { color: var(--a-bad-ink); font-weight: 600; }
+.plan .sub2 { grid-column: 3 / -1; font-size: 11px; color: var(--a-muted); }
+.plan .msg { grid-column: 3 / -1; border: 1.5px solid var(--l0); border-radius: 5px; padding: 6px 8px; font: 11.5px/1.5 var(--mono); white-space: pre; background: var(--a-panel); }
+.sum { margin-top: auto; border-top: 1px solid var(--a-line); padding: 8px 10px; display: grid; gap: 6px; flex: none; }
+.sum .ln2 { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.legend2 { display: flex; gap: 10px; font: 10.5px var(--mono); color: var(--a-muted); text-transform: none; letter-spacing: 0; font-weight: 400; }
+.overlay { position: absolute; inset: 0; background: color-mix(in srgb, #000 42%, transparent); display: grid; place-items: center; }
+.modal { width: 780px; height: 560px; background: var(--a-panel); border: 1px solid var(--a-line); border-radius: 10px; box-shadow: 0 18px 60px rgba(0,0,0,.35); display: flex; flex-direction: column; overflow: hidden; }
+.drag { position: absolute; left: 330px; top: 262px; width: 360px; height: 24px; display: flex; align-items: center; gap: 6px; padding: 0 10px; background: var(--a-panel); border: 1px solid var(--l4); border-radius: 5px; box-shadow: 0 6px 18px rgba(0,0,0,.25); transform: rotate(-1.2deg); }
+.droplbl { position: absolute; left: 520px; top: 292px; font: 600 11px var(--body); color: var(--a-fg); background: var(--a-warn); padding: 2px 8px; border-radius: 4px; }
+.row.drop { box-shadow: inset 0 0 0 2px var(--l4); }
+/* round 3 additions */
+.tabs { display: flex; align-items: stretch; gap: 1px; padding: 0 6px; background: var(--a-bg); border-bottom: 1px solid var(--a-line); overflow: hidden; }
+.tab { display: flex; align-items: center; gap: 6px; padding: 0 10px; max-width: 190px; min-width: 0; color: var(--a-muted); white-space: nowrap; border-right: 1px solid var(--a-line); }
+.tab .nm { overflow: hidden; text-overflow: ellipsis; }
+.tab.on { background: var(--a-panel); color: var(--a-fg); font-weight: 600; box-shadow: inset 0 2px 0 var(--l0); }
+.tab .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--l4); flex: none; }
+.tab.lib { font-weight: 600; }
+.lib .lr { display: grid; grid-template-columns: 16px 170px minmax(0, 1fr) 150px 64px 58px 54px 62px 26px; gap: 8px; align-items: center; height: 24px; padding: 0 12px; white-space: nowrap; }
+.lib .lr > * { overflow: hidden; text-overflow: ellipsis; }
+.lib .lr.hd { height: 26px; font: 600 10.5px var(--mono); letter-spacing: .04em; text-transform: uppercase; color: var(--a-muted); border-bottom: 1px solid var(--a-line); background: var(--a-bg); }
+.lib .lr.sel { background: var(--a-sel); }
+.lib .lr.miss { opacity: .55; }
+.lib .lr .nm { font-weight: 600; }
+.lib .lr .pa, .lib .lr .la { color: var(--a-muted); font-size: 11px; }
+.lib .lr .ch { color: var(--l4); font: 11px var(--mono); }
+.lib .lr .ab2 { font: 11px var(--mono); color: var(--a-muted); }
+.lib .gh { padding: 4px 12px; font: 600 10.5px var(--mono); letter-spacing: .04em; text-transform: uppercase; color: var(--a-muted); background: var(--a-bg); border-bottom: 1px solid var(--a-line); display: flex; gap: 8px; }
+.host { font: 600 9px var(--mono); border-radius: 3px; padding: 0 3px; border: 1px solid var(--a-line); color: var(--a-muted); text-align: center; }
+.search { display: flex; align-items: center; gap: 8px; height: 30px; margin: 8px 12px; padding: 0 10px; border: 1.5px solid var(--l0); border-radius: 6px; background: var(--a-panel); }
+.search .q { flex: 1; color: var(--a-fg); }
+.search .ph2 { color: var(--a-muted); flex: 1; }
+.pal { position: absolute; left: 340px; top: 110px; width: 600px; background: var(--a-panel); border: 1px solid var(--a-line); border-radius: 10px; box-shadow: 0 18px 60px rgba(0,0,0,.35); overflow: hidden; }
+.pal .pr2 { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 8px; align-items: center; height: 30px; padding: 0 12px; }
+.pal .pr2.sel { background: var(--a-sel); }
+.pal .pr2 .pf { color: var(--a-muted); }
+.pal .pr2 .tg2 { font: 10px var(--mono); color: var(--l3); margin-left: 6px; }
+/* round 4 additions */
+.ft .fh, .ft .fr2 { display: grid; grid-template-columns: 18px minmax(0, 1.6fr) 84px 84px 84px minmax(0, 1fr); gap: 8px; align-items: center; padding: 0 12px; white-space: nowrap; }
+.ft .fh { height: 26px; font: 600 10.5px var(--mono); letter-spacing: .04em; text-transform: uppercase; color: var(--a-muted); border-bottom: 1px solid var(--a-line); background: var(--a-bg); }
+.ft .fr2 { min-height: 30px; border-bottom: 1px solid var(--a-line); }
+.ft .fr2 > * { overflow: hidden; text-overflow: ellipsis; }
+.ft .fr2.sel { background: var(--a-sel); }
+.ft .fr2.auto { color: var(--a-muted); min-height: 24px; }
+.ft .path b { color: var(--a-fg); }
+.ft .v { font: 11px var(--mono); }
+.ft .v.y { color: var(--l0); } .ft .v.t { color: var(--l1); }
+.ft .v.x { text-decoration: line-through; opacity: .6; }
+.picks { display: flex; gap: 4px; }
+.picks .btn { height: 22px; padding: 0 7px; }
+.picks .btn.on { background: var(--a-sel); border-color: var(--l0); }
+.kind { font: 600 9.5px var(--mono); padding: 0 4px; border-radius: 3px; flex: none; }
+.cf .fr .r .badge { margin-left: 4px; }
+.tree2 .it { height: 22px; }
+.tree2 .it.ch { color: var(--l4); font-weight: 600; }
+.tree2 .it.add { color: var(--a-add-ink); }
+.big3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; padding: 18px; }
+.big3 .cd { border: 1px solid var(--a-line); border-radius: 8px; padding: 14px; display: grid; gap: 8px; background: var(--a-panel); }
+.big3 .cd.y { border-color: var(--l0); box-shadow: 0 0 0 1px var(--l0); }
+.big3 .cd b.v2 { font: 600 26px var(--mono); }
+.prog { height: 6px; border-radius: 3px; background: var(--a-line); overflow: hidden; }
+.prog i { display: block; height: 100%; background: var(--l2); }
+.unity { font: 600 9px var(--mono); color: var(--a-muted); border: 1px solid var(--a-line); border-radius: 3px; padding: 0 3px; }
+
+/* --- mock frame: fixed design size scaled to the column --- */
+.frame { width: 100%; max-width: 100%; aspect-ratio: 1280 / 760; position: relative; overflow: hidden; border-radius: 10px; border: 1px solid var(--line); box-shadow: 0 8px 28px color-mix(in srgb, #000 14%, transparent); background: var(--a-bg); }
+.frame > .app { position: absolute; left: 0; top: 0; width: 1280px; height: 760px; transform-origin: 0 0; }
+
+/* --- app mock --- */
+.app { background: var(--a-bg); color: var(--a-fg); font: 12px/1.35 var(--body); display: grid; grid-template-rows: 30px 38px auto 1fr 24px; }
+.app .mono { font-family: var(--mono); }
+.win { display: flex; align-items: center; gap: 8px; padding: 0 10px; border-bottom: 1px solid var(--a-line); background: var(--a-panel); color: var(--a-muted); font-size: 11.5px; }
+.win b { color: var(--a-fg); font-weight: 600; }
+.win .dots { margin-left: auto; letter-spacing: 10px; }
+.tb { display: flex; align-items: center; gap: 6px; padding: 0 10px; border-bottom: 1px solid var(--a-line); background: var(--a-panel); min-width: 0; }
+.pill { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 9px; border: 1px solid var(--a-line); border-radius: 6px; background: var(--a-bg); white-space: nowrap; color: var(--a-fg); }
+.pill .k { font: 10.5px var(--mono); color: var(--a-muted); border: 1px solid var(--a-line); border-radius: 3px; padding: 0 4px; background: var(--a-panel); }
+.pill.br { font-weight: 600; max-width: 330px; overflow: hidden; }
+.pill.br .nm { overflow: hidden; text-overflow: ellipsis; }
+.pill.warn { background: var(--a-warn); color: var(--a-warn-ink); border-color: transparent; }
+.pill.undo { color: var(--a-fg); }
+.pill.cmd { min-width: 230px; color: var(--a-muted); }
+.ab { color: var(--a-muted); font: 11px var(--mono); }
+.sp { flex: 1; }
+.banner { display: flex; align-items: center; gap: 10px; padding: 6px 12px; font-weight: 500; border-bottom: 1px solid var(--a-line); }
+.banner.rebase { background: var(--a-warn); color: var(--a-warn-ink); }
+.banner .btn { height: 22px; }
+.body { display: grid; min-height: 0; overflow: hidden; }
+.pane { background: var(--a-panel); border-right: 1px solid var(--a-line); min-width: 0; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+.pane:last-child { border-right: 0; }
+.ph { display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 10px; border-bottom: 1px solid var(--a-line); font: 600 11px var(--mono); letter-spacing: .05em; text-transform: uppercase; color: var(--a-muted); flex: none; }
+.ph .ct { font-weight: 400; }
+.ph .r { margin-left: auto; text-transform: none; letter-spacing: 0; font-weight: 400; }
+.strip { display: flex; align-items: center; gap: 14px; padding: 0 10px; border-top: 1px solid var(--a-line); background: var(--a-panel); color: var(--a-muted); font-size: 11px; white-space: nowrap; overflow: hidden; }
+.strip .bar { width: 120px; height: 5px; border-radius: 3px; background: var(--a-line); overflow: hidden; }
+.strip .bar i { display: block; height: 100%; width: 35%; background: var(--l0); }
+.btn { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 9px; border-radius: 5px; border: 1px solid var(--a-line); background: var(--a-panel); color: var(--a-fg); font: 500 11.5px var(--body); white-space: nowrap; }
+.btn.pri { background: var(--l0); border-color: var(--l0); color: #fff; }
+.btn.bad { color: var(--a-bad-ink); }
+.btn .k { font: 10px var(--mono); opacity: .7; }
+
+/* sidebar */
+.side .sec { padding: 6px 0 4px; }
+.side .sh { padding: 3px 10px; font: 600 10.5px var(--mono); letter-spacing: .05em; text-transform: uppercase; color: var(--a-muted); display: flex; gap: 6px; }
+.side .sh .ct { margin-left: auto; font-weight: 400; }
+.side .it { display: flex; align-items: center; gap: 6px; height: 22px; padding: 0 10px 0 calc(10px + var(--ind, 0) * 14px); white-space: nowrap; overflow: hidden; }
+.side .it .r { margin-left: auto; color: var(--a-muted); font-size: 11px; }
+.side .it.cur { font-weight: 600; }
+.side .it.sel { background: var(--a-sel); }
+.side .it .ic { width: 12px; text-align: center; color: var(--a-muted); flex: none; }
+
+/* graph */
+.rows { overflow: hidden; flex: 1; }
+.row { display: grid; grid-template-columns: 82px minmax(0, 1fr) 70px 46px 54px; align-items: center; height: 24px; padding-right: 10px; white-space: nowrap; }
+.row.sel { background: var(--a-sel); }
+.row svg { display: block; }
+.row .sub { overflow: hidden; text-overflow: ellipsis; display: flex; gap: 5px; align-items: center; min-width: 0; }
+.row .sub .t { overflow: hidden; text-overflow: ellipsis; }
+.row .au, .row .dt, .row .h { color: var(--a-muted); overflow: hidden; text-overflow: ellipsis; font-size: 11px; }
+.row .h { font-family: var(--mono); text-align: right; }
+.row.wip .t { font-style: italic; color: var(--a-muted); }
+.row.op { height: 20px; }
+.row.op .t { font-size: 11px; color: var(--a-muted); }
+.ref { font: 600 10.5px var(--mono); padding: 1px 5px; border-radius: 3px; border: 1px solid currentColor; flex: none; max-width: 190px; overflow: hidden; text-overflow: ellipsis; }
+.ref.head { color: #fff; border-color: transparent; }
+.ref.rm { opacity: .75; font-weight: 400; }
+.narrow .row { grid-template-columns: 80px minmax(0, 1fr) 40px; }
+.narrow .row .au, .narrow .row .h { display: none; }
+
+/* changes + diff */
+.flist .fr { display: flex; align-items: center; gap: 6px; height: 22px; padding: 0 10px; white-space: nowrap; overflow: hidden; }
+.flist .fr.sel { background: var(--a-sel); }
+.st { font: 600 10.5px var(--mono); width: 14px; text-align: center; flex: none; }
+.st.M { color: var(--l4); } .st.A { color: var(--l2); } .st.U { color: var(--a-bad-ink); }
+.fr .p { color: var(--a-muted); overflow: hidden; text-overflow: ellipsis; }
+.fr .n { flex: none; }
+.badge { font: 600 9.5px var(--mono); padding: 0 4px; border-radius: 3px; background: var(--a-hover); color: var(--a-muted); border: 1px solid var(--a-line); flex: none; }
+.badge.lock { background: var(--a-bad); color: var(--a-bad-ink); border-color: transparent; }
+.badge.mine { background: var(--a-add); color: var(--a-add-ink); border-color: transparent; }
+.badge.warn { background: var(--a-warn); color: var(--a-warn-ink); border-color: transparent; }
+.fr .r { margin-left: auto; color: var(--a-muted); font: 10.5px var(--mono); }
+.grp { display: flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; font: 600 10.5px var(--mono); letter-spacing: .05em; text-transform: uppercase; color: var(--a-muted); background: var(--a-bg); border-bottom: 1px solid var(--a-line); border-top: 1px solid var(--a-line); }
+.grp .r { margin-left: auto; text-transform: none; letter-spacing: 0; font-weight: 400; }
+.diff { font: 11.5px/18px var(--mono); overflow: hidden; flex: 1; }
+.dh { display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 10px; background: var(--a-bg); border-bottom: 1px solid var(--a-line); font: 500 11.5px var(--body); }
+.dh .p { color: var(--a-muted); }
+.hk { display: flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; background: var(--a-hover); color: var(--a-muted); border-block: 1px solid var(--a-line); }
+.hk .sp { flex: 1; }
+.ln { display: grid; grid-template-columns: 34px 34px 14px minmax(0, 1fr); white-space: pre; }
+.ln span { color: var(--a-muted); text-align: right; padding-right: 6px; }
+.ln .g { text-align: center; padding: 0; }
+.ln.a { background: var(--a-add); } .ln.a .g { color: var(--a-add-ink); }
+.ln code { font: inherit; overflow: hidden; }
+.kw { color: var(--l3); } .cm { color: var(--a-muted); font-style: italic; } .ty { color: var(--l0); }
+.cbox { border-top: 1px solid var(--a-line); padding: 8px 10px; display: grid; gap: 6px; flex: none; }
+.cbox .in { border: 1px solid var(--a-line); border-radius: 5px; padding: 6px 8px; color: var(--a-muted); background: var(--a-bg); }
+.cbox .in.f { color: var(--a-fg); }
+.cbox .bt { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.cbox .bt .ab { flex-basis: 100%; }
+.cbox .bt .sp { flex: 1; }
+.olog .o { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: 6px; align-items: center; height: 24px; padding: 0 10px; white-space: nowrap; }
+.olog .o .tm { color: var(--a-muted); font: 10.5px var(--mono); }
+.olog .o .t { overflow: hidden; text-overflow: ellipsis; }
+.olog .o .lk { color: var(--l0); font-size: 11px; }
+.card { margin: 8px 10px; border: 1px solid var(--a-line); border-radius: 7px; background: var(--a-panel); }
+.card .chd { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-bottom: 1px solid var(--a-line); }
+.card .cbd { padding: 8px 10px; display: grid; gap: 6px; }
+.flag { display: flex; gap: 6px; align-items: center; padding: 4px 8px; border-radius: 5px; background: var(--a-warn); color: var(--a-warn-ink); font-size: 11.5px; }
+.flag.bad { background: var(--a-bad); color: var(--a-bad-ink); }
+.empty { flex: 1; display: grid; place-content: center; text-align: center; gap: 8px; color: var(--a-muted); padding: 20px; }
+.empty b { color: var(--a-fg); font: 600 15px var(--display); }
+.img2 { display: grid; grid-template-columns: repeat(2, minmax(0, 170px)); gap: 8px; padding: 8px 10px; }
+.img2 div { aspect-ratio: 1; border-radius: 4px; border: 1px solid var(--a-line); background:
+  radial-gradient(circle at 30% 35%, var(--c1) 0 9%, transparent 10%), radial-gradient(circle at 68% 60%, var(--c1) 0 11%, transparent 12%), radial-gradient(circle at 45% 78%, var(--c2) 0 7%, transparent 8%),
+  repeating-conic-gradient(var(--a-hover) 0 25%, var(--a-panel) 0 50%) 0 0 / 14px 14px; }
+.tile { border: 1px solid var(--a-line); border-radius: 6px; background: var(--a-panel); overflow: hidden; display: flex; flex-direction: column; min-height: 0; }
+.tile.f { border-color: var(--l0); box-shadow: 0 0 0 1px var(--l0); }
+.tile .ph .n { color: var(--l0); }
+.chips { display: flex; gap: 6px; padding: 6px 10px; border-bottom: 1px solid var(--a-line); flex-wrap: wrap; }
+.chip { font-size: 11px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--a-line); color: var(--a-muted); white-space: nowrap; }
+.chip.on { background: var(--a-sel); color: var(--a-fg); border-color: transparent; }
+.keys { display: flex; gap: 14px; }
+.keys b { font: 600 10.5px var(--mono); color: var(--a-fg); border: 1px solid var(--a-line); border-radius: 3px; padding: 0 4px; margin-right: 3px; }
+
+@media (max-width: 860px) { .cols, .states { grid-template-columns: minmax(0, 1fr); } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div class="eyebrow">gitgud lab · design rounds · newest first</div>
+    <h1>gitgud Lab</h1>
+    <p>Design rounds for gitgud, drawn as mock screens on one example repo (BoatAttack from the hands-on round; people and locks invented). Each round shows variants, marks Claude's pick, and ends with questions; your verdicts go to docs/lab/decisions.md.</p>
+    <div class="legend">
+      <span><span class="tag t-pick">Claude's pick</span> one variant</span>
+      <span><span class="tag t-prop">proposal</span> everything else on this page</span>
+      <span><span class="tag t-dec">decided</span> only what's in open-questions.md / plan §0</span>
+      <span>Example data, not your repos.</span>
+    </div>
+    <nav class="toc" aria-label="Round 4">
+      <span class="eyebrow" style="align-self:center">R4 · decided</span><a href="#r4">Merge conflicts: A, Property table</a><a href="#r4-states">States</a><a href="#r4-questions">Verdict</a>
+    </nav>
+    <nav class="toc" aria-label="Round 3">
+      <span class="eyebrow" style="align-self:center">R3 · decided</span><a href="#r3">Many projects: A, Library tab + folders</a><a href="#r3-states">States</a><a href="#r3-questions">Verdict</a>
+    </nav>
+    <nav class="toc" aria-label="Round 2">
+      <span class="eyebrow" style="align-self:center">R2 · decided</span><a href="#r2">History edits: A, Plan beside preview</a><a href="#r2-states">States</a><a href="#r2-questions">Verdict</a>
+    </nav>
+    <nav class="toc" aria-label="Round 1">
+      <span class="eyebrow" style="align-self:center">R1 · decided</span><a href="#r1">Main window: A, Graph centre</a><a href="#r1-states">States</a><a href="#r1-questions">Verdict</a>
+    </nav>
+  </header>
+
+  <section class="round" id="r4">
+    <div class="eyebrow">Round 4 · 2026-11-21 · decided: A</div>
+    <h2 class="big">R4 · Merge conflicts, Unity first</h2>
+    <p class="idea">What you see after "Merge conflict/theirs into conflict/ours" stops on conflicts, the same pair as the hands-on round: Engine.cs (code), ReplayCameras.prefab (Unity YAML), a prefab instance, and the LFS texture. Facts from the spike that every variant builds on: gitgud registers UnityYAMLMerge itself (with <code>--force</code>, untracked config only); it merges most prefab changes cleanly; on a real conflict <code>--describe</code> names the object, component and property; and in one case (both sides change the same override) it <b>silently keeps yours and drops theirs</b>, so gitgud compares both sides after every automatic merge and flags "merged, verify". Common to all: the R1 banner with Continue / Abort, and the conflict list sorted by kind on the left.</p>
+  </section>
+
+  <section class="v" id="r4-a">
+    <div class="vhead"><span class="lab">R4-A</span><h2>Property table</h2><span class="tag t-dec">decided 2026-11-21 · "A, as picked"</span><span class="tag t-pick">Claude's pick</span></div>
+    <p class="idea">A Unity file opens as a table, one row per changed property: object › component › property, then base, yours, theirs and the result. Real conflicts sit on top with pick buttons (1 yours, 2 theirs, E edit); what Smart Merge merged on its own is listed below, collapsed, so you can check it. fileIDs are resolved to GameObject names; the raw YAML is one tab away.</p>
+    <div class="frame" data-mock="R4A"></div>
+    <div class="cols">
+      <div><h4>Good at</h4><ul><li>Reads like Unity, not like YAML: "BlimpCamera › Transform › Position.x".</li><li>Shows what the automatic merge did, which is where the silent loss hides.</li><li>Dense and keyboard-driven: ↑↓, 1/2/E, Ctrl+↵ marks the file resolved.</li></ul></div>
+      <div><h4>Costs</h4><ul><li>Needs gitgud to parse Unity YAML and resolve fileIDs (part of the planned structural diff, Q6).</li><li>Large structural changes (whole objects added) read better in a tree (C).</li></ul></div>
+    </div>
+    <div class="pickline"><b>Claude's pick:</b> it's the only variant that shows the automatic merge's work next to the real conflicts, which is exactly where the spike found data loss. It reuses the <code>--describe</code> output and the prefab object list you already chose for the MVP (Q6), and it stays dense and keyboard-first like the rest of gitgud.</div>
+  </section>
+
+  <section class="v" id="r4-b">
+    <div class="vhead"><span class="lab">R4-B</span><h2>Annotated text</h2><span class="tag t-dec">not chosen</span></div>
+    <p class="idea">One resolver for everything: the familiar 3-way text merge (yours | result | theirs, arrow per hunk, as in Sublime Merge). For Unity YAML, gutter labels translate fileIDs into names ("BlimpCamera › Transform") so the text is readable. Smart Merge runs first; what's left shows as normal conflict hunks.</p>
+    <div class="frame" data-mock="R4B"></div>
+    <div class="cols">
+      <div><h4>Good at</h4><ul><li>One tool to learn for code and assets.</li><li>Least new code: a text merge with labels.</li></ul></div>
+      <div><h4>Costs</h4><ul><li>Smart Merge leaves some conflicts with no markers at all (spike S2), so the text view has nothing to show; gitgud would have to re-create markers.</li><li>The automatic merges stay invisible, so the silent loss (S5) is only a warning, not something you can see.</li></ul></div>
+    </div>
+  </section>
+
+  <section class="v" id="r4-c">
+    <div class="vhead"><span class="lab">R4-C</span><h2>Two hierarchies</h2><span class="tag t-dec">not chosen</span></div>
+    <p class="idea">Looks like Unity's own editor: yours and theirs as two hierarchy trees side by side, changed objects marked, objects only one side added shown as such. Select an object and the panel below shows its components with both values and a pick per field.</p>
+    <div class="frame" data-mock="R4C"></div>
+    <div class="cols">
+      <div><h4>Good at</h4><ul><li>Familiar to anyone who knows the Unity hierarchy; good for added or moved objects.</li><li>Structure first: you see which objects changed before any field.</li></ul></div>
+      <div><h4>Costs</h4><ul><li>Two levels of clicking (object, then field) for a one-value conflict.</li><li>Least dense; a scene with hundreds of objects needs filtering.</li></ul></div>
+    </div>
+  </section>
+
+  <section class="v" id="r4-d">
+    <div class="vhead"><span class="lab">R4-D</span><h2>One at a time</h2><span class="tag t-dec">not chosen</span></div>
+    <p class="idea">A guided pass through every conflict across all files, one per screen: big cards for base, yours and theirs, keys 1 / 2 / 3, then the next conflict. The progress bar spans the whole merge. Tower's conflict wizard taken to its end.</p>
+    <div class="frame" data-mock="R4D"></div>
+    <div class="cols">
+      <div><h4>Good at</h4><ul><li>Hard to miss anything: every conflict and every "verify" gets its own stop.</li><li>Calm for scary merges; good for artists later (Q3).</li></ul></div>
+      <div><h4>Costs</h4><ul><li>Slow for a merge with many small conflicts.</li><li>No overview: you can't see related changes on the same object together.</li></ul></div>
+    </div>
+  </section>
+
+  <section class="v" id="r4-states">
+    <div class="vhead"><span class="lab">R4-A</span><h2>States, drawn on the pick</h2><span class="tag t-prop">proposal</span></div>
+    <div class="states">
+      <div class="state"><h3>1 · Merged automatically, but verify</h3><div class="frame" data-mock="R4S1"></div><p>The spike's S5 case: both branches changed the same override on a prefab instance; Smart Merge reported a clean merge and kept yours. gitgud compares both sides, finds the overlap and flags the file. You keep yours or take theirs; the merge can't be committed until each flag is looked at (question 4).</p></div>
+      <div class="state"><h3>2 · A code file in the same list</h3><div class="frame" data-mock="R4S2"></div><p>Engine.cs is plain text, so it opens the 3-way text merge: yours | result | theirs, an arrow per hunk, "Use both" for the common case of two added lines.</p></div>
+      <div class="state"><h3>3 · An LFS texture</h3><div class="frame" data-mock="R4S3"></div><p>Binary files can't merge: pick a side with the image diff from round 1 (side by side, swipe, onion). If the file is lockable and someone holds the lock, that shows here too.</p></div>
+      <div class="state"><h3>4 · Smart Merge not set up yet</h3><div class="frame" data-mock="R4S4"></div><p>First merge in a Unity repo: gitgud found Unity 6000.3 in the Hub and offers to register the driver for this repo (writes only <code>.git/config</code> and <code>.git/info/attributes</code>, nothing tracked). Without it, Unity files fall back to plain text conflicts.</p></div>
+      <div class="state"><h3>5 · All resolved</h3><div class="frame" data-mock="R4S5"></div><p>Every file resolved and every flag checked: the summary says what happened (auto-merged, picked, verified), the post-merge check has re-read the prefabs, and Commit merge is the one primary action. Ctrl+Z after committing undoes the whole merge.</p></div>
+    </div>
+  </section>
+
+  <section class="v" id="r4-questions">
+    <div class="vhead"><h2>R4 · Verdict</h2><span class="tag t-dec">decided 2026-11-21</span></div>
+    <ol class="q">
+      <li>Variant: <b>A, Property table</b>. Max: "A, as picked".</li>
+      <li>Smart Merge is <b>offered at the first merge</b> that hits Unity files (state 4).</li>
+      <li>Automatic merges are <b>listed, collapsed</b> under the real conflicts.</li>
+      <li>"Merged, verify" flags <b>block Commit merge until confirmed</b>.</li>
+      <li>Code conflicts use <b>three columns</b>: yours | result | theirs.</li>
+    </ol>
+    <p class="note">Full log: docs/lab/decisions.md.</p>
+  </section>
+
+  <section class="round" id="r3">
+    <div class="eyebrow">Round 3 · 2026-11-21 · decided: A</div>
+    <h2 class="big">R3 · Many projects</h2>
+    <p class="idea">How gitgud holds 150+ repositories and switches between them. Your brief: "a lot of them, ideally folders or categories", several open at once as tabs. Common to every variant: open repos are tabs above the window (Ctrl+Tab cycles, Ctrl+W closes), Ctrl+P is a fuzzy "go to repo" from anywhere, and a repo's status in lists comes from a cache, refreshed when you look at it, so 150 repos never run 150 <code>git status</code> calls at startup. Repo names below are invented.</p>
+  </section>
+
+  <section class="v" id="r3-a">
+    <div class="vhead"><span class="lab">R3-A</span><h2>Library tab + folders</h2><span class="tag t-dec">decided 2026-11-21 · "A, as picked"</span><span class="tag t-pick">Claude's pick</span></div>
+    <p class="idea">The first tab is always the Library: a full-window list of every repo with its status (branch, changes, ahead/behind, locks you hold, last activity, host). On the left, your own folders, nestable, drag repos between them, a repo lives in one folder. Below them, smart filters that fill themselves: Dirty, Ahead, Locks held, Unity, Missing on disk. Inside a folder, each subfolder shows its most recently used repos first, with "show all" to expand. Type anywhere to filter; Enter opens the repo in a new tab.</p>
+    <div class="frame" data-mock="R3A"></div>
+    <div class="cols">
+      <div><h4>Good at</h4><ul><li>Folders exactly as you asked, with an overview of all 150 at once.</li><li>Smart filters answer "what did I leave uncommitted / unpushed / locked?" across every project.</li><li>Same table look as the rest of gitgud: dense rows, sortable columns.</li></ul></div>
+      <div><h4>Costs</h4><ul><li>A whole tab for the library; switching repos from inside a repo goes through Ctrl+P or the tab bar.</li><li>Folders are manual work at first (the scan in state 3 suggests them).</li></ul></div>
+    </div>
+    <div class="pickline"><b>Claude's pick:</b> it's the one that gives you folders and a cross-repo status overview in one place, and it costs nothing inside a repo, where layout A from round 1 stays untouched. Ctrl+P covers the fast switch, so the library only has to be good at organizing.</div>
+  </section>
+
+  <section class="v" id="r3-b">
+    <div class="vhead"><span class="lab">R3-B</span><h2>Project rail</h2><span class="tag t-dec">not chosen</span></div>
+    <p class="idea">A narrow project tree is always on screen, left of the repo's own sidebar: folders collapse, open repos are bold, a dot shows uncommitted work. Click a repo to switch; there are no tabs, the rail is the tab bar. A search field at the top of the rail filters it.</p>
+    <div class="frame" data-mock="R3B"></div>
+    <div class="cols">
+      <div><h4>Good at</h4><ul><li>Switching is one click from anywhere, with folders always visible.</li><li>Dirty dots across projects without opening a library.</li></ul></div>
+      <div><h4>Costs</h4><ul><li>Two trees side by side (projects, then branches) cost ~200 px on every screen.</li><li>150 repos don't fit; you live in the search field or collapse most folders.</li></ul></div>
+    </div>
+  </section>
+
+  <section class="v" id="r3-c">
+    <div class="vhead"><span class="lab">R3-C</span><h2>Switcher + tags</h2><span class="tag t-dec">not chosen</span></div>
+    <p class="idea">No library screen. Ctrl+P opens a switcher over whatever you're doing: recents first, then matches, each with its status. Categories are tags instead of folders, so a repo can be both "Studio" and "Unity" and "VR"; type <code>#vr</code> to filter by tag. Tags are edited from the switcher row.</p>
+    <div class="frame" data-mock="R3C"></div>
+    <div class="cols">
+      <div><h4>Good at</h4><ul><li>Fastest for a keyboard user who knows what they want.</li><li>Tags fit repos that belong to several categories.</li></ul></div>
+      <div><h4>Costs</h4><ul><li>No overview: you can't browse 150 repos or see which ones are dirty at a glance.</li><li>Tags are less tidy than folders; no hierarchy.</li></ul></div>
+    </div>
+  </section>
+
+  <section class="v" id="r3-d">
+    <div class="vhead"><span class="lab">R3-D</span><h2>Smart groups only</h2><span class="tag t-dec">not chosen</span></div>
+    <p class="idea">The library of A, but you never sort anything by hand. Groups come from facts gitgud already knows: where the repo is on disk, which host and owner its remote has, what kind of project it is (Unity, Rust, web), plus pins. Move a folder on disk and the grouping follows.</p>
+    <div class="frame" data-mock="R3D"></div>
+    <div class="cols">
+      <div><h4>Good at</h4><ul><li>Zero upkeep with 150+ repos.</li><li>Groups are always true; nothing goes stale.</li></ul></div>
+      <div><h4>Costs</h4><ul><li>Not what you asked for: no categories of your own ("client work", "jam games").</li><li>Groups follow your disk layout, so a messy disk gives a messy library.</li></ul></div>
+    </div>
+  </section>
+
+  <section class="v" id="r3-states">
+    <div class="vhead"><span class="lab">R3-A</span><h2>States, drawn on the pick</h2><span class="tag t-prop">proposal</span></div>
+    <div class="states">
+      <div class="state"><h3>1 · Ctrl+P from inside a repo</h3><div class="frame" data-mock="R3S1"></div><p>The fast path that every variant shares: from any tab, Ctrl+P, type a few letters, Enter. The folder shows as a prefix, status on the right; already-open repos jump to their tab instead of opening a second one.</p></div>
+      <div class="state"><h3>2 · Twelve tabs open</h3><div class="frame" data-mock="R3S2"></div><p>Tabs shrink to the repo name, then overflow into a "+4" menu. A dot marks uncommitted work, a lock marks locks you hold. Tabs reopen on the next launch.</p></div>
+      <div class="state"><h3>3 · Adding many repos at once</h3><div class="frame" data-mock="R3S3"></div><p>"Scan a folder" finds every repo under it, groups them by parent folder and suggests a gitgud folder for each group, so 37 repos get organized in one step. Repos it already knows are skipped.</p></div>
+      <div class="state"><h3>4 · A repo moved or deleted on disk</h3><div class="frame" data-mock="R3S4"></div><p>The row stays where you put it, greyed, with "Locate…" and "Remove from gitgud". Nothing disappears silently, and the Missing smart filter collects them all.</p></div>
+    </div>
+  </section>
+
+  <section class="v" id="r3-questions">
+    <div class="vhead"><h2>R3 · Verdict</h2><span class="tag t-dec">decided 2026-11-21</span></div>
+    <ol class="q">
+      <li>Variant: <b>A, Library tab + folders</b>. Max: "A, as picked".</li>
+      <li><b>One folder per repo</b>, no tags.</li>
+      <li>Folders <b>nest freely</b>.</li>
+      <li>Library status is <b>local only, no background fetch</b>; "behind" shows its last known value and age, plus a manual "Fetch all visible". Not drawn yet.</li>
+      <li><b>Reopen last session's tabs</b> on launch, Library first.</li>
+    </ol>
+    <p class="note">Full log: docs/lab/decisions.md.</p>
+  </section>
+
+  <section class="round" id="r2">
+    <div class="eyebrow">Round 2 · 2026-11-21 · decided: A</div>
+    <h2 class="big">R2 · History edits</h2>
+    <p class="idea">How rewriting history works inside layout A: reword, squash, fixup, reorder, drop, with a preview of the result and conflict prediction before anything runs. The example is the same <code>feature/stack</code> from the hands-on round: a "rgiht" typo and a <code>fixup!</code> commit. Already decided and drawn into every variant: classic stop-on-conflict with prediction first (Q11), gitgud owns the rewrite logic (Q10), everything lands in the op log so Ctrl+Z undoes it (Q9). The 3-way / Smart Merge resolver is round 3.</p>
+  </section>
+
+  <section class="v" id="r2-a">
+    <div class="vhead"><span class="lab">R2-A</span><h2>Plan beside preview</h2><span class="tag t-dec">decided 2026-11-21 · "A, as picked"</span><span class="tag t-pick">Claude's pick</span></div>
+    <p class="idea">"Edit history" on a branch turns the inspector into the rebase plan: one row per commit with an action key, drag handles and a per-step conflict prediction. The graph keeps showing the real history and draws the planned result as dashed "after" rows above the faded commits they replace. Nothing changes until Start. A neutral banner says you're planning.</p>
+    <div class="frame" data-mock="R2A"></div>
+    <div class="cols">
+      <div><h4>Good at</h4><ul><li>Preview before rewrite (UX principle 4) without leaving layout A or opening a modal.</li><li>The whole edit is one list you drive by keys: P R E S F D, Alt+↑↓ to move.</li><li>Prediction per step tells you which commit would conflict, before you start.</li></ul></div>
+      <div><h4>Costs</h4><ul><li>The graph gets busier while planning (dashed and faded rows together).</li><li>A one-key reword of the tip still goes through the plan (see question 5).</li></ul></div>
+    </div>
+    <div class="pickline"><b>Claude's pick:</b> it's the only variant that shows the result before anything runs and keeps you in the R1 layout. The plan is Fork's todo list (the best of the hands-on round), the preview is in the graph you already trust, and Ctrl+Z still covers you after Start.</div>
+  </section>
+
+  <section class="v" id="r2-b">
+    <div class="vhead"><span class="lab">R2-B</span><h2>Edit in place</h2><span class="tag t-dec">not chosen · kept for single-commit edits</span></div>
+    <p class="idea">No plan at all. Every edit happens on the graph row and applies immediately: R renames inline, F folds into the parent, drag a commit onto another to squash, Alt+↑↓ to move. Safety comes from the op log instead of a preview: each action is one Ctrl+Z away (GitButler and Tower style).</p>
+    <div class="frame" data-mock="R2B"></div>
+    <div class="cols">
+      <div><h4>Good at</h4><ul><li>Fastest: a typo fix is R, type, Enter.</li><li>Nothing to learn: the graph is the editor.</li></ul></div>
+      <div><h4>Costs</h4><ul><li>No preview of a multi-step edit; you see the result after each step.</li><li>A conflict can stop you in the middle of a sequence you meant as one change.</li></ul></div>
+    </div>
+  </section>
+
+  <section class="v" id="r2-c">
+    <div class="vhead"><span class="lab">R2-C</span><h2>Plan dialog</h2><span class="tag t-dec">not chosen</span></div>
+    <p class="idea">Fork's model, the best rebase UI of the hands-on round: a modal with the todo list (autosquash pre-applied, single-key actions, inline reword) and the selected commit's diff below it. Start runs the whole plan.</p>
+    <div class="frame" data-mock="R2C"></div>
+    <div class="cols">
+      <div><h4>Good at</h4><ul><li>Proven: you've used this shape in Fork.</li><li>Room to focus: the dialog hides everything else.</li></ul></div>
+      <div><h4>Costs</h4><ul><li>The graph is hidden behind the dialog, so there's no picture of the result.</li><li>Modal: you can't look at another commit while planning.</li></ul></div>
+    </div>
+  </section>
+
+  <section class="v" id="r2-d">
+    <div class="vhead"><span class="lab">R2-D</span><h2>Now | After</h2><span class="tag t-dec">not chosen</span></div>
+    <p class="idea">The preview is the main thing: the history pane splits into "now" and "after" side by side, each after-row saying where it came from ("← 3493748, reworded"). Pick a commit on either side and the inspector shows its actions. Teaches what a rebase does, at the cost of width.</p>
+    <div class="frame" data-mock="R2D"></div>
+    <div class="cols">
+      <div><h4>Good at</h4><ul><li>Clearest picture of what changes: before and after never overlap.</li><li>Good for long plans (10+ commits) where dashed rows in one graph would blur.</li></ul></div>
+      <div><h4>Costs</h4><ul><li>Two half-width graphs: subjects truncate early.</li><li>Actions live in the inspector, one commit at a time; slower than a list with keys.</li></ul></div>
+    </div>
+  </section>
+
+  <section class="v" id="r2-states">
+    <div class="vhead"><span class="lab">R2-A</span><h2>States, drawn on the pick</h2><span class="tag t-prop">proposal</span></div>
+    <div class="states">
+      <div class="state"><h3>1 · Conflict predicted</h3><div class="frame" data-mock="R2S1"></div><p>Rebasing <code>feature/stack</code> onto the newer <code>master</code>: the plan predicts that step 1 conflicts in Engine.cs (both sides edited line 6) and says which commit causes it. Start is still possible, but the footer offers the fixes first. The banner from R1 state 1 takes over only if you start anyway.</p></div>
+      <div class="state"><h3>2 · Squash asks for the message</h3><div class="frame" data-mock="R2S2"></div><p>Squash (S) opens the combined message inline in the plan, both messages prefilled. Fixup (F) keeps the target's message and drops the other, so it needs no editor.</p></div>
+      <div class="state"><h3>3 · Done</h3><div class="frame" data-mock="R2S3"></div><p>The branch now has 2 commits; <code>origin/feature/stack</code> still points at the old 3, drawn faded so the divergence is visible. The inspector offers Undo and "Force-push with lease"; there's no "update from remote" button that would pull the old commits back (a GitButler footgun from the hands-on round).</p></div>
+    </div>
+  </section>
+
+  <section class="v" id="r2-questions">
+    <div class="vhead"><h2>R2 · Verdict</h2><span class="tag t-dec">decided 2026-11-21</span></div>
+    <ol class="q">
+      <li>Variant: <b>A, Plan beside preview</b>. Max: "A, as picked".</li>
+      <li><code>fixup!</code> / <code>squash!</code> are <b>applied automatically</b> when the plan opens.</li>
+      <li>Plan order: <b>newest first</b>, like the graph.</li>
+      <li>After rewriting a pushed branch: <b>offer "Force-push with lease" right away</b>.</li>
+      <li>Single-commit edits (reword the tip, fixup or drop one commit) <b>apply at once</b>, Ctrl+Z undoes; anything bigger opens the plan. Not drawn yet.</li>
+    </ol>
+    <p class="note">Full log: docs/lab/decisions.md.</p>
+  </section>
+
+  <section class="round" id="r1">
+    <div class="eyebrow">Round 1 · 2026-11-21 · decided: A</div>
+    <h2 class="big">R1 · Main window layout</h2>
+    <p class="idea">Four ways to arrange the screen you live in: commit graph, working copy and staging, diff, op log (undo history), LFS locks and agent proposals. Built on the decisions already made: undo is an op log behind Ctrl+Z, hunks get stage buttons on their own row, agent work arrives as proposals, locks show on file rows.</p>
+  </section>
+
+  <section class="v" id="r1-a">
+    <div class="vhead"><span class="lab">R1-A</span><h2>Graph centre</h2><span class="tag t-dec">decided 2026-11-21 · "A, as picked"</span><span class="tag t-pick">Claude's pick</span></div>
+    <p class="idea">The graph is always the middle. Selecting the top "uncommitted" row turns the right-hand inspector into staging (unstaged / staged lists, diff with per-hunk buttons, commit box); selecting a commit turns it into that commit's diff. The sidebar holds branches, stashes, locks and agent proposals. The op log is one click away in the sidebar and always summarised by the Undo button.</p>
+    <div class="frame" data-mock="A"></div>
+    <div class="cols">
+      <div><h4>Good at</h4><ul><li>History never leaves the screen, so rebases and undo are visible where they happen (P3).</li><li>Closest to Sourcetree and Fork: lowest switching cost.</li><li>One selection model: pick a row, the inspector follows.</li></ul></div>
+      <div><h4>Costs</h4><ul><li>Inspector is ~45% of width; long lines in the diff wrap or scroll sooner than in B.</li><li>Staging is one click away from the graph, not the default view.</li></ul></div>
+    </div>
+    <div class="pickline"><b>Claude's pick:</b> it keeps the graph (your safety net for history edits) and staging on one screen without modes, and it's the shape you already know from Sourcetree, so every new idea (locks, proposals, op log) lands in a familiar frame.</div>
+  </section>
+
+  <section class="v" id="r1-b">
+    <div class="vhead"><span class="lab">R1-B</span><h2>Stage desk</h2><span class="tag t-dec">not chosen</span></div>
+    <p class="idea">Working on changes is the main job, so the working copy owns the screen: file lists on the left, a wide diff in the middle with all changed files in one scroll (Sublime-style), and the graph as a narrow rail on the right. Click a commit in the rail and the middle shows it; Esc returns to the desk.</p>
+    <div class="frame" data-mock="B"></div>
+    <div class="cols">
+      <div><h4>Good at</h4><ul><li>Widest diff: best for hunk staging and texture previews.</li><li>Fastest daily loop: open, stage, commit without a single navigation.</li></ul></div>
+      <div><h4>Costs</h4><ul><li>The narrow rail hides authors, hashes and long subjects; history edits need a wider view.</li><li>Locks and proposals have no permanent home; they go into the branch menu and a badge.</li></ul></div>
+    </div>
+  </section>
+
+  <section class="v" id="r1-c">
+    <div class="vhead"><span class="lab">R1-C</span><h2>One timeline</h2><span class="tag t-dec">not chosen</span></div>
+    <p class="idea">The boldest one. A single column holds everything that happened or might happen, newest first: pending agent proposals at the top, then your uncommitted work, then commits, with op log entries woven in as thin rows ("you discarded Engine.cs · Restore"). No sidebar: branches are chips and the palette. The right side is the detail for whatever row is selected.</p>
+    <div class="frame" data-mock="C"></div>
+    <div class="cols">
+      <div><h4>Good at</h4><ul><li>Undo is part of history, not a separate panel: you see what you did right next to what it changed.</li><li>Agent proposals sit exactly where they would land.</li><li>Nothing to learn: one list, one detail.</li></ul></div>
+      <div><h4>Costs</h4><ul><li>Op rows interleaved with commits can get noisy during busy sessions (needs a filter).</li><li>No sidebar means locks and stashes live behind chips; multi-branch overviews are weaker.</li><li>No tool does this today, so it's the least proven.</li></ul></div>
+    </div>
+  </section>
+
+  <section class="v" id="r1-d">
+    <div class="vhead"><span class="lab">R1-D</span><h2>Tiles</h2><span class="tag t-dec">not chosen</span></div>
+    <p class="idea">lazygit's model as a desktop app: five numbered tiles on the left (status and locks, files, branches, commits, stash and op log), one big main view on the right. Keys 1–5 jump between tiles, single-letter verbs act on the focused one, and the footer always lists the keys that work right now. The mouse still works everywhere.</p>
+    <div class="frame" data-mock="D"></div>
+    <div class="cols">
+      <div><h4>Good at</h4><ul><li>Most keyboard-friendly: every state shows its keys.</li><li>Everything visible at once at a glance, nothing hidden in a sidebar tree.</li></ul></div>
+      <div><h4>Costs</h4><ul><li>Each tile is small; the graph gets ~10 rows instead of ~25.</li><li>Feels like a terminal app; less room for previews and the 3-way merge.</li></ul></div>
+    </div>
+  </section>
+
+  <section class="v" id="r1-states">
+    <div class="vhead"><span class="lab">R1-A</span><h2>States, drawn on the pick</h2><span class="tag t-prop">proposal</span></div>
+    <p class="idea">The screens that matter beyond the happy path. If you pick another variant, these move with it.</p>
+    <div class="states">
+      <div class="state"><h3>1 · Mid-rebase with conflicts</h3><div class="frame" data-mock="S1"></div><p>A banner owns the top while the rebase is running, with Continue / Skip / Abort. Conflicts are sorted by kind so each goes to the right resolver: code to the 3-way merge, Unity YAML to Smart Merge with mine/theirs, LFS binaries to a side pick with previews.</p></div>
+      <div class="state"><h3>2 · Editing a file someone else locked</h3><div class="frame" data-mock="S2"></div><p>Locks show in the sidebar and on file rows. Editing a file locked by someone else raises an inline warning on the row, not a modal, with the two things you can do about it.</p></div>
+      <div class="state"><h3>3 · Agent proposal waiting</h3><div class="frame" data-mock="S3"></div><p>A proposal is a ghost row at the top of the graph and an item in the sidebar. The inspector shows message, the agent's reason, risk flags (flagged, never blocked) and per-hunk ticks; Approve commits through the git CLI.</p></div>
+      <div class="state"><h3>4 · Detached HEAD, fetch running</h3><div class="frame" data-mock="S4"></div><p>Detached HEAD replaces the branch pill in warning colour with "Create branch here". Background jobs (fetch, LFS download) report in the status strip with real numbers, never a blocking dialog.</p></div>
+      <div class="state"><h3>5 · Clean tree, longest branch name</h3><div class="frame" data-mock="S5"></div><p>A 64-character branch name truncates in the middle so both the folder and the ending stay readable. Nothing to commit: the inspector says so and points at the last action you can undo.</p></div>
+      <div class="state"><h3>6 · Op log open</h3><div class="frame" data-mock="S6"></div><p>The op log (Ctrl+3) lists every action with the files it touched; Restore works on any entry, discards included. The graph stays visible beside it.</p></div>
+    </div>
+  </section>
+
+  <section class="v" id="r1-questions">
+    <div class="vhead"><h2>Verdict</h2><span class="tag t-dec">decided 2026-11-21</span></div>
+    <ol class="q">
+      <li>Layout: <b>A, Graph centre</b>. Max: "A, as picked".</li>
+      <li>Op log: its own panel (sidebar entry, Ctrl+3). Came with A.</li>
+      <li>Locks and agent proposals: permanent sidebar sections. Came with A.</li>
+      <li>Row height: <b>24 px default, with an app-wide Compact toggle (20 px)</b>.</li>
+      <li>Ultrawide: above ~2400 px <b>the inspector splits in two</b> (file lists and commit box | diff). Not drawn yet.</li>
+    </ol>
+    <p class="note">Full log: docs/lab/decisions.md.</p>
+  </section>
+</div>
+
+<script>
+const L = ['var(--l0)', 'var(--l1)', 'var(--l2)', 'var(--l3)', 'var(--l4)'];
+const X = i => 10 + i * 14;
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+const COMMITS = [
+  { wip: true, lane: 0, top: [], bot: [0], t: 'Uncommitted changes', au: '2 files', dt: 'now', h: '' },
+  { lane: 0, top: [0], bot: [0], refs: [['head', 'master', 0]], t: 'Raise ClearShot camera rig', au: 'Max', dt: '2 min', h: '95e25c8' },
+  { lane: 1, top: [0], bot: [0, 1], refs: [['loc', 'conflict/ours', 1], ['rm', 'origin', 1]], t: 'Ours: power curve, move blimp', au: 'Max', dt: '41 min', h: 'f166a0a' },
+  { lane: 2, top: [0, 1], bot: [0, 1, 2], refs: [['loc', 'conflict/theirs', 2]], t: 'Theirs: torque table, move blimp', au: 'Sam', dt: '41 min', h: '669434e' },
+  { lane: 3, top: [0, 1, 2], bot: [0, 1, 2, 3], refs: [['loc', 'hotfix/camera', 3]], t: 'Raise ClearShot camera rig', au: 'Max', dt: '41 min', h: '45e0c13' },
+  { lane: 4, top: [0, 1, 2, 3], bot: [0, 1, 2, 3, 4], refs: [['loc', 'feature/stack', 4]], t: 'Move blimp camera rgiht', au: 'Max', dt: '41 min', h: '3493748' },
+  { lane: 4, top: [0, 1, 2, 3, 4], bot: [0, 1, 2, 3, 4], t: 'fixup! WIP engine thrust tweak', au: 'Max', dt: '41 min', h: '6bb2f7d' },
+  { lane: 4, top: [0, 1, 2, 3, 4], bot: [0, 1, 2, 3, 4], t: 'WIP engine thrust tweak', au: 'Max', dt: '41 min', h: '4592a21' },
+  { lane: 0, top: [0, 1, 2, 3, 4], bot: [0], refs: [['rm', 'origin/master', 0]], t: 'Remove EmojiOne assets (#209)', au: 'upstream', dt: '23 Oct', h: '6acf5f7' },
+  ...['update cinemachine (#185)', 'Clear the old m_RendererData fields in the renderpipe assets (#183)', 'Disable offending package (#179)', 'delete and ignore packages-lock file (#178)', 'Wave struct stores float instead of half (#168)', 'Disable depth testing for a screenspace shader (#165)', 'Fix cloud GC collection', 'Small fixes after last PR', 'Updated clouds (#161)', 'Gfx Test Automation work (#159)', 'changed vegetation and cliff shader graph (#158)', 'Update scripting defines (#156)', 'Split test script between editor and runtime folders', 'wrapped editor only code in the GFX tests script', 'Moved Unity GFX test scripts location', 'Improved GlobalVolumeFeature and added custom GUI']
+    .map((t, i) => ({ lane: 0, top: [0], bot: [0], t, au: 'upstream', dt: ['17 Jan', '13 Oct', '28 Jul', '28 Jun', '23 Feb', '4 Jan', '26 Nov', '25 Nov', '25 Nov', '16 Nov', '10 Nov', '8 Nov', '20 Oct', '20 Oct', '20 Oct', '4 Oct'][i], h: ['e4864ca', '36e3ad5', '532a3f4', '324ee65', 'a8a7abe', '2796fbc', 'dfaa0ef', 'c7df843', '577bea1', '681586f', '04c0504', '1ebee16', '42f9e9e', '040c149', 'b4f6d22', '81adcd6'][i] }))
+];
+
+function lanes(c, n, P = L) {
+  const w = n * 14 + 8;
+  const dash = l => (c.wip && l === 0) || (c.dash || []).includes(l) ? ' stroke-dasharray="3 2"' : '';
+  let s = `<svg width="${w}" height="24" viewBox="0 0 ${w} 24" aria-hidden="true">`;
+  for (const l of c.top) {
+    if (l === c.lane || c.bot.includes(l)) s += `<line x1="${X(l)}" y1="0" x2="${X(l)}" y2="12" stroke="${P[l]}" stroke-width="2"${dash(l)}/>`;
+    else s += `<path d="M${X(l)} 0 C${X(l)} 9 ${X(c.lane)} 7 ${X(c.lane)} 12" fill="none" stroke="${P[l]}" stroke-width="2"${dash(l)}/>`;
+  }
+  for (const l of c.bot) s += `<line x1="${X(l)}" y1="12" x2="${X(l)}" y2="24" stroke="${P[l]}" stroke-width="2"${dash(l)}/>`;
+  if (c.prop || c.ghost) s += `<circle cx="${X(c.lane)}" cy="12" r="4.5" fill="var(--a-panel)" stroke="${P[c.lane]}" stroke-width="2" stroke-dasharray="2 2"/>`;
+  else if (c.wip) s += `<circle cx="${X(c.lane)}" cy="12" r="4.5" fill="var(--a-panel)" stroke="${P[c.lane]}" stroke-width="2"/>`;
+  else s += `<circle cx="${X(c.lane)}" cy="12" r="4" fill="${P[c.lane]}"/>`;
+  return s + '</svg>';
+}
+function through(ls) {
+  const w = 5 * 14 + 8;
+  return `<svg width="${w}" height="20" viewBox="0 0 ${w} 20" aria-hidden="true">${ls.map(l => `<line x1="${X(l)}" y1="0" x2="${X(l)}" y2="20" stroke="${L[l]}" stroke-width="2"/>`).join('')}</svg>`;
+}
+function ref([k, n, l], P = L) {
+  if (k === 'head') return `<span class="ref head" style="background:${P[l]}">✓ ${esc(n)}</span>`;
+  return `<span class="ref${k === 'rm' ? ' rm' : ''}${k === 'after' ? ' after' : ''}" style="color:${P[l]}">${esc(n)}</span>`;
+}
+function row(c, o = {}) {
+  if (c.op) return `<div class="row op">${through(c.through || [])}<span class="sub"><span class="t">↶ ${esc(c.t)}</span></span><span class="au"></span><span class="dt">${esc(c.dt)}</span><span class="h" style="font-family:var(--body);color:var(--l0)">${esc(c.act || 'Restore')}</span></div>`;
+  const P = o.pal || L;
+  const cls = ['row', c.wip ? 'wip' : '', c.ghost ? 'ghost' : '', c.faded ? 'faded' : '', c.drop ? 'drop' : '', o.sel ? 'sel' : ''].join(' ');
+  const title = c.edit ? `<span class="t edit">${esc(c.edit)}▏</span><span class="tg">Enter save · Esc cancel</span>` : `<span class="t">${esc(c.t)}</span>`;
+  return `<div class="${cls}">${lanes(c, o.lanes || 5, P)}<span class="sub">${(c.refs || []).map(r => ref(r, P)).join('')}${title}${c.tag ? `<span class="tg">${esc(c.tag)}</span>` : ''}</span><span class="au">${esc(c.au)}</span><span class="dt">${esc(c.dt || '')}</span><span class="h">${esc(c.h)}</span></div>`;
+}
+function graph(o = {}) {
+  let list = (o.rows || COMMITS).map(c => ({ ...c }));
+  if (o.prop) list.unshift({ prop: true, lane: 0, top: [], bot: [], t: 'Proposal · Tune engine torque curve', au: 'Claude Code', dt: '4 min', h: 'review', refs: [['loc', 'proposal', 0]] });
+  if (o.prop) list[1].top = [];
+  if (o.clean) { list.shift(); Object.assign(list[0], { refs: [['head', o.branch || 'master', 0]], top: [], t: 'Tune foam shader falloff', h: 'c41d9e0' }); }
+  if (o.detached) { list.shift(); list = list.slice(7); list[0].refs = [['head', 'HEAD', 0], ['rm', 'origin/master', 0]]; list[0].top = []; }
+  if (o.ops) {
+    const at = o.ops;
+    list.splice(1, 0, { op: true, t: 'You cherry-picked "Raise ClearShot camera rig" onto master', dt: '13:29', act: 'Undo' });
+    list.splice(3, 0, { op: true, t: 'You discarded 2 hunks in Engine.cs', dt: '13:24' });
+    list.splice(5, 0, { op: true, t: 'You merged conflict/theirs into conflict/ours (2 conflicts resolved)', dt: '13:23' });
+    list.splice(8, 0, { op: true, t: 'You rebased feature/stack: squashed 1, reworded 1', dt: '13:22' });
+    list.forEach((c, i) => { if (c.op) c.through = list[i - 1].bot; });
+  }
+  const sel = o.sel ?? 0;
+  return `<div class="rows${o.narrow ? ' narrow' : ''}"${o.fixed ? ' style="flex:none"' : ''}>${list.slice(0, o.max || 40).map((c, i) => row(c, { sel: i === sel, pal: o.pal })).join('')}</div>`;
+}
+
+const SIDE = (o = {}) => `<div class="pane side">
+  <div class="sec"><div class="sh">Branches <span class="ct">5</span></div>
+    <div class="it${o.detached || o.onStack ? '' : ' cur'}"><span class="ic">${o.detached || o.onStack ? '' : '✓'}</span>${esc(o.clean ? 'feature/ocean-shader-…-v2-final' : 'master')}<span class="r">${o.clean ? '' : '↑1'}</span></div>
+    <div class="it"><span class="ic">▾</span>conflict/</div><div class="it" style="--ind:1"><span class="ic"></span>ours</div><div class="it" style="--ind:1"><span class="ic"></span>theirs</div>
+    <div class="it"><span class="ic">▾</span>feature/</div><div class="it${o.onStack ? ' cur' : ''}" style="--ind:1"><span class="ic">${o.onStack ? '✓' : ''}</span>stack<span class="r">${o.stackAb || '↑3'}</span></div>
+    <div class="it"><span class="ic">▸</span>hotfix/</div></div>
+  <div class="sec"><div class="sh">Remotes</div><div class="it"><span class="ic">▸</span>origin</div></div>
+  <div class="sec"><div class="sh">Stashes <span class="ct">1</span></div><div class="it"><span class="ic">≡</span>WIP before rebase</div></div>
+  <div class="sec"><div class="sh">Locks · Unity <span class="ct">3</span></div>
+    <div class="it${o.sideSel === 'lock' ? ' sel' : ''}"><span class="ic">🔒</span>Island.unity<span class="r">Lea</span></div>
+    <div class="it"><span class="ic">🔒</span>ReplayCameras.prefab<span class="r">you</span></div>
+    <div class="it"><span class="ic">🔒</span>Boat_Base.mat<span class="r">Sam</span></div></div>
+  <div class="sec"><div class="sh">Proposals <span class="ct">${o.prop ? 1 : 0}</span></div>
+    ${o.prop ? `<div class="it sel"><span class="ic">◇</span>Tune engine torque curve<span class="r">4m</span></div>` : `<div class="it" style="color:var(--a-muted)"><span class="ic"></span>None waiting</div>`}</div>
+  <div class="sec"><div class="sh">History</div><div class="it${o.sideSel === 'ops' ? ' sel' : ''}"><span class="ic">↶</span>Op log<span class="r">Ctrl+3</span></div></div>
+</div>`;
+
+const TOOLBAR = (o = {}) => `<div class="tb">
+  <span class="pill">▣ boat <span class="ab">▾</span></span>
+  ${o.detached ? `<span class="pill warn">⚠ Detached HEAD at 6acf5f7</span><span class="btn">Create branch here</span>`
+    : `<span class="pill br"><span>⎇</span><span class="nm">${esc(o.branchShort || o.branch || 'master')}</span><span class="ab">${o.ab || (o.clean ? '↑0 ↓0' : '↑1 ↓0')}</span></span>`}
+  <span class="btn">↓ Fetch</span><span class="btn">⇣ Pull</span><span class="btn">⇡ Push</span>
+  <span class="sp"></span>
+  <span class="pill undo">↶ Undo: ${esc(o.undo || 'cherry-pick')} <span class="k">Ctrl+Z</span></span>
+  <span class="pill cmd">⌕ Search and commands <span class="sp"></span><span class="k">Ctrl+K</span></span>
+</div>`;
+
+const WIN = (t = 'boat · C:\\Users\\Happy\\Documents\\Projects\\boat') => `<div class="win"><b>gitgud</b><span>${esc(t)}</span><span class="dots">— ▢ ✕</span></div>`;
+const STRIP = (o = {}) => `<div class="strip">${o.busy
+  ? `<span>↓ Fetching origin</span><span class="bar"><i></i></span><span class="mono">LFS 3 / 12 files · 41 / 118 MB</span><span>Cancel</span>`
+  : `<span>● Up to date with origin · fetched 2 min ago</span>`}<span class="sp"></span><span>git 2.56.1 (system)</span><span>LFS 3.8.1</span><span>3 locks</span></div>`;
+
+const FILES = (o = {}) => `<div class="flist">
+  <div class="grp">Unstaged <span class="r">${o.lockEdit ? 3 : 2} · Stage all</span></div>
+  <div class="fr sel"><span class="st M">M</span><span class="n">Engine.cs</span><span class="p">Assets/Scripts/Boat/</span><span class="r">+1</span></div>
+  <div class="fr"><span class="st M">M</span><span class="n">TreeBillBoards_albedo.png</span><span class="badge">LFS</span><span class="p">…/Trees/Maps/</span><span class="r">2.0 MB</span></div>
+  ${o.lockEdit ? `<div class="fr" style="background:var(--a-bad)"><span class="st M">M</span><span class="n">Island.unity</span><span class="badge lock">🔒 Lea</span><span class="p">Assets/Scenes/</span></div>` : ''}
+  <div class="grp">Staged <span class="r">1 · Unstage all</span></div>
+  <div class="fr"><span class="st M">M</span><span class="n">Engine.cs</span><span class="badge">partial</span><span class="p">Assets/Scripts/Boat/</span><span class="r">+1</span></div>
+</div>`;
+
+const CODE = {
+  h1: '@@ -3,6 +3,7 @@ using UnityEngine;',
+  a: [[3, 3, ' ', '<span class="kw">using</span> Unity.Collections;'], [4, 4, ' ', '<span class="kw">using</span> Unity.Mathematics;'], [5, 5, ' ', '<span class="kw">using</span> WaterSystem;'], ['', 6, '+', '<span class="cm">// hunk A: keep</span>'], [6, 7, ' ', ''], [7, 8, ' ', '<span class="kw">namespace</span> <span class="ty">BoatAttack</span>']],
+  h2: '@@ -102,5 +103,6 @@ OnDrawGizmosSelected()',
+  b: [[102, 103, ' ', '            Gizmos.matrix = transform.localToWorldMatrix;'], [103, 104, ' ', '            Gizmos.DrawCube(enginePosition, <span class="kw">new</span> <span class="ty">Vector3</span>(0.1f, 0.2f, 0.3f));'], [104, 105, ' ', '        }'], ['', 106, '+', '        <span class="cm">// hunk B: leave unstaged</span>'], [105, 107, ' ', '    }'], [106, 108, ' ', '}']]
+};
+const ln = ([o, n, g, c]) => `<div class="ln${g === '+' ? ' a' : ''}"><span>${o}</span><span>${n}</span><span class="g">${g}</span><code>${c}</code></div>`;
+const DIFF = (o = {}) => `<div class="diff">
+  <div class="dh"><span class="st M">M</span><b>Engine.cs</b><span class="p">Assets/Scripts/Boat/</span><span class="sp" style="flex:1"></span><span class="ab">unified · Ctrl+D split</span></div>
+  <div class="hk"><span class="mono">${CODE.h1}</span><span class="sp"></span><span class="btn">Stage hunk <span class="k">S</span></span><span class="btn">Discard <span class="k">⌫</span></span></div>
+  ${CODE.a.map(ln).join('')}
+  <div class="hk"><span class="mono">${CODE.h2}</span><span class="sp"></span><span class="btn">Stage hunk <span class="k">S</span></span><span class="btn">Discard <span class="k">⌫</span></span></div>
+  ${CODE.b.map(ln).join('')}
+  ${o.img ? `<div class="dh" style="margin-top:6px;border-top:1px solid var(--a-line)"><span class="st M">M</span><b>TreeBillBoards_albedo.png</b><span class="badge">LFS</span><span class="sp" style="flex:1"></span><span class="chip on">Side by side</span><span class="chip">Swipe</span><span class="chip">Onion</span></div>
+  <div class="img2"><div style="--c1:#6f9a3a;--c2:#a07a3c"></div><div style="--c1:#3aa58e;--c2:#4a78b8"></div></div><div class="ab" style="padding:0 10px">2048 × 2048 · 1.94 MB → 1.98 MB</div>` : ''}
+</div>`;
+const CBOX = (o = {}) => `<div class="cbox"><div class="in">Summary · what changed and why</div><div class="bt"><span class="ab">1 file staged · Engine.cs (1 of 2 hunks)</span><span class="sp"></span><span class="btn">⋯</span><span class="btn">✦ Draft</span><span class="btn pri">Commit to ${esc(o.branchShort || 'master')} <span class="k">Ctrl+↵</span></span></div></div>`;
+
+const OPLOG = () => `<div class="olog">
+  ${[['13:29', 'Cherry-pick "Raise ClearShot camera rig" onto master', 'Undo'], ['13:28', 'Reset master to "Hunk A only" (mixed)', 'Restore'], ['13:24', 'Discard Engine.cs · 2 hunks', 'Restore'], ['13:23', 'Merge conflict/theirs into conflict/ours', 'Restore'], ['13:22', 'Rebase feature/stack · squash 1, reword 1', 'Restore'], ['13:21', 'Stash "WIP before rebase"', 'Restore'], ['13:21', 'Commit "Hunk A only"', 'Restore'], ['13:20', 'Stage hunk · Engine.cs @@ -3,6', 'Restore']]
+    .map(([t, d, a], i) => `<div class="o"${i === 2 ? ' style="background:var(--a-sel)"' : ''}><span class="tm">${t}</span><span class="t">${esc(d)}</span><span class="lk">${a}</span></div>`).join('')}
+</div>`;
+
+const INSPECT = {
+  wip: o => `<div class="pane"><div class="ph">Working copy <span class="ct">· master</span><span class="r">Ctrl+1</span></div>${FILES(o)}${o.lockEdit ? `<div class="card" style="margin-top:6px"><div class="cbd"><div class="flag bad">🔒 Island.unity is locked by Lea since Tue 14:02. Your edit can't be pushed until she unlocks it.</div><div style="display:flex;gap:6px"><span class="btn">Discard my edit</span><span class="btn">Keep, remind me before push</span><span class="btn">Copy lock owner</span></div></div></div>` : ''}<div class="ph" style="border-top:1px solid var(--a-line)">Diff</div>${DIFF(o)}${CBOX(o)}</div>`,
+  conflicts: () => `<div class="pane"><div class="ph">Conflicts <span class="ct">· 3 of 3 left · predicted before start</span></div>
+    <div class="card"><div class="chd"><span class="badge">CODE</span><b>Engine.cs</b><span class="ab">2 hunks</span><span class="sp" style="flex:1"></span><span class="btn pri">Resolve in 3-way <span class="k">↵</span></span></div></div>
+    <div class="card"><div class="chd"><span class="badge warn">UNITY YAML</span><b>ReplayCameras.prefab</b><span class="sp" style="flex:1"></span><span class="btn">Mine</span><span class="btn">Theirs</span><span class="btn pri">Open</span></div>
+      <div class="cbd"><div class="ab">Smart Merge merged 1 of 2 changes. Left: BlimpCamera.m_LocalPosition.x  (ours 1.0 · theirs 2.0)</div><div class="flag">Checked after merge: no objects lost.</div></div></div>
+    <div class="card"><div class="chd"><span class="badge">LFS BINARY</span><b>TreeBillBoards_albedo.png</b><span class="sp" style="flex:1"></span><span class="btn">Keep mine</span><span class="btn">Take theirs</span></div><div class="img2" style="grid-template-columns:120px 120px"><div style="--c1:#6f9a3a;--c2:#a07a3c"></div><div style="--c1:#3aa58e;--c2:#4a78b8"></div></div></div>
+    <div class="empty" style="place-content:end center"><span class="ab">Resolved files are staged. Continue rebase when all three are done.</span></div></div>`,
+  proposal: () => `<div class="pane"><div class="ph">Proposal <span class="ct">· from Claude Code · 4 min ago</span></div>
+    <div class="card"><div class="cbd"><div class="in" style="border:1px solid var(--a-line);border-radius:5px;padding:6px 8px;font-weight:600">Tune engine torque curve</div>
+      <div style="color:var(--a-muted)"><b style="color:var(--a-fg)">Why:</b> boats stall on waves above 1.5 m; raises torque at low RPM and adds a curve asset.</div>
+      <div class="flag">⚠ Boat.prefab is lockable and not locked by you</div><div class="flag">⚠ EngineTorque.asset has no .meta file</div>
+      <div style="display:flex;gap:6px"><span class="btn pri">Approve and commit <span class="k">Ctrl+↵</span></span><span class="btn">Edit message</span><span class="btn bad">Reject</span><span class="sp" style="flex:1"></span><span class="ab">Your index is untouched</span></div></div></div>
+    <div class="flist"><div class="grp">3 files · 4 hunks <span class="r">tick to include</span></div>
+      <div class="fr sel"><span class="st M">☑</span><span class="st M">M</span><span class="n">Engine.cs</span><span class="r">+12 −3</span></div>
+      <div class="fr"><span class="st M">☑</span><span class="st A">A</span><span class="n">EngineTorque.asset</span><span class="badge warn">no .meta</span></div>
+      <div class="fr"><span class="st M">☐</span><span class="st M">M</span><span class="n">Boat.prefab</span><span class="badge lock">unlocked</span></div></div>
+    ${DIFF()}</div>`,
+  clean: o => `<div class="pane"><div class="ph">Working copy <span class="ct">· clean</span></div><div class="empty"><b>Nothing to commit</b><span>on ${esc(o.branchShort)}</span><span class="ab">Last action: commit "Tune foam shader falloff" · <span style="color:var(--l0)">Undo (Ctrl+Z)</span></span><span class="ab">No locks held by you · Unity closed</span></div></div>`,
+  commit: () => `<div class="pane"><div class="ph">Commit <span class="ct">· 6acf5f7</span></div><div class="card"><div class="cbd"><b>Remove EmojiOne assets (#209)</b><span class="ab">upstream · 23 Oct 2025 · parent e4864ca</span></div></div><div class="flist"><div class="grp">6 files</div>${['EmojiOne Attribution.txt', 'EmojiOne Attribution.txt.meta', 'EmojiOne.json', 'EmojiOne.json.meta', 'EmojiOne.png', 'EmojiOne.png.meta'].map(f => `<div class="fr"><span class="st U">D</span><span class="n">${f}</span><span class="p">TextMesh Pro/Sprites/</span></div>`).join('')}</div><div class="empty"><span class="ab">Each asset and its .meta are listed as a pair.</span></div></div>`,
+  ops: () => `<div class="pane"><div class="ph">Op log <span class="ct">· every action, discards included</span><span class="r">Ctrl+3</span></div>${OPLOG()}<div class="card"><div class="chd"><b>13:24 · Discard Engine.cs · 2 hunks</b></div><div class="cbd"><span class="ab">Snapshot before: 2 hunks in Engine.cs (unstaged)</span><div style="display:flex;gap:6px"><span class="btn pri">Restore these hunks</span><span class="btn">Restore whole repo to 13:24</span></div></div></div></div>`
+};
+
+function A(o = {}) {
+  const banner = o.rebase ? `<div class="banner rebase">⟲ Rebasing feature/stack · step 2 of 3 · 3 conflicts<span style="flex:1"></span><span class="btn pri">Continue</span><span class="btn">Skip commit</span><span class="btn bad">Abort, back to before</span></div>` : '<div></div>';
+  const ins = INSPECT[o.ins || 'wip'](o);
+  const gsel = o.sel ?? 0;
+  return `<div class="app">${WIN()}${TOOLBAR(o)}${banner}<div class="body" style="grid-template-columns:190px minmax(0,1fr) 520px">${SIDE(o)}<div class="pane"><div class="ph">History <span class="ct">· all branches</span><span class="r">filter ⌕</span></div>${graph({ ...o, sel: gsel })}</div>${ins}</div>${STRIP(o)}</div>`;
+}
+function B() {
+  return `<div class="app">${WIN()}${TOOLBAR()}<div></div><div class="body" style="grid-template-columns:280px minmax(0,1fr) 300px">
+    <div class="pane"><div class="ph">Changes <span class="r">Ctrl+1</span></div>${FILES()}<div class="grp">Locks <span class="r">3 · 1 yours</span></div><div class="flist"><div class="fr"><span class="st">🔒</span><span class="n">Island.unity</span><span class="r">Lea</span></div><div class="fr"><span class="st">🔒</span><span class="n">ReplayCameras.prefab</span><span class="r">you</span></div></div><div class="empty"></div>${CBOX()}</div>
+    <div class="pane"><div class="ph">Diff <span class="ct">· 3 files, one scroll</span><span class="r">Esc back to desk</span></div>${DIFF({ img: true })}</div>
+    <div class="pane"><div class="ph">History <span class="r">◇ 1 proposal</span></div>${graph({ narrow: true })}</div>
+  </div>${STRIP()}</div>`;
+}
+function C() {
+  return `<div class="app">${WIN()}${TOOLBAR()}<div></div><div class="body" style="grid-template-columns:minmax(0,1fr) 560px">
+    <div class="pane"><div class="chips"><span class="chip on">All branches</span><span class="chip">master</span><span class="chip">feature/stack</span><span class="chip">conflict/*</span><span class="chip on">Show my actions</span><span class="chip">Locks 3</span><span class="chip">Stash 1</span></div>
+      <div class="grp">Waiting for you <span class="r">1 proposal</span></div>${graph({ prop: true, max: 1, sel: -1, fixed: true })}
+      <div class="grp">Timeline</div>${graph({ ops: true, sel: 0 })}</div>
+    ${INSPECT.wip({})}
+  </div>${STRIP()}</div>`;
+}
+function D() {
+  const tile = (n, name, inner, f, grow) => `<div class="tile${f ? ' f' : ''}" style="${grow ? 'flex:1' : ''}"><div class="ph"><span class="n">${n}</span>${name}</div>${inner}</div>`;
+  return `<div class="app" style="grid-template-rows:30px 38px auto 1fr 28px">${WIN()}${TOOLBAR()}<div></div><div class="body" style="grid-template-columns:440px minmax(0,1fr);gap:8px;padding:8px;background:var(--a-bg)">
+    <div style="display:flex;flex-direction:column;gap:8px;min-height:0">
+      ${tile(1, 'Status', `<div class="flist"><div class="fr"><span class="n" style="font-weight:600">⎇ master</span><span class="r">↑1 ↓0 · 3 locks (1 yours)</span></div></div>`)}
+      ${tile(2, 'Files', FILES(), true)}
+      ${tile(3, 'Branches', `<div class="flist">${['✓ master ↑1', '  conflict/ours', '  conflict/theirs', '  feature/stack ↑3'].map(b => `<div class="fr"><span class="n">${b}</span></div>`).join('')}</div>`)}
+      ${tile(4, 'Commits', graph({ max: 10, narrow: true }), false, true)}
+      ${tile(5, 'Stash · Op log', `<div class="olog">${['Stash "WIP before rebase"', '↶ Discard Engine.cs · 2 hunks'].map(t => `<div class="o"><span class="tm">13:2x</span><span class="t">${t}</span><span class="lk">↵</span></div>`).join('')}</div>`)}
+    </div>
+    <div class="tile"><div class="ph">Main · Engine.cs</div>${DIFF()}</div>
+  </div><div class="strip"><div class="keys"><span><b>space</b>stage</span><span><b>a</b>stage all</span><span><b>d</b>discard</span><span><b>c</b>commit</span><span><b>z</b>undo</span><span><b>1–5</b>tiles</span><span><b>Ctrl+K</b>commands</span><span><b>?</b>all keys</span></div><span class="sp"></span><span>Files · 2 unstaged</span></div></div>`;
+}
+
+/* ---------- round 2: history edits ---------- */
+const P2 = [L[0], 'var(--l4)', 'var(--a-muted)', L[3], L[4]];
+const UP = () => COMMITS.slice(9, 25).map(c => ({ ...c }));
+const C_M = { lane: 0, refs: [['loc', 'master', 0]], t: 'Raise ClearShot camera rig', au: 'Max', dt: '2 min', h: '95e25c8' };
+const C_BASE = { lane: 0, refs: [['rm', 'origin/master', 0]], t: 'Remove EmojiOne assets (#209)', au: 'upstream', dt: '23 Oct', h: '6acf5f7' };
+const OLD = [
+  { t: 'Move blimp camera rgiht', au: 'Max', dt: '41 min', h: '3493748' },
+  { t: 'fixup! WIP engine thrust tweak', au: 'Max', dt: '41 min', h: '6bb2f7d' },
+  { t: 'WIP engine thrust tweak', au: 'Max', dt: '41 min', h: '4592a21' }
+];
+const GHOST = [
+  { lane: 1, ghost: true, refs: [['after', 'after', 1]], t: 'Move blimp camera right', tag: 'reworded', au: '', h: '' },
+  { lane: 1, ghost: true, t: 'WIP engine thrust tweak', tag: '+ fixup folded in', au: '', h: '' }
+];
+function rowsPlan() {
+  return [
+    { ...C_M, top: [], bot: [0] },
+    { ...GHOST[0], dash: [1], top: [0], bot: [0, 1] },
+    { ...GHOST[1], dash: [1], top: [0, 1], bot: [0, 1] },
+    { ...OLD[0], lane: 2, faded: true, dash: [1], refs: [['head', 'feature/stack', 2]], top: [0, 1], bot: [0, 1, 2] },
+    { ...OLD[1], lane: 2, faded: true, dash: [1], top: [0, 1, 2], bot: [0, 1, 2] },
+    { ...OLD[2], lane: 2, faded: true, dash: [1], top: [0, 1, 2], bot: [0, 1, 2] },
+    { ...C_BASE, dash: [1], top: [0, 1, 2], bot: [0] }, ...UP()];
+}
+function rowsConflict() {
+  return [
+    { ...GHOST[0], dash: [1], top: [], bot: [1] },
+    { ...GHOST[1], tag: '+ fixup · ⚠ conflict', dash: [1], top: [1], bot: [1] },
+    { ...C_M, dash: [1], top: [1], bot: [0] },
+    { ...OLD[0], lane: 2, faded: true, refs: [['head', 'feature/stack', 2]], top: [0], bot: [0, 2] },
+    { ...OLD[1], lane: 2, faded: true, top: [0, 2], bot: [0, 2] },
+    { ...OLD[2], lane: 2, faded: true, top: [0, 2], bot: [0, 2] },
+    { ...C_BASE, top: [0, 2], bot: [0] }, ...UP()];
+}
+function rowsReal(o = {}) {
+  return [
+    { ...C_M, top: [], bot: [0] },
+    { ...OLD[0], lane: 1, refs: [['head', 'feature/stack', 1]], top: [0], bot: [0, 1], edit: o.edit ? 'Move blimp camera right' : '' },
+    { ...OLD[1], lane: 1, faded: o.dragging, top: [0, 1], bot: [0, 1] },
+    { ...OLD[2], lane: 1, drop: o.dragging, top: [0, 1], bot: [0, 1] },
+    { ...C_BASE, top: [0, 1], bot: [0] }, ...UP()];
+}
+function rowsAfter() {
+  return [
+    { ...C_M, top: [], bot: [0] },
+    { ...GHOST[0], refs: [], tag: '← 1', dash: [1], top: [0], bot: [0, 1] },
+    { ...GHOST[1], tag: '← 2+3', dash: [1], top: [0, 1], bot: [0, 1] },
+    { ...C_BASE, dash: [1], top: [0, 1], bot: [0] }, ...UP()];
+}
+function rowsDone() {
+  return [
+    { ...C_M, top: [], bot: [0] },
+    { lane: 1, refs: [['head', 'feature/stack', 1]], t: 'Move blimp camera right', au: 'Max', dt: 'now', h: '9b86b4a', top: [0], bot: [0, 1] },
+    { lane: 1, t: 'WIP engine thrust tweak', au: 'Max', dt: 'now', h: '1f2d60e', top: [0, 1], bot: [0, 1] },
+    { ...OLD[0], lane: 2, faded: true, refs: [['rm', 'origin/feature/stack', 2]], top: [0, 1], bot: [0, 1, 2] },
+    { ...OLD[1], lane: 2, faded: true, top: [0, 1, 2], bot: [0, 1, 2] },
+    { ...OLD[2], lane: 2, faded: true, top: [0, 1, 2], bot: [0, 1, 2] },
+    { ...C_BASE, top: [0, 1, 2], bot: [0] }, ...UP()];
+}
+
+const PREFAB = [[117, 117, ' ', '  m_GameObject: {fileID: 2671655050577180351}'], [118, 118, ' ', '  m_LocalRotation: {x: 0.3307133, y: 0.65137696, z: -0.37939095}'], ['', 119, '+', '  m_LocalPosition: {x: <b>5.0</b>, y: 38.868496, z: 72.38463}'], [119, '', '−', '  m_LocalPosition: {x: <b>4.409273</b>, y: 38.868496, z: 72.38463}'], [120, 120, ' ', '  m_LocalScale: {x: 1, y: 1, z: 1}']];
+const lnD = ([o, n, g, c]) => `<div class="ln${g === '+' ? ' a' : ''}"${g === '−' ? ' style="background:var(--a-del)"' : ''}><span>${o}</span><span>${n}</span><span class="g">${g}</span><code>${c}</code></div>`;
+
+function PLAN(o = {}) {
+  const act = (k, cls, label) => `<span class="act ${cls}"><b>${k}</b>${label}</span>`;
+  const okp = '<span class="pred ok">✓ clean</span>';
+  const rows = [
+    { a: act('R', 'r', 'Reword'), h: '3493748', t: 'Move blimp camera rgiht', pred: o.conflict ? '<span class="pred ok">✓ after step 2</span>' : okp,
+      sub: o.reword ? '' : '→ "Move blimp camera right"', sel: !o.squash },
+    { a: o.squash ? act('S', 's', 'Squash') : act('F', 'f', 'Fixup'), h: '6bb2f7d', t: 'fixup! WIP engine thrust tweak', pred: o.conflict ? '<span class="pred ok">✓ after step 1</span>' : okp,
+      sub: o.squash ? '' : 'auto from "fixup!": folds into 4592a21, its own message is dropped', sel: o.squash,
+      msg: o.squash ? 'WIP engine thrust tweak\n\nSmooth the thrust curve\n# from 6bb2f7d: "fixup! WIP engine thrust tweak"' : '' },
+    { a: act('P', 'p', 'Pick'), h: '4592a21', t: 'WIP engine thrust tweak', pred: o.conflict ? '<span class="pred bad">⚠ Engine.cs</span>' : okp,
+      sub: o.conflict ? 'step 1: this commit and master both add a line after line 5 of Engine.cs' : '' }
+  ];
+  const onto = o.conflict ? 'master · 95e25c8 Raise ClearShot camera rig (newer)' : '6acf5f7 · Remove EmojiOne assets (#209)';
+  const list = rows.map(r => `<div class="pr${r.sel ? ' sel' : ''}"><span class="grip">⋮⋮</span>${r.a}<span class="mono ab">${r.h}</span><span class="t" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.t)}</span>${r.pred}${r.sub ? `<span class="sub2">${esc(r.sub)}</span>` : ''}${r.msg ? `<div class="msg">${esc(r.msg)}</div><span class="sub2">Squash keeps both messages: edit them into one. Ctrl+↵ to confirm.</span>` : ''}</div>`).join('');
+  const sum = o.conflict
+    ? `<div class="ln2"><span>Result: 3 commits → 2</span><span class="pred bad">⚠ 1 conflict predicted at step 1 (WIP engine thrust tweak · Engine.cs)</span></div>
+       <div class="ln2"><span class="btn">Show the conflict</span><span class="btn">Keep the old base</span><span class="sp" style="flex:1"></span><span class="btn">Cancel <span class="k">Esc</span></span><span class="btn">Start anyway</span></div>`
+    : `<div class="ln2"><span>Result: 3 commits → 2</span><span class="pred ok">✓ final files identical to now</span><span class="pred ok">✓ no conflicts predicted</span></div>
+       <div class="flag">feature/stack is on origin: after this you'll need to force-push (with lease).</div>
+       <div class="ln2"><span class="ab">P pick · R reword · E edit · S squash · F fixup · D drop · Alt+↑↓ move</span><span class="sp" style="flex:1"></span><span class="btn">Cancel <span class="k">Esc</span></span><span class="btn pri">Start rebase <span class="k">Ctrl+↵</span></span></div>`;
+  return `<div class="pane plan"${o.modal ? ' style="flex:1;border:0"' : ''}><div class="ph">Edit history <span class="ct">· feature/stack · 3 commits · newest first</span><span class="r">${o.modal ? '✕' : 'Esc cancel'}</span></div>
+    <div class="chips"><span class="chip on">Onto: ${esc(onto)} ▾</span><span class="chip">☐ Update dependent branches (0)</span></div>
+    ${list}
+    <div class="ph" style="border-top:1px solid var(--a-line);margin-top:6px">3493748 · ReplayCameras.prefab</div><div class="diff" style="flex:none">${PREFAB.map(lnD).join('')}</div>
+    <div class="sum">${sum}</div></div>`;
+}
+const PLANBANNER = `<div class="banner plan">✎ Planning a history edit of feature/stack · nothing changes until Start<span style="flex:1"></span><span class="ab">Ctrl+Z after Start undoes the whole rebase</span></div>`;
+const HIST = (rows, legend, sel, pal = P2) => `<div class="pane"><div class="ph">History <span class="ct">· feature/stack + master</span><span class="r legend2">${legend}</span></div>${graph({ rows, pal, sel })}</div>`;
+const TB2 = (o = {}) => TOOLBAR({ branchShort: 'feature/stack', ab: '↑3 ↓0', undo: 'commit', ...o });
+
+function R2A(o = {}) {
+  const rows = o.conflict ? rowsConflict() : rowsPlan();
+  if (o.squash) rows[2].tag = '+ squash, message edited';
+  return `<div class="app">${WIN()}${TB2()}${PLANBANNER}<div class="body" style="grid-template-columns:190px minmax(0,1fr) 520px">${SIDE({ onStack: true })}${HIST(rows, '◌ dashed = after · faded = now', o.conflict ? 3 : 3)}${PLAN(o)}</div>${STRIP()}</div>`;
+}
+function R2B() {
+  const keys = [['R', 'Reword inline'], ['F', 'Fixup into parent'], ['S', 'Squash into parent'], ['D', 'Drop'], ['E', 'Edit (stop here)'], ['Alt+↑↓', 'Move'], ['Ctrl+Z', 'Undo the last edit']];
+  return `<div class="app">${WIN()}${TB2()}<div></div><div class="body" style="grid-template-columns:190px minmax(0,1fr) 520px">${SIDE({ onStack: true })}${HIST(rowsReal({ edit: true, dragging: true }), 'edits apply immediately', 1, L)}
+    <div class="pane"><div class="ph">Commit <span class="ct">· 3493748</span></div>
+      <div class="card"><div class="chd"><b>Move blimp camera rgiht</b><span class="ab">Max · 41 min</span></div><div class="cbd">${keys.map(([k, t]) => `<div style="display:flex;gap:8px"><span class="act p" style="min-width:64px"><b>${k}</b></span><span>${t}</span></div>`).join('')}</div></div>
+      <div class="card"><div class="cbd"><span class="ab">Each edit runs as its own rebase as soon as you confirm it. The op log keeps one entry per edit.</span></div></div>
+      <div class="ph" style="border-top:1px solid var(--a-line)">ReplayCameras.prefab</div><div class="diff">${PREFAB.map(lnD).join('')}</div></div>
+  </div>${STRIP()}
+  <div class="drag" style="left:300px;top:180px"><svg width="14" height="14"><circle cx="7" cy="7" r="4" fill="var(--l4)"/></svg>fixup! WIP engine thrust tweak<span class="ab" style="margin-left:auto">6bb2f7d</span></div>
+  <div class="droplbl" style="left:560px;top:212px">Drop: squash into "WIP engine thrust tweak" · hold Alt to fixup</div></div>`;
+}
+function R2C() {
+  const base = A();
+  return base.slice(0, -6) + `<div class="overlay"><div class="modal">${PLAN({ modal: true })}</div></div></div>`;
+}
+function R2D() {
+  const narrowHist = (title, rows, legend, sel) => `<div class="pane"><div class="ph">${title}<span class="r legend2">${legend}</span></div><div class="narrow" style="flex:1;display:flex;flex-direction:column;min-height:0">${graph({ rows, pal: P2, sel, narrow: true })}</div></div>`;
+  return `<div class="app">${WIN()}${TB2()}${PLANBANNER}<div class="body" style="grid-template-columns:190px minmax(0,1fr) minmax(0,1fr) 400px">${SIDE({ onStack: true })}
+    ${narrowHist('Now', rowsReal(), '3 commits', 1)}${narrowHist('After', rowsAfter(), '2 commits · dashed', 1)}
+    <div class="pane plan"><div class="ph">3493748 <span class="ct">· Move blimp camera rgiht</span></div>
+      <div class="card"><div class="cbd"><div style="display:flex;gap:5px;flex-wrap:wrap"><span class="act p"><b>P</b>Pick</span><span class="act r" style="background:var(--a-sel)"><b>R</b>Reword</span><span class="act p"><b>E</b>Edit</span><span class="act s"><b>S</b>Squash</span><span class="act f"><b>F</b>Fixup</span><span class="act d"><b>D</b>Drop</span></div>
+        <div class="msg" style="white-space:normal">Move blimp camera right</div><span class="ab">Maps to "after" row 1. Select an after-row to see which commits it came from.</span></div></div>
+      <div class="ph" style="border-top:1px solid var(--a-line)">ReplayCameras.prefab</div><div class="diff" style="flex:none">${PREFAB.map(lnD).join('')}</div>
+      <div class="sum"><div class="ln2"><span>3 → 2 commits</span><span class="pred ok">✓ identical files</span><span class="pred ok">✓ no conflicts</span></div><div class="ln2"><span class="sp" style="flex:1"></span><span class="btn">Cancel</span><span class="btn pri">Start rebase <span class="k">Ctrl+↵</span></span></div></div></div>
+  </div>${STRIP()}</div>`;
+}
+function R2S3() {
+  return `<div class="app">${WIN()}${TB2({ ab: '↑2 ↓3', undo: 'rebase feature/stack' })}<div></div><div class="body" style="grid-template-columns:190px minmax(0,1fr) 520px">${SIDE({ onStack: true, stackAb: '↑2 ↓3' })}${HIST(rowsDone(), 'faded = still on origin', 1)}
+    <div class="pane"><div class="ph">Done <span class="ct">· 13:41</span></div>
+      <div class="card"><div class="chd"><b>Rebased feature/stack · 3 commits → 2</b></div><div class="cbd">
+        <span class="pred ok">✓ Final files identical to before</span>
+        <span>Reworded 3493748 → "Move blimp camera right" · folded 6bb2f7d into 4592a21</span>
+        <div class="flag">origin/feature/stack still has the old 3 commits. Push replaces them.</div>
+        <div style="display:flex;gap:6px"><span class="btn pri">Force-push with lease…</span><span class="btn">Undo rebase <span class="k">Ctrl+Z</span></span></div></div></div>
+      <div class="ph" style="border-top:1px solid var(--a-line)">Op log</div>
+      <div class="olog"><div class="o" style="background:var(--a-sel)"><span class="tm">13:41</span><span class="t">Rebase feature/stack · reword 1, fixup 1</span><span class="lk">Undo</span></div><div class="o"><span class="tm">13:29</span><span class="t">Cherry-pick "Raise ClearShot camera rig" onto master</span><span class="lk">Restore</span></div></div>
+      <div class="empty"></div></div>
+  </div>${STRIP()}</div>`;
+}
+
+/* ---------- round 3: many projects ---------- */
+// name, folder, path, branch, changes, ahead/behind, locks held, last activity, host, unity, missing
+const REPOS = [
+  ['arcade-shell', 'Studio / Arcade', 'D:\\Work\\arcade\\arcade-shell', 'main', '5', '↑2 ↓4', '', '3 h', 'BB', 1],
+  ['coin-op-io', 'Studio / Arcade', 'D:\\Work\\arcade\\coin-op-io', 'main', '', '', '', 'yesterday', 'BB', 0],
+  ['ticket-printer', 'Studio / Arcade', 'D:\\Work\\arcade\\ticket-printer', 'develop', '', '', '', '6 days', 'BB', 0],
+  ['claw-machine-ui', 'Studio / Arcade', 'D:\\Work\\arcade\\claw-machine-ui', 'feature/attract-mode-loop', '2', '↑1', '1', '2 days', 'BB', 1],
+  ['quest-racer', 'Studio / VR', 'D:\\Work\\vr\\quest-racer', 'develop', '', '', '2', '1 h', 'BB', 1],
+  ['vr-lobby', 'Studio / VR', 'D:\\Work\\vr\\vr-lobby', 'main', '', '↓7', '', '3 days', 'BB', 1],
+  ['hand-tracking-lab', 'Studio / VR', 'D:\\Work\\vr\\hand-tracking-lab', 'main', '', '', '', '2 wk', 'BB', 1],
+  ['marble-run', 'Studio / Mobile', 'D:\\Work\\mobile\\marble-run', 'release/2.3', '', '↓12', '', 'yesterday', 'BB', 1],
+  ['idle-bakery', 'Studio / Mobile', 'D:\\Work\\mobile\\idle-bakery', 'feature/prestige-rework', '14', '↑3', '', '2 days', 'BB', 1],
+  ['puzzle-pets', 'Studio / Mobile', 'D:\\Work\\mobile\\puzzle-pets', 'main', '', '', '', '1 mo', 'BB', 1],
+  ['boat', 'Games / Personal', 'D:\\Games\\boat', 'master', '2', '↑1', '1', '2 min', 'GH', 1],
+  ['asteroid-belt', 'Games / Personal', 'D:\\Games\\asteroid-belt', 'main', '', '', '', '3 wk', 'GH', 1],
+  ['ld55-tiny-tanks', 'Games / Jams', 'D:\\Games\\jams\\ld55-tiny-tanks', 'main', '', '', '', '1 yr', 'GH', 1],
+  ['ld48-deeper', 'Games / Jams', 'D:\\Old\\ld48-deeper', '—', '', '', '', '2 yr', 'GH', 1, 1],
+  ['gitgud', 'Tools', 'D:\\Tools\\gitgud', 'main', '', '↑1', '', 'now', 'GH', 0],
+  ['lfs-lock-bot', 'Tools', 'D:\\Tools\\lfs-lock-bot', 'main', '3', '', '', '5 days', 'GH', 0],
+  ['dotfiles', 'Tools', 'D:\\Tools\\dotfiles', 'main', '', '', '', 'today', 'GH', 0],
+  ['shader-lab', 'Experiments', 'D:\\Lab\\shader-lab', 'main', '1', '', '', '4 days', 'GH', 1],
+  ['orbit-sim', 'Experiments', 'D:\\Lab\\orbit-sim', 'main', '', '', '', '2 wk', 'GH', 0],
+  ['particle-garden', 'Experiments', 'D:\\Lab\\particle-garden', 'main', '', '', '', '1 mo', 'GH', 0],
+  ['cinemachine', 'Forks', 'D:\\Forks\\cinemachine', 'fix/blend-null-ref', '', '↑1 ↓40', '', '2 mo', 'GH', 0],
+  ['ar-museum', 'Archive', 'E:\\Archive\\ar-museum', 'master', '', '', '', '2 yr', 'BB', 1]
+];
+const libRow = (r, o = {}) => `<div class="lr${o.sel ? ' sel' : ''}${r[10] ? ' miss' : ''}"><span>${r[10] ? '⚠' : (r[4] ? '<span class="tab"><span class="dot"></span></span>' : '')}</span><span class="nm">${esc(r[0])} ${r[9] ? '<span class="unity">U</span>' : ''}</span><span class="pa">${r[10] ? '<b style="color:var(--a-bad-ink)">Not found at ' + esc(r[2]) + '</b> · <span style="color:var(--l0)">Locate…</span> · <span style="color:var(--l0)">Remove from gitgud</span>' : esc(r[2])}</span><span>${esc(r[3])}</span><span class="ch">${r[4] ? r[4] + ' changed' : ''}</span><span class="ab2">${esc(r[5])}</span><span>${r[6] ? '🔒 ' + r[6] : ''}</span><span class="la">${esc(r[7])}</span><span class="host">${r[8]}</span></div>`;
+const PROTOS = ['proto-grapple', 'proto-rhythm-bowl', 'proto-snowball-fight', 'proto-magnet-golf', 'proto-crowd-sim', 'proto-tide-pool', 'proto-paper-plane', 'proto-ghost-hunt', 'proto-slingshot', 'proto-weather-toy', 'proto-tiny-trains', 'proto-lantern-maze']
+  .map((n, i) => [n, 'Studio / Prototypes', 'D:\\Work\\prototypes\\' + n, i === 3 ? 'spike/physics-v2' : 'main', i === 1 ? '6' : '', '', '', ['4 days', '1 wk', '1 wk', '2 wk', '3 wk', '1 mo', '1 mo', '2 mo', '2 mo', '3 mo', '5 mo', '8 mo'][i], 'BB', 1]);
+const GCOUNT = { Prototypes: 20, prototypes: 20, Arcade: 14, VR: 9, Mobile: 21, arcade: 14, vr: 9, mobile: 21, Personal: 18, Jams: 13 };
+const LIBHEAD =`<div class="lr hd"><span></span><span>Repository</span><span>Location</span><span>Branch</span><span>Changes</span><span>↑↓</span><span>Locks</span><span>Active ▾</span><span></span></div>`;
+function libList(rows, o = {}) {
+  let out = '', last = '';
+  rows.forEach((r, i) => {
+    const g = o.groupBy ? o.groupBy(r) : r[1];
+    if (g !== last) {
+      const shown = rows.filter(x => (o.groupBy ? o.groupBy(x) : x[1]) === g).length;
+      const total = GCOUNT[g.split(/[\\/ ]+/).pop()] || shown;
+      out += `<div class="gh">${esc(g)}<span style="font-weight:400">· ${total}${total > shown ? ` · ${shown} most recent · <span style="color:var(--l0)">show all</span>` : ''}</span></div>`; last = g;
+    }
+    out += libRow(r, { sel: i === (o.sel ?? 0) });
+  });
+  return out + (o.more ? `<div class="gh" style="justify-content:center;font-weight:400">${o.more}</div>` : '');
+}
+const TREE_A = (sel = 'Studio') => {
+  const it = (ic, t, n, ind = 0, s = false) => `<div class="it${s ? ' sel' : ''}" style="--ind:${ind}"><span class="ic">${ic}</span>${t}<span class="r">${n}</span></div>`;
+  return `<div class="pane side"><div class="sec">${it('▤', 'All repositories', 152, 0, sel === 'All')}${it('◷', 'Recent', '')}${it('★', 'Pinned', 6)}</div>
+    <div class="sec"><div class="sh">Folders <span class="ct">+ new</span></div>${it('▾', 'Studio', 64, 0, sel === 'Studio')}${it('', 'Arcade', 14, 1)}${it('', 'VR', 9, 1)}${it('', 'Mobile', 21, 1)}${it('', 'Prototypes', 20, 1)}${it('▾', 'Games', 31, 0, sel === 'Games')}${it('', 'Personal', 18, 1)}${it('', 'Jams', 13, 1, sel === 'Jams')}${it('▸', 'Tools', 12)}${it('▸', 'Experiments', 23)}${it('▸', 'Forks', 9)}${it('▸', 'Archive', 13)}</div>
+    <div class="sec"><div class="sh">Smart filters</div>${it('●', 'Uncommitted', 7)}${it('↑', 'Not pushed', 5)}${it('🔒', 'Locks I hold', 3)}${it('U', 'Unity projects', 64)}${it('⚠', 'Missing on disk', 1, 0, sel === 'Missing')}</div></div>`;
+};
+const TREE_D = () => {
+  const it = (ic, t, n, ind = 0, s = false) => `<div class="it${s ? ' sel' : ''}" style="--ind:${ind}"><span class="ic">${ic}</span>${t}<span class="r">${n}</span></div>`;
+  return `<div class="pane side"><div class="sec">${it('▤', 'All repositories', 152)}${it('★', 'Pinned', 6)}</div>
+    <div class="sec"><div class="sh">By location</div>${it('▾', 'D:\\Work', 64, 0, true)}${it('', 'arcade', 14, 1)}${it('', 'vr', 9, 1)}${it('', 'mobile', 21, 1)}${it('▸', 'D:\\Games', 31)}${it('▸', 'D:\\Lab', 23)}${it('▸', 'D:\\Tools', 12)}${it('▸', 'E:\\Archive', 13)}</div>
+    <div class="sec"><div class="sh">By host</div>${it('', 'Bitbucket · studio', 70)}${it('', 'GitHub · you', 61)}${it('', 'GitHub · forks', 9)}${it('', 'No remote', 12)}</div>
+    <div class="sec"><div class="sh">By kind</div>${it('U', 'Unity', 64)}${it('', 'Rust', 9)}${it('', 'Web', 14)}${it('', 'Other', 65)}</div>
+    <div class="sec"><div class="sh">Status</div>${it('●', 'Uncommitted', 7)}${it('↑', 'Not pushed', 5)}${it('🔒', 'Locks I hold', 3)}</div></div>`;
+};
+const OPEN = [['boat', 1], ['quest-racer', 0], ['arcade-shell', 1], ['gitgud', 0]];
+const TABS = (o = {}) => {
+  const list = o.many ? [['boat', 1], ['quest-racer', 0], ['arcade-shell', 1], ['gitgud', 0], ['idle-bakery', 1], ['claw-machine-ui', 1], ['marble-run', 0], ['shader-lab', 1], ['vr-lobby', 0], ['lfs-lock-bot', 1], ['coin-op-io', 0], ['cinemachine', 0]] : OPEN;
+  const shown = o.many ? list.slice(0, 8) : list;
+  return `<div class="tabs">${o.noLib ? '' : `<span class="tab lib${o.lib ? ' on' : ''}">⌂ Library</span>`}${shown.map(([n, d], i) => `<span class="tab${!o.lib && i === (o.active || 0) ? ' on' : ''}">${d ? '<span class="dot"></span>' : ''}<span class="nm">${n}</span>${n === 'quest-racer' ? '<span class="ab">🔒</span>' : ''}${!o.lib && i === (o.active || 0) ? '<span class="ab">✕</span>' : ''}</span>`).join('')}${o.many ? '<span class="tab">+4 ▾</span>' : ''}<span class="tab" style="border:0">+</span><span style="flex:1"></span><span class="tab" style="border:0">Ctrl+P go to repo</span></div>`;
+};
+function LIB(o = {}) {
+  const rows = o.rows || REPOS.slice(0, 10).concat(PROTOS);
+  const q = o.q ? `<span class="q">${esc(o.q)}▏</span>` : `<span class="ph2">Filter ${o.d ? '152 repos' : (o.label || 'Studio (64)')} · name, path, branch, remote · or just start typing</span>`;
+  return `<div class="app" style="grid-template-rows:30px 32px 1fr 24px">${WIN('gitgud · Library')}${TABS({ lib: true })}<div class="body" style="grid-template-columns:230px minmax(0,1fr)">${o.d ? TREE_D() : TREE_A(o.tree)}
+    <div class="pane lib"><div style="display:flex;align-items:center"><div class="search" style="flex:1">⌕ ${q}<span class="ab">Enter opens in a new tab</span></div><span class="btn" style="margin-right:6px">+ Add repo</span><span class="btn" style="margin-right:12px">Scan a folder…</span></div>
+      ${LIBHEAD}<div style="overflow:hidden;flex:1">${libList(rows, { groupBy: o.groupBy, sel: o.sel, more: '' })}</div></div>
+  </div><div class="strip"><span>152 repositories · status cached, refreshed for visible rows</span><span class="sp"></span><span>last full refresh 13:02</span></div>${o.extra || ''}</div>`;
+}
+function withTabs(app, o = {}) {
+  return app.replace('<div class="app">', '<div class="app" style="grid-template-rows:30px 32px 38px auto 1fr 24px">').replace('</div><div class="tb">', `</div>${TABS(o)}<div class="tb">`);
+}
+function R3B() {
+  const it = (t, ind, cls = '', dot = false, n = '') => `<div class="it${cls}" style="--ind:${ind}"><span class="ic">${dot ? '<span class="tab" style="padding:0;border:0"><span class="dot"></span></span>' : ''}</span>${t}<span class="r">${n}</span></div>`;
+  const rail = `<div class="pane side"><div class="search" style="margin:6px;height:26px;border-width:1px;border-color:var(--a-line)">⌕ <span class="ph2">152 repos</span></div>
+    <div class="sec"><div class="sh">Open <span class="ct">4</span></div>${it('boat', 0, ' sel cur', true)}${it('quest-racer', 0, ' cur')}${it('arcade-shell', 0, ' cur', true)}${it('gitgud', 0, ' cur')}</div>
+    <div class="sec"><div class="sh">Folders</div>${it('▾ Studio', 0, '', false, 64)}${it('▾ Arcade', 1, '', false, 14)}${it('claw-machine-ui', 2, '', true)}${it('coin-op-io', 2)}${it('ticket-printer', 2)}${it('▸ VR', 1, '', false, 9)}${it('▸ Mobile', 1, '', false, 21)}${it('▸ Prototypes', 1, '', false, 20)}${it('▸ Games', 0, '', false, 31)}${it('▸ Tools', 0, '', false, 12)}${it('▸ Experiments', 0, '', false, 23)}${it('▸ Forks', 0, '', false, 9)}${it('▸ Archive', 0, '', false, 13)}</div></div>`;
+  return `<div class="app">${WIN()}${TOOLBAR()}<div></div><div class="body" style="grid-template-columns:200px 170px minmax(0,1fr) 440px">${rail}${SIDE()}<div class="pane"><div class="ph">History</div>${graph({ narrow: false })}</div>${INSPECT.wip({})}</div>${STRIP()}</div>`;
+}
+function PAL(o = {}) {
+  const rows = o.tags
+    ? [['arcade-shell', '#studio #arcade #unity', 'main · 5 changed · ↑2 ↓4'], ['claw-machine-ui', '#studio #arcade #unity', 'feature/attract-mode-loop · 2 changed'], ['coin-op-io', '#studio #arcade', 'main'], ['ticket-printer', '#studio #arcade', 'develop'], ['arcade-cabinet-fw', '#studio #arcade #firmware', 'main · not opened in 3 mo']]
+    : [['arcade-shell', 'Studio / Arcade /', 'open in tab 3 · main · 5 changed'], ['claw-machine-ui', 'Studio / Arcade /', 'feature/attract-mode-loop · 2 changed'], ['coin-op-io', 'Studio / Arcade /', 'main'], ['ticket-printer', 'Studio / Arcade /', 'develop'], ['ar-museum', 'Archive /', 'master · 2 yr']];
+  return `<div class="pal"><div class="search" style="margin:8px">⌕ <span class="q">${o.tags ? '#arcade ' : ''}arc▏</span><span class="ab">${o.tags ? 'tags filter with #' : 'Enter open · Ctrl+Enter new window'}</span></div>
+    <div class="gh" style="padding:4px 12px;font:600 10.5px var(--mono);color:var(--a-muted)">${o.tags ? 'Tagged #arcade, matching "arc"' : 'Matches · recent first'}</div>
+    ${rows.map(([n, pf, st], i) => `<div class="pr2${i === 0 ? ' sel' : ''}"><span>${i === 0 && !o.tags ? '⇥' : '▣'}</span><span>${o.tags ? '' : `<span class="pf">${esc(pf)} </span>`}<b>${esc(n)}</b>${o.tags ? `<span class="tg2">${esc(pf)}</span>` : ''}</span><span class="ab">${esc(st)}</span></div>`).join('')}
+    <div class="gh" style="padding:4px 12px;font:600 10.5px var(--mono);color:var(--a-muted)">Actions</div>
+    <div class="pr2"><span>+</span><span>${o.tags ? 'Edit tags of arcade-shell…' : 'Clone a repository…'}</span><span class="ab">${o.tags ? 'Ctrl+T' : ''}</span></div></div>`;
+}
+function R3S3() {
+  const g = (p, n, f, on = true) => `<div class="pr2"><span>${on ? '☑' : '☐'}</span><span><b>${esc(p)}</b> <span class="ab">· ${n} repos</span></span><span class="chip on">→ ${esc(f)} ▾</span></div>`;
+  const modal = `<div class="overlay"><div class="pal" style="position:static;width:640px"><div class="ph">Add repositories · scan D:\\Work<span class="r">✕</span></div>
+    <div class="search" style="margin:8px;border-color:var(--a-line);border-width:1px">📁 <span class="q">D:\\Work</span><span class="ab">41 found in 1.8 s</span></div>
+    ${g('D:\\Work\\arcade', 14, 'Studio / Arcade (exists)')}${g('D:\\Work\\vr', 9, 'Studio / VR (new)')}${g('D:\\Work\\mobile', 11, 'Studio / Mobile (exists)')}${g('D:\\Work\\prototypes', 3, 'Studio / Prototypes (new)')}${g('D:\\Work\\_backup', 4, 'skip', false)}
+    <div class="pr2"><span></span><span class="ab">12 of these are already in gitgud and stay where they are.</span><span></span></div>
+    <div class="ln2" style="display:flex;gap:6px;padding:10px 12px;border-top:1px solid var(--a-line)"><span class="ab">Folders are suggested from the disk layout; change any before adding.</span><span class="sp" style="flex:1"></span><span class="btn">Cancel</span><span class="btn pri">Add 25 repos</span></div></div></div>`;
+  return LIB({ extra: modal });
+}
+
+/* ---------- round 4: merge conflicts ---------- */
+const MBANNER = (o = {}) => o.done
+  ? `<div class="banner" style="background:var(--a-add);color:var(--a-add-ink)">⇄ Merging conflict/theirs into conflict/ours · all 4 files resolved<span style="flex:1"></span><span class="btn pri">Commit merge <span class="k">Ctrl+↵</span></span><span class="btn bad">Abort, back to before</span></div>`
+  : `<div class="banner rebase">⇄ Merging conflict/theirs into conflict/ours · ${o.left ?? 4} of 4 files left<span style="flex:1"></span><span class="btn" style="opacity:.55">Commit merge</span><span class="btn bad">Abort, back to before</span></div>`;
+function CFILES(o = {}) {
+  const ok = o.done ? '<span class="pred ok">✓</span>' : '';
+  const f = (key, name, kind, kc, note) => {
+    const r = o.done || (o.ok || []).includes(key);
+    return `<div class="fr${o.sel === key ? ' sel' : ''}"><span class="st ${r ? 'A' : 'U'}">${r ? '✓' : 'U'}</span><span class="n">${name}</span><span class="r">${r ? '<span class="pred ok">resolved</span>' : note}</span></div>`;
+  };
+  return `<div class="pane cf"><div class="ph">Conflicts <span class="ct">· 4 files</span><span class="r">↑↓ · Enter</span></div><div class="flist">
+    <div class="grp">Unity YAML · Smart Merge <span class="r">2</span></div>
+    ${f('rc', 'ReplayCameras.prefab', '', '', o.noSmart ? '3 text hunks' : '1 left · 2 auto')}
+    ${f('bb', 'BaseButton_Finish.prefab', '', '', o.noSmart ? '2 text hunks' : '<span class="badge warn">verify</span>')}
+    <div class="grp">Code <span class="r">1</span></div>
+    ${f('en', 'Engine.cs', '', '', '1 hunk')}
+    <div class="grp">LFS binary <span class="r">1</span></div>
+    ${f('tx', 'TreeBillBoards_albedo.png', '', '', 'pick a side')}
+  </div><div class="empty" style="place-content:end start;text-align:left;padding:10px"><span class="ab">Resolved files are staged as you go. Ctrl+Z undoes a pick.</span></div></div>`;
+}
+const TB4 = () => TOOLBAR({ branchShort: 'conflict/ours · merging', ab: '', undo: 'pick (yours)' });
+const APP4 = (inner, o = {}) => `<div class="app">${WIN()}${TB4()}${MBANNER(o)}<div class="body" style="grid-template-columns:190px 270px minmax(0,1fr)">${SIDE()}${CFILES(o)}${inner}</div>${STRIP()}</div>`;
+const pv = (s, c = '') => `<span class="v ${c}">${esc(s)}</span>`;
+const PICKS = (on = 0, labels = ['Yours', 'Theirs']) => `<span class="picks"><span class="btn${on === 1 ? ' on' : ''}"><span class="k">1</span>${labels[0]}</span><span class="btn${on === 2 ? ' on' : ''}"><span class="k">2</span>${labels[1]}</span><span class="btn"><span class="k">E</span>Edit</span></span>`;
+const FROW = (path, base, y, t, res, o = {}) => `<div class="fr2${o.sel ? ' sel' : ''}${o.auto ? ' auto' : ''}"><span>${o.auto ? '<span class="pred ok">✓</span>' : (o.warn ? '⚠' : '●')}</span><span class="path">${path}</span>${pv(base)}${pv(y, 'y' + (o.xy ? ' x' : ''))}${pv(t, 't' + (o.xt ? ' x' : ''))}<span>${res}</span></div>`;
+const FHEAD = `<div class="fh"><span></span><span>Object › component › property</span><span>Base</span><span style="color:var(--l0)">Yours</span><span style="color:var(--l1)">Theirs</span><span>Result</span></div>`;
+const YAMLCTX = (lines) => `<div class="ph" style="border-top:1px solid var(--a-line)">YAML around the selected property<span class="r">fileID 571479311832868573 → BlimpCamera</span></div><div class="diff" style="flex:none">${lines.map(lnD).join('')}</div>`;
+function R4A() {
+  const inner = `<div class="pane ft"><div class="ph">ReplayCameras.prefab <span class="ct">· Unity YAML · Smart Merge ran</span><span class="r"><span class="chip on">Properties</span> <span class="chip">YAML</span></span></div>
+    ${FHEAD}
+    <div class="grp">Needs you <span class="r">1</span></div>
+    ${FROW('<b>BlimpCamera</b> › Transform › Position.x', '4.409273', '1.0', '2.0', PICKS(), { sel: true })}
+    <div class="grp">Merged automatically <span class="r">2 · check, nothing to do</span></div>
+    ${FROW('<b>DroneCamera</b> › Transform › Rotation.y', '-0', '-0', '0.25', '<span class="ab">theirs · 0.25</span>', { auto: true })}
+    ${FROW('<b>DroneCamera</b> › Transform › Position.z', '-38.55', '-40', '-38.55', '<span class="ab">yours · -40</span>', { auto: true })}
+    ${YAMLCTX([[117, 117, ' ', '  m_GameObject: {fileID: 2671655050577180351}'], [118, 118, ' ', '  m_LocalRotation: {x: 0.3307133, y: 0.65137696, z: -0.37939095}'], [119, 119, '±', '  m_LocalPosition: {x: <b>?</b>, y: 38.868496, z: 72.38463}'], [120, 120, ' ', '  m_LocalScale: {x: 1, y: 1, z: 1}']])}
+    <div class="sum"><div class="ln2"><span class="ab">↑↓ move · 1 yours · 2 theirs · E edit value · Ctrl+↵ mark file resolved</span><span class="sp" style="flex:1"></span><span class="btn">Open in Unity</span><span class="btn pri" style="opacity:.55">Mark resolved <span class="k">Ctrl+↵</span></span></div></div></div>`;
+  return APP4(inner, { sel: 'rc' });
+}
+function TEXT3(left, mid, right, title, note) {
+  const col = (h, lines) => `<div style="min-width:0;border-right:1px solid var(--a-line)"><div class="dh"><b>${h}</b></div><div class="diff" style="font-size:11px">${lines.map(([n, t, c]) => `<div class="ln" style="grid-template-columns:30px 0 12px minmax(0,1fr);${c ? `background:var(${c})` : ''}"><span>${n}</span><span></span><span class="g"></span><code>${t}</code></div>`).join('')}</div></div>`;
+  return `<div class="pane"><div class="ph">${title}<span class="r">Prev / Next conflict · F7</span></div>${note || ''}<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));flex:1;min-height:0">${col(...left)}${col(...mid)}${col(...right)}</div>
+    <div class="sum"><div class="ln2"><span class="ab">Ctrl+Shift+[ use yours · Ctrl+Shift+] use theirs · Ctrl+Shift+B use both</span><span class="sp" style="flex:1"></span><span class="btn pri">Save and mark resolved <span class="k">Ctrl+↵</span></span></div></div></div>`;
+}
+const YLAB = t => [``, `<span style="color:var(--l3);font:600 10.5px var(--body)">▸ ${t}</span>`, ''];
+function R4B() {
+  const L1 = [[116, '  m_PrefabAsset: {fileID: 0}'], [117, '  m_GameObject: {fileID: 26716550505771…}'], [118, '  m_LocalRotation: {x: 0.3307133, …}']];
+  const yours = [YLAB('BlimpCamera › Transform'), ...L1.map(([n, t]) => [n, t]), [119, '  m_LocalPosition: {x: <b>1.0</b>, y: 38.87, …}', '--a-sel'], [120, '  m_LocalScale: {x: 1, y: 1, z: 1}'], ['', ''], YLAB('DroneCamera › Transform'), [370, '  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}'], [371, '  m_LocalPosition: {x: -40, y: 2.01, z: 21.84}', '--a-sel']];
+  const mid = [YLAB('BlimpCamera › Transform'), ...L1.map(([n, t]) => [n, t]), [119, '<<<<<<< yours · conflict/ours', '--a-bad'], ['', '  m_LocalPosition: {x: 1.0, …}', '--a-bad'], ['', '=======', '--a-bad'], ['', '  m_LocalPosition: {x: 2.0, …}', '--a-bad'], ['', '>>>>>>> theirs · conflict/theirs', '--a-bad'], [120, '  m_LocalScale: {x: 1, y: 1, z: 1}'], ['', ''], YLAB('DroneCamera › Transform'), [370, '  m_LocalRotation: {x: -0, y: 0.25, …}'], [371, '  m_LocalPosition: {x: -40, y: 2.01, …}']];
+  const theirs = [YLAB('BlimpCamera › Transform'), ...L1.map(([n, t]) => [n, t]), [119, '  m_LocalPosition: {x: <b>2.0</b>, y: 38.87, …}', '--a-warn'], [120, '  m_LocalScale: {x: 1, y: 1, z: 1}'], ['', ''], YLAB('DroneCamera › Transform'), [370, '  m_LocalRotation: {x: -0, y: 0.25, z: -0, w: 1}', '--a-warn'], [371, '  m_LocalPosition: {x: -38.55, y: 2.01, …}']];
+  const note = `<div class="card" style="margin:6px 10px"><div class="cbd"><div class="flag">Smart Merge left no conflict markers in this file. gitgud re-created them from its report so there is something to resolve here.</div></div></div>`;
+  return APP4(TEXT3(['Yours · conflict/ours', yours], ['Result', mid], ['Theirs · conflict/theirs', theirs], 'ReplayCameras.prefab <span class="ct">· 3-way text, names in gutter</span>', note), { sel: 'rc' });
+}
+function R4C() {
+  const tree = (title, marks, sel) => `<div class="pane tree2 side" style="border-right:1px solid var(--a-line)"><div class="ph">${title}</div>${[['ReplayCameras', 0, ''], ['BlimpCamera', 1, marks.b], ['DroneCamera', 1, marks.d], ['ClearShotRig', 1, ''], ['TrackCam_A', 2, ''], ['TrackCam_B', 2, ''], ['TrackCam_C', 2, ''], ['TrackCam_D', 2, ''], ['CinemaCam_Wide', 1, ''], ['CinemaCam_Tele', 1, ''], ['ReplayDirector', 1, '']].map(([n, ind, m]) => `<div class="it${m ? ' ch' : ''}${n === sel ? ' sel' : ''}" style="--ind:${ind}"><span class="ic">${m ? '●' : '▫'}</span>${n}<span class="r">${m}</span></div>`).join('')}</div>`;
+  const field = (label, y, t, b, pick) => `<div class="fr2" style="grid-template-columns:150px 110px 110px 110px minmax(0,1fr)"><span>${label}</span>${pv(b)}<span>${pick === 1 ? '◉' : '○'} ${pv(y, 'y')}</span><span>${pick === 2 ? '◉' : '○'} ${pv(t, 't')}</span><span class="ab">${pick ? '' : 'pick one'}</span></div>`;
+  const inner = `<div class="pane"><div class="ph">ReplayCameras.prefab <span class="ct">· hierarchy</span></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;height:300px;border-bottom:1px solid var(--a-line)">${tree('Yours · conflict/ours', { b: 'changed', d: 'changed' }, 'BlimpCamera')}${tree('Theirs · conflict/theirs', { b: 'changed', d: 'changed' }, 'BlimpCamera')}</div>
+    <div class="ph">BlimpCamera › Transform <span class="ct">· 1 field differs on both sides</span></div>
+    <div class="ft"><div class="fh" style="grid-template-columns:150px 110px 110px 110px minmax(0,1fr)"><span>Field</span><span>Base</span><span style="color:var(--l0)">Yours</span><span style="color:var(--l1)">Theirs</span><span></span></div>
+      ${field('Position X', '1.0', '2.0', '4.409273', 0)}${field('Position Y', '38.868496', '38.868496', '38.868496', 1)}${field('Position Z', '72.38463', '72.38463', '72.38463', 1)}${field('Rotation', '(0.33, 0.65, -0.38)', '(0.33, 0.65, -0.38)', 'unchanged', 1)}</div></div>`;
+  return APP4(inner, { sel: 'rc' });
+}
+function R4D() {
+  const card = (cls, head, val, key, sub) => `<div class="cd ${cls}"><span class="ab">${head}</span><b class="v2">${val}</b><span class="ab">${sub}</span>${key ? `<span class="btn" style="justify-self:start"><span class="k">${key}</span> Use this</span>` : ''}</div>`;
+  const inner = `<div class="pane"><div style="padding:14px 18px;display:grid;gap:8px;border-bottom:1px solid var(--a-line)"><div style="display:flex;gap:10px;align-items:center"><b>Conflict 1 of 4</b><span class="ab">across 4 files · 0 resolved</span><span class="sp" style="flex:1"></span><span class="btn">← Back</span><span class="btn">Skip for now <span class="k">S</span></span></div><div class="prog"><i style="width:4%"></i></div></div>
+    <div style="padding:16px 18px 0"><span class="ab">ReplayCameras.prefab · Unity YAML</span><div style="font:600 22px var(--display);margin-top:4px">BlimpCamera › Transform › Position X</div><span class="ab">Both branches moved the blimp camera sideways, to different places.</span></div>
+    <div class="big3">${card('', 'Base · before both', '4.409273', '', 'common ancestor 6acf5f7')}${card('y', 'Yours · conflict/ours', '1.0', '1', 'f166a0a "Ours: power curve, move blimp"')}${card('', 'Theirs · conflict/theirs', '2.0', '2', '669434e "Theirs: torque table, move blimp"')}</div>
+    <div style="padding:0 18px"><span class="btn"><span class="k">3</span> Type another value</span></div>
+    <div class="ph" style="margin-top:16px;border-top:1px solid var(--a-line)">Up next</div>
+    <div class="flist">${[['2', 'BaseButton_Finish.prefab', 'verify: both changed the same override'], ['3', 'Engine.cs', 'line 6: both added a comment'], ['4', 'TreeBillBoards_albedo.png', 'binary: pick a side']].map(([n, f, d]) => `<div class="fr"><span class="st">${n}</span><span class="n">${f}</span><span class="p">${d}</span></div>`).join('')}</div></div>`;
+  return `<div class="app">${WIN()}${TB4()}${MBANNER()}<div class="body" style="grid-template-columns:190px minmax(0,1fr)">${SIDE()}${inner}</div>${STRIP()}</div>`;
+}
+function R4S1() {
+  const inner = `<div class="pane ft"><div class="ph">BaseButton_Finish.prefab <span class="ct">· prefab instance · Smart Merge reported clean</span><span class="r"><span class="chip on">Properties</span> <span class="chip">YAML</span></span></div>
+    <div class="card"><div class="cbd"><div class="flag bad">⚠ Merged automatically, verify: both branches changed the same override. Smart Merge kept yours; theirs ("Complete") would be lost without a word.</div></div></div>
+    ${FHEAD}
+    <div class="grp">Verify <span class="r">1</span></div>
+    ${FROW('<b>Button_Finish</b> › TextMeshProUGUI › m_text <span class="tg">override</span>', '"Finish"', '"Done"', '"Complete"', PICKS(1, ['Keep yours', 'Take theirs']), { sel: true, warn: true })}
+    <div class="grp">Merged automatically <span class="r">2</span></div>
+    ${FROW('<b>Button_Finish</b> › RectTransform › Size.x <span class="tg">override</span>', '—', '220', '—', '<span class="ab">yours · 220</span>', { auto: true })}
+    ${FROW('<b>Button_Finish</b> › Image › Color <span class="tg">override</span>', '—', '—', '#3AA58E', '<span class="ab">theirs · #3AA58E</span>', { auto: true })}
+    <div class="empty"></div>
+    <div class="sum"><div class="ln2"><span class="ab">The merge can't be committed until each verify flag is confirmed.</span><span class="sp" style="flex:1"></span><span class="btn pri">Confirm and mark resolved <span class="k">Ctrl+↵</span></span></div></div></div>`;
+  return APP4(inner, { sel: 'bb', left: 3, ok: ['rc'] });
+}
+function R4S2() {
+  const kw = s => `<span class="kw">${s}</span>`;
+  const y = [[3, `${kw('using')} Unity.Collections;`], [4, `${kw('using')} Unity.Mathematics;`], [5, `${kw('using')} WaterSystem;`], [6, '<span class="cm">// ours: engine uses power curve</span>', '--a-sel'], [7, ''], [8, `${kw('namespace')} <span class="ty">BoatAttack</span>`]];
+  const m = [[3, `${kw('using')} Unity.Collections;`], [4, `${kw('using')} Unity.Mathematics;`], [5, `${kw('using')} WaterSystem;`], [6, '<span class="cm">// ours: engine uses power curve</span>', '--a-sel'], [7, '<span class="cm">// theirs: engine uses torque table</span>', '--a-warn'], [8, ''], [9, `${kw('namespace')} <span class="ty">BoatAttack</span>`]];
+  const t = [[3, `${kw('using')} Unity.Collections;`], [4, `${kw('using')} Unity.Mathematics;`], [5, `${kw('using')} WaterSystem;`], [6, '<span class="cm">// theirs: engine uses torque table</span>', '--a-warn'], [7, ''], [8, `${kw('namespace')} <span class="ty">BoatAttack</span>`]];
+  const note = `<div class="hk" style="margin:0"><span class="mono">Conflict 1 of 1 · line 6 · both added a line</span><span class="sp"></span><span class="btn">Yours</span><span class="btn">Theirs</span><span class="btn pri">Use both, yours first</span></div>`;
+  return APP4(TEXT3(['Yours · conflict/ours', y], ['Result · edited', m], ['Theirs · conflict/theirs', t], 'Engine.cs <span class="ct">· 3-way text</span>', note), { sel: 'en', left: 2, ok: ['rc', 'bb'] });
+}
+function R4S3() {
+  const inner = `<div class="pane"><div class="ph">TreeBillBoards_albedo.png <span class="ct">· LFS binary · can't be merged, pick a side</span><span class="r"><span class="chip on">Side by side</span> <span class="chip">Swipe</span> <span class="chip">Onion</span></span></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:16px">${[['Yours · conflict/ours', '#6f9a3a', '#a07a3c', '1.94 MB', '1'], ['Theirs · conflict/theirs', '#3aa58e', '#4a78b8', '1.98 MB', '2']].map(([h, c1, c2, sz, k]) => `<div style="display:grid;gap:8px"><b>${h}</b><div class="img2" style="grid-template-columns:1fr;padding:0"><div style="--c1:${c1};--c2:${c2};max-width:300px"></div></div><span class="ab">2048 × 2048 · ${sz}</span><span class="btn" style="justify-self:start"><span class="k">${k}</span> Keep this one</span></div>`).join('')}</div>
+    <div class="card"><div class="cbd"><span class="ab">Lockable (*.png in .gitattributes) · not locked by anyone · next time, lock it before editing to avoid this.</span></div></div><div class="empty"></div></div>`;
+  return APP4(inner, { sel: 'tx', left: 1, ok: ['rc', 'bb', 'en'] });
+}
+function R4S4() {
+  const inner = `<div class="pane"><div class="ph">ReplayCameras.prefab <span class="ct">· Unity YAML · Smart Merge not set up</span></div>
+    <div class="card" style="margin:16px"><div class="chd"><b>Set up Smart Merge for this repo?</b><span class="ab">once per repo</span></div><div class="cbd">
+      <span>Unity's merge tool merges most prefab and scene changes on its own and leaves you only real conflicts. gitgud found <b>Unity 6000.3.21f1</b> in Unity Hub.</span>
+      <span class="ab">It writes two untracked files, nothing in your commits:</span>
+      <div class="msg" style="white-space:pre;font-size:10.5px">.git/config            [merge "unityyamlmerge"]  driver = "…/UnityYAMLMerge.exe" merge -h -p --force --fallback none %O %B %A %A
+.git/info/attributes  *.unity *.prefab *.asset *.mat *.anim *.controller *.overrideController  merge=unityyamlmerge</div>
+      <span class="ab">After every automatic merge gitgud compares both sides and flags anything Smart Merge might have dropped.</span>
+      <div style="display:flex;gap:6px"><span class="btn pri">Set up and re-merge the 2 Unity files</span><span class="btn">Resolve as text this time</span><span class="btn">Other Unity version…</span></div></div></div>
+    <div class="empty"><span class="ab">Without Smart Merge, Unity files show as plain text conflicts (3 hunks in this file).</span></div></div>`;
+  return APP4(inner, { sel: 'rc', noSmart: true });
+}
+function R4S5() {
+  const line = (f, t) => `<div class="fr"><span class="pred ok">✓</span><span class="n">${f}</span><span class="p">${t}</span></div>`;
+  const inner = `<div class="pane"><div class="ph">Ready to commit the merge</div>
+    <div class="card"><div class="chd"><b>4 files resolved</b><span class="ab">2 picked · 1 verified · 3 changes merged automatically</span></div><div class="flist">
+      ${line('ReplayCameras.prefab', 'BlimpCamera Position.x: yours (1.0) · 2 merged automatically')}${line('BaseButton_Finish.prefab', 'verified: took theirs ("Complete") · 2 merged automatically')}${line('Engine.cs', 'kept both comment lines')}${line('TreeBillBoards_albedo.png', 'kept yours')}</div></div>
+    <div class="card"><div class="cbd"><span class="pred ok">✓ Post-merge check: both prefabs re-read · no missing references · no duplicate fileIDs</span></div></div>
+    <div class="cbox"><div class="in f">Merge branch 'conflict/theirs' into conflict/ours</div><div class="bt"><span class="ab">Message prefilled; the conflict summary above goes into the body.</span><span class="sp"></span><span class="btn pri">Commit merge <span class="k">Ctrl+↵</span></span></div></div><div class="empty"></div></div>`;
+  return APP4(inner, { done: true });
+}
+
+const LONG = 'feature/ocean-shader-refactor-for-urp-17-with-foam-falloff-v2-final';
+const MOCKS = {
+  A: () => A(),
+  B, C, D,
+  S1: () => A({ rebase: true, ins: 'conflicts', sel: 6, undo: 'rebase (aborts it)', branchShort: 'feature/stack · rebasing' }),
+  S2: () => A({ lockEdit: true, sideSel: 'lock' }),
+  S3: () => A({ prop: true, ins: 'proposal' }),
+  S4: () => A({ detached: true, busy: true, ins: 'commit', undo: 'checkout 6acf5f7' }),
+  S5: () => A({ clean: true, ins: 'clean', branch: LONG, branchShort: 'feature/ocean-shader-refactor…-foam-falloff-v2-final', undo: 'commit' }),
+  S6: () => A({ ins: 'ops', sideSel: 'ops', sel: 1 }),
+  R2A: () => R2A(), R2B, R2C, R2D,
+  R2S1: () => R2A({ conflict: true }),
+  R2S2: () => R2A({ squash: true }),
+  R2S3,
+  R3A: () => LIB({ sel: 0 }),
+  R3B,
+  R3C: () => { const a = withTabs(A(), { noLib: true }); return a.slice(0, -6) + PAL({ tags: true }) + '</div>'; },
+  R3D: () => LIB({ d: true, groupBy: r => r[2].split('\\').slice(0, 3).join('\\'), sel: 0 }),
+  R3S1: () => { const a = withTabs(A()); return a.slice(0, -6) + PAL() + '</div>'; },
+  R3S2: () => withTabs(A(), { many: true }),
+  R3S3,
+  R4A, R4B, R4C, R4D, R4S1, R4S2, R4S3, R4S4, R4S5,
+  R3S4: () => LIB({ tree: 'Games', label: 'Games (31)', rows: REPOS.slice(10, 14), sel: 3 })
+};
+
+function fit() {
+  document.querySelectorAll('.frame').forEach(f => {
+    const a = f.firstElementChild;
+    if (a) a.style.transform = `scale(${f.clientWidth / 1280})`;
+  });
+}
+document.querySelectorAll('.frame[data-mock]').forEach(f => {
+  f.innerHTML = MOCKS[f.dataset.mock]();
+  f.setAttribute('role', 'img');
+  f.setAttribute('aria-label', 'Mock of gitgud main window, variant ' + f.dataset.mock);
+});
+fit();
+new ResizeObserver(fit).observe(document.body);
+</script>
