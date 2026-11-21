@@ -1,0 +1,296 @@
+[
+{
+  "id": "gd-anchorpoint-locking-docs",
+  "file": "img/gd-anchorpoint-locking-docs.webp",
+  "tool": "Anchorpoint",
+  "title": "Anchorpoint file locking docs: auto-lock binaries, release on push",
+  "source": "https://docs.anchorpoint.app/git/file-locking/",
+  "checked": "2026-11-21",
+  "tags": ["locking", "git", "lfs"],
+  "pins": [
+    {"x": 50, "y": 20, "note": "Locked files are write-protected; a user thumbnail shows who holds the lock"},
+    {"x": 50, "y": 70, "note": "Binaries auto-lock on modify, unlock on push; text files opt-in"},
+    {"x": 50, "y": 85, "note": "With the Unreal plugin, editor checkout replaces auto-locking"},
+    {"x": 86, "y": 23, "note": "Separate section: Git LFS locks are a different system, not used"}
+  ],
+  "insight": "Anchorpoint makes locking invisible: modifying a binary locks it, pushing releases it, and an avatar shows the owner. It does this with its own metadata server, not Git LFS locks.",
+  "gitgud": "Claude's pick: copy the auto-lock-on-modify and release-on-push mechanics, but on standard LFS locks so it works with any host and no extra server."
+},
+{
+  "id": "gd-anchorpoint-home",
+  "file": "img/gd-anchorpoint-home.webp",
+  "tool": "Anchorpoint",
+  "title": "Anchorpoint main window: timeline, changed files with thumbnails, 3D preview",
+  "source": "https://www.anchorpoint.app/",
+  "checked": "2026-11-21",
+  "tags": ["previews", "staging", "artists"],
+  "pins": [
+    {"x": 21, "y": 61, "note": "Timeline of commits per person replaces a branch graph"},
+    {"x": 49, "y": 27, "note": "Single message box + Sync button: commit and push in one step"},
+    {"x": 40, "y": 70, "note": "Changed files grouped by folder, each with a thumbnail"},
+    {"x": 77, "y": 50, "note": "FBX opened in an inline 3D viewer with version picker"}
+  ],
+  "insight": "The artist-facing flow is one list of changed files with thumbnails and a single Sync action; the 3D preview sits next to the list.",
+  "gitgud": "Claude's pick: give binary rows real thumbnails and an inline preview pane, but keep stage/commit/push explicit for a programmer like Max."
+},
+{
+  "id": "gd-anchorpoint-unity-docs",
+  "file": "img/gd-anchorpoint-unity-docs.webp",
+  "tool": "Anchorpoint",
+  "title": "Anchorpoint Unity guide: lock scenes/prefabs, plugin required",
+  "source": "https://docs.anchorpoint.app/git/unity/",
+  "checked": "2026-11-21",
+  "tags": ["unity", "locking", "smart-merge"],
+  "pins": [
+    {"x": 50, "y": 22, "note": ".unity and .prefab files are lockable, binaries should always be locked"},
+    {"x": 50, "y": 32, "note": "Auto-configures LFS and a Unity .gitignore template"},
+    {"x": 50, "y": 95, "note": "Unity plugin is the only way locking works properly"},
+    {"x": 87, "y": 29, "note": "Smart Merge still set up by hand in .git/config"}
+  ],
+  "insight": "Even a dedicated game Git client leaves UnityYAMLMerge as a manual config step and needs a Unity plugin because Unity ignores read-only files.",
+  "gitgud": "Claude's pick: auto-detect UnityYAMLMerge from Unity Hub installs and wire it per repo with one click."
+},
+{
+  "id": "gd-anchorpoint-pricing",
+  "file": "img/gd-anchorpoint-pricing.webp",
+  "tool": "Anchorpoint",
+  "title": "Anchorpoint pricing: locking and selective checkout are paid Team features",
+  "source": "https://www.anchorpoint.app/pricing",
+  "checked": "2026-11-21",
+  "tags": ["pricing", "locking"],
+  "pins": [
+    {"x": 3, "y": 64, "note": "Free plan: GitHub only, non-commercial"},
+    {"x": 41, "y": 51, "note": "Team: EUR 20/user/month billed yearly"},
+    {"x": 41, "y": 71, "note": "File locking only in the paid tier"},
+    {"x": 43, "y": 75, "note": "Selective (sparse) checkout also paid"},
+    {"x": 82, "y": 64, "note": "Self-hosted lock/metadata server only in Organization"}
+  ],
+  "insight": "The game-dev features (locks, partial checkout) are the paywall; the Git client itself is free for personal use.",
+  "gitgud": "Claude's pick: ship locks and sparse checkout free in gitgud, since they're thin wrappers over git-lfs and git."
+},
+{
+  "id": "gd-uvcs-smart-locks",
+  "file": "img/gd-uvcs-smart-locks.webp",
+  "tool": "Unity Version Control",
+  "title": "UVCS Smart Locks: lock rules, latest-revision check, retained locks",
+  "source": "https://docs.unity.com/en-us/unity-version-control/smart-locks",
+  "checked": "2026-11-21",
+  "tags": ["locking", "branches", "unity"],
+  "pins": [
+    {"x": 50, "y": 38, "note": "Checkout vs Lock and checkout; rules turn checkout into a lock"},
+    {"x": 50, "y": 54, "note": "Only the latest revision can be locked, so no stale edits"},
+    {"x": 50, "y": 66, "note": "One org-wide lock rule plus per-repo rules"},
+    {"x": 50, "y": 80, "note": "Check-in on a side branch = Retained until merged to main"}
+  ],
+  "insight": "Smart Locks tie locks to a destination branch: you can only lock the newest version, and the lock follows your change until it is merged.",
+  "gitgud": "Claude's pick: warn before locking if your local copy of the file is behind origin/main (cheap with gix), mirroring the latest-revision rule."
+},
+{
+  "id": "gd-uvcs-gluon-configure",
+  "file": "img/gd-uvcs-gluon-configure.webp",
+  "tool": "Unity Version Control (Gluon)",
+  "title": "Gluon: pick files to load into a partial workspace",
+  "source": "https://docs.unity.com/en-us/unity-version-control/gluon/configure-workspace",
+  "checked": "2026-11-21",
+  "tags": ["partial-checkout", "artists", "previews"],
+  "pins": [
+    {"x": 50, "y": 33, "note": "Configure: tick files and folders to download"},
+    {"x": 55, "y": 37, "note": "Search by pattern (*.jpg, *.psd) to select"},
+    {"x": 38, "y": 71, "note": "MaxPreviewFileSize key in client.conf"},
+    {"x": 50, "y": 76, "note": "Unloaded files preview only up to 1 MiB"}
+  ],
+  "insight": "Artists work in a partial workspace chosen file by file, with previews of files they have not downloaded.",
+  "gitgud": "Claude's pick: a folder-tree 'load / unload' view that drives git sparse-checkout plus lfs.fetchinclude, with previews fetched lazily."
+},
+{
+  "id": "gd-p4v-icons",
+  "file": "img/gd-p4v-icons.webp",
+  "tool": "Perforce P4V",
+  "title": "P4V file badges: yours red, other users blue, lock, out of date",
+  "source": "https://www.perforce.com/manuals/p4v/Content/P4V/using.icons.html",
+  "checked": "2026-11-21",
+  "tags": ["locking", "status", "who-has-it"],
+  "pins": [
+    {"x": 37, "y": 37, "note": "Red badges = your actions"},
+    {"x": 37, "y": 39, "note": "Blue badges = another user's actions"},
+    {"x": 25, "y": 68, "note": "Lock icon: global lock blocks others"},
+    {"x": 25, "y": 78, "note": "Blue check: someone else has it checked out"},
+    {"x": 25, "y": 94, "note": "Yellow triangle: your copy is not the latest"}
+  ],
+  "insight": "Perforce answers 'who has this file and is my copy stale' with a two-colour badge system on every file, plus hover tooltips.",
+  "gitgud": "Claude's pick: per-file badges for 'locked by me', 'locked by X', and 'newer on remote' in the file tree, with the owner in a tooltip."
+},
+{
+  "id": "gd-diversion-unity",
+  "file": "img/gd-diversion-unity.webp",
+  "tool": "Diversion",
+  "title": "Diversion Connect for Unity: in-editor commit panel and conflict alerts",
+  "source": "https://www.diversion.dev/unity-integration",
+  "checked": "2026-11-21",
+  "tags": ["unity", "plugin", "conflict-prevention"],
+  "pins": [
+    {"x": 71, "y": 34, "note": "Docked panel lists changed assets and metas with status tags"},
+    {"x": 71, "y": 51, "note": "Commit message and commit straight from the editor"},
+    {"x": 80, "y": 76, "note": "Alerts when you open/save a file a teammate is editing"},
+    {"x": 20, "y": 91, "note": "Colour status overlays in the Project window"}
+  ],
+  "insight": "Diversion warns about concurrent edits at open/save time inside Unity rather than blocking them, which Unity's ignore-read-only behaviour makes necessary.",
+  "gitgud": "Claude's pick: keep the main app outside Unity; a small optional Unity package that only shows lock state and asks before editing a locked file is enough (open: v1 or later)."
+},
+{
+  "id": "gd-lfs-locking-wiki",
+  "file": "img/gd-lfs-locking-wiki.webp",
+  "tool": "Git LFS",
+  "title": "Git LFS file locking: lockable attribute, lock/locks/unlock",
+  "source": "https://github.com/git-lfs/git-lfs/wiki/File-Locking",
+  "checked": "2026-11-21",
+  "tags": ["lfs", "locking", "cli"],
+  "pins": [
+    {"x": 30, "y": 31, "note": "git lfs track --lockable marks a pattern lockable"},
+    {"x": 25, "y": 37, "note": ".gitattributes gets the lockable attribute"},
+    {"x": 45, "y": 47, "note": "Lockable files become read-only until you lock them"},
+    {"x": 20, "y": 64, "note": "git lfs locks lists path, owner, lock ID"},
+    {"x": 40, "y": 93, "note": "Push continues if the server lacks the locking API"}
+  ],
+  "insight": "The whole locking model is already in git-lfs (attribute, read-only enforcement, lock IDs, push verification); it just has no good GUI.",
+  "gitgud": "Claude's pick: build the lock panel on git lfs locks --verify --json and git lfs lock/unlock --json, no custom server."
+},
+{
+  "id": "gd-unity-smartmerge-docs",
+  "file": "img/gd-unity-smartmerge-docs.webp",
+  "tool": "Unity (UnityYAMLMerge)",
+  "title": "Unity 6.3 Smart merge: what UnityYAMLMerge merges and how it's wired",
+  "source": "https://docs.unity.com/en-us/engine/6000.3/manual/get-started/project-configuration/version-control/smart-merge",
+  "checked": "2026-11-21",
+  "tags": ["unity", "merge", "prefab"],
+  "pins": [
+    {"x": 52, "y": 25, "note": "Merges .unity, .prefab and .meta semantically"},
+    {"x": 52, "y": 34, "note": ".asset/.mat/.controller need --force, else fallback tool"},
+    {"x": 52, "y": 48, "note": "With exclusive locks on scenes/prefabs you don't need Smart Merge"},
+    {"x": 52, "y": 94, "note": "Premerge/Ask modes exist only for Perforce in the editor"}
+  ],
+  "insight": "Unity documents UnityYAMLMerge only as an interactive mergetool for Git; scope is scenes, prefabs and metas, and other YAML assets are excluded by default.",
+  "gitgud": "Claude's pick: register it as a git merge driver for .unity/.prefab/.meta (spike to verify exit codes) and always show a structural review of 'clean' merges."
+},
+{
+  "id": "gd-unity-vcs-integration",
+  "file": "img/gd-unity-vcs-integration.webp",
+  "tool": "Unity",
+  "title": "Unity 6.3 editor VCS operations: Perforce vs UVCS, none for Git",
+  "source": "https://docs.unity.com/en-us/engine/6000.3/manual/get-started/project-configuration/version-control/versioncontrolintegration",
+  "checked": "2026-11-21",
+  "tags": ["unity", "integration", "meta"],
+  "pins": [
+    {"x": 46, "y": 26, "note": "Only Perforce and UVCS columns: Git has no editor integration"},
+    {"x": 62, "y": 38, "note": "UVCS cannot Get Latest from the Project view"},
+    {"x": 30, "y": 62, "note": "Perforce can check out asset and .meta together or separately"},
+    {"x": 62, "y": 91, "note": "UVCS conflicts must be resolved in its own GUI"},
+    {"x": 10, "y": 98, "note": "Lock/Unlock: Perforce yes, UVCS no"}
+  ],
+  "insight": "Unity's built-in VCS hooks give Perforce users checkout, lock and resolve in the editor; Git users get only visible .meta files.",
+  "gitgud": "Claude's pick: treat asset+meta as one unit in gitgud's own UI, since Unity won't help Git users do it."
+},
+{
+  "id": "gd-ue-gitplugin-readme",
+  "file": "img/gd-ue-gitplugin-readme.webp",
+  "tool": "UEGitPlugin (ProjectBorealis)",
+  "title": "Unreal Git plugin: fast LFS locking and Status Branches",
+  "source": "https://github.com/ProjectBorealis/UEGitPlugin",
+  "checked": "2026-11-21",
+  "tags": ["unreal", "lfs", "locking"],
+  "pins": [
+    {"x": 46, "y": 20, "note": "Multi-threaded lock/unlock for many files at once"},
+    {"x": 46, "y": 41, "note": "Status Branches: flag files changed on other remote branches"},
+    {"x": 46, "y": 76, "note": "No prebuilt binaries; compile it yourself"},
+    {"x": 46, "y": 86, "note": "Needs explicit *.uasset / *.umap .gitattributes lines"}
+  ],
+  "insight": "Production Unreal teams on Git needed lock batching, a local lock cache and cross-branch 'outdated' detection to make LFS locks usable.",
+  "gitgud": "Claude's pick: batch lock/unlock calls, cache lock state locally, and flag files modified on configured remote branches (a Status Branches equivalent)."
+},
+{
+  "id": "gd-github-lfs-billing",
+  "file": "img/gd-github-lfs-billing.webp",
+  "tool": "GitHub",
+  "title": "GitHub Git LFS billing: metered storage and bandwidth",
+  "source": "https://docs.github.com/en/billing/concepts/product-billing/git-lfs",
+  "checked": "2026-11-21",
+  "tags": ["lfs", "pricing", "hosting"],
+  "pins": [
+    {"x": 30, "y": 36, "note": "$0 budget: LFS blocked for the rest of the month"},
+    {"x": 50, "y": 63, "note": "Every download bills the repo owner's bandwidth"},
+    {"x": 50, "y": 84, "note": "1-byte change to a 500 MB file = another 500 MB stored"},
+    {"x": 50, "y": 96, "note": "GitHub Actions LFS downloads count too"}
+  ],
+  "insight": "LFS cost is driven by whole-file re-uploads and every clone/CI download, which is why game teams get surprise budget lockouts.",
+  "gitgud": "Claude's pick: show the LFS bytes a push will add before pushing, and a local cache/prune panel."
+},
+{
+  "id": "gd-gitlab-file-lock",
+  "file": "img/gd-gitlab-file-lock.webp",
+  "tool": "GitLab",
+  "title": "GitLab file locking: LFS exclusive locks vs default-branch locks",
+  "source": "https://docs.gitlab.com/user/project/file_lock/",
+  "checked": "2026-11-21",
+  "tags": ["locking", "hosting", "lfs"],
+  "pins": [
+    {"x": 50, "y": 33, "note": "Exclusive LFS locks on all tiers, block every branch"},
+    {"x": 50, "y": 53, "note": "UI default-branch locks are Premium/Ultimate only"},
+    {"x": 50, "y": 85, "note": "Other branches stay editable but show Lock status"},
+    {"x": 50, "y": 95, "note": "Fork sync bypasses default-branch locks"}
+  ],
+  "insight": "GitLab exposes standard LFS locks everywhere and adds a host-side lock that blocks merge requests into the default branch.",
+  "gitgud": "Claude's pick: rely on standard LFS locks (portable across GitHub, GitLab, Azure, Gitea) and only link out to host-specific lock pages."
+},
+{
+  "id": "gd-jetbrains-gamedev-vcs",
+  "file": "img/gd-jetbrains-gamedev-vcs.webp",
+  "tool": "Survey (JetBrains 2025)",
+  "title": "Version control and asset sharing tools by studio size, 2025",
+  "source": "https://lp.jetbrains.com/the-state-of-gamedev-2025/",
+  "checked": "2026-11-21",
+  "tags": ["data", "usage"],
+  "pins": [
+    {"x": 9, "y": 17, "note": "Perforce: 45% AAA, 10% mid/indie, 3% hobbyist"},
+    {"x": 22, "y": 21, "note": "GitHub: 61% mid/indie, 79% hobbyist"},
+    {"x": 18, "y": 35, "note": "Unity Version Control: 0% AAA, 9% mid/indie"},
+    {"x": 28, "y": 74, "note": "Google Drive still used for art by a third of teams"}
+  ],
+  "insight": "Below AAA, game dev runs on GitHub and Git; Perforce is an AAA tool and UVCS is niche. Art still travels outside version control a lot.",
+  "gitgud": "Claude's pick: target Git + LFS on GitHub-class hosts for Unity indies and mid-size teams, Max's own segment."
+},
+{
+  "id": "gd-fork-lfs-unlock-issue",
+  "file": "img/gd-fork-lfs-unlock-issue.webp",
+  "tool": "Fork",
+  "title": "Fork issue: artists want unlock-on-push for LFS locks",
+  "source": "https://github.com/fork-dev/TrackerWin/issues/1862",
+  "checked": "2026-11-21",
+  "tags": ["locking", "artists", "user-pain"],
+  "pins": [
+    {"x": 40, "y": 27, "note": "Request: 'unlock pushed files' checkbox after push"},
+    {"x": 40, "y": 70, "note": "Fork dev: technically impossible, push is per branch"},
+    {"x": 45, "y": 81, "note": "Manual unlocking after every push is too much for artists"},
+    {"x": 20, "y": 94, "note": "Fork has only a manual Repository > Git LFS > Locks list"}
+  ],
+  "insight": "A mainstream Git GUI has lock/unlock but leaves the post-push unlock to the user, and artists drop it; the dev considers automatic unlock infeasible.",
+  "gitgud": "Claude's pick: after a push, diff the pushed range against my locks and offer a pre-ticked unlock list; that is computable from the pushed commits."
+},
+{
+  "id": "gd-lore-readme",
+  "file": "img/gd-lore-readme.webp",
+  "tool": "Lore (Epic Games)",
+  "title": "Epic's Lore repo: open-source VCS for game-scale binaries",
+  "source": "https://github.com/EpicGames/lore",
+  "checked": "2026-11-21",
+  "tags": ["newcomer", "vcs", "rust"],
+  "pins": [
+    {"x": 94, "y": 16, "note": "9.2k stars within months of the June 2026 release"},
+    {"x": 80, "y": 65, "note": "v0.14.0: pre-1.0, formats may still change"},
+    {"x": 6, "y": 73, "note": "lore-fuse: virtual filesystem for lazy file loading"},
+    {"x": 80, "y": 94, "note": "Written in Rust, like gitgud-core"},
+    {"x": 7, "y": 34, "note": "Repo ships .claude/skills: agent-assisted development"}
+  ],
+  "insight": "Epic's Lore is a centralized, chunked, Rust VCS aimed at Perforce users; locking is advisory today and Unity/Git interop is not on its roadmap.",
+  "gitgud": "Claude's pick: watch it, don't target it in v1; keep gitgud-core's VCS calls behind one module so a Lore backend stays possible (open)."
+}
+]

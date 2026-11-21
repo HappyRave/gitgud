@@ -1,0 +1,182 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>graph bench</title>
+<style>
+  body { margin: 0; font: 13px Segoe UI, sans-serif; background: #15181d; color: #dde; }
+  #bar { position: fixed; top: 0; left: 0; right: 0; height: 28px; background: #222; z-index: 2; padding: 4px 8px; box-sizing: border-box; overflow: hidden; white-space: nowrap; }
+  #scroller { position: fixed; top: 28px; left: 0; right: 0; bottom: 0; overflow-y: scroll; }
+  #spacer { position: relative; }
+  #cv { position: sticky; top: 0; display: block; }
+  .row { position: absolute; left: 0; right: 0; height: 24px; display: flex; align-items: center; white-space: nowrap; will-change: transform; }
+  .row svg { flex: none; }
+  .row .s { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+  .row .a { width: 160px; color: #9ab; overflow: hidden; }
+  .row .d { width: 90px; color: #789; }
+</style>
+<div id="bar">loading…</div>
+<div id="scroller"><div id="spacer"></div></div>
+<script>
+const ROW = 24, LANE = 12, MAXDRAW = 32, K = 256;
+const COLORS = ['#4e9bff', '#3fd0a6', '#f2bc3c', '#ff7a45', '#b98cff', '#ff5d8f', '#7bd3ff', '#c3e06b'];
+const mode = new URLSearchParams(location.search).get('mode') || 'canvas';
+const bar = document.getElementById('bar'), scroller = document.getElementById('scroller'), spacer = document.getElementById('spacer');
+let n, meta, pOff, pIdx, checkpoints = [], maxLanes = 0;
+
+// lanes: Int32Array-like JS array of commit indices expected in each lane, -1 = free.
+// step() advances the lane state past row i; when emit is set it fills seg (top/bottom segments) and returns node lane.
+function step(lanes, i, seg) {
+  let L = lanes.indexOf(i);
+  if (L < 0) { L = lanes.indexOf(-1); if (L < 0) { L = lanes.length; lanes.push(-1); } }
+  if (seg) { seg.top.length = 0; seg.bot.length = 0; for (let k = 0; k < lanes.length; k++) if (lanes[k] !== -1) seg.top.push(k, lanes[k] === i ? L : k); }
+  for (let k = 0; k < lanes.length; k++) if (lanes[k] === i) lanes[k] = -1;
+  const targets = seg ? seg.targets : null; if (targets) targets.length = 0;
+  for (let p = pOff[i]; p < pOff[i + 1]; p++) {
+    const par = pIdx[p];
+    let t = lanes.indexOf(par);
+    if (t < 0) {
+      if (p === pOff[i]) t = L; else { t = lanes.indexOf(-1); if (t < 0) { t = lanes.length; lanes.push(-1); } }
+      lanes[t] = par;
+    }
+    if (targets) targets.push(t);
+  }
+  if (seg) {
+    for (let k = 0; k < lanes.length; k++) if (lanes[k] !== -1 && !targets.includes(k)) seg.bot.push(k, k);
+    for (const t of targets) seg.bot.push(L, t);
+  }
+  while (lanes.length && lanes[lanes.length - 1] === -1) lanes.pop();
+  return L;
+}
+
+function parse(text) {
+  const lines = text.split('\n'); if (!lines[lines.length - 1]) lines.pop();
+  n = lines.length; meta = new Array(n);
+  const idx = new Map(), parentsTmp = new Array(n);
+  for (let i = 0; i < n; i++) { const f = lines[i].split('\t'); idx.set(f[0], i); parentsTmp[i] = f[1]; meta[i] = [f[2], f[3], f[4]]; }
+  pOff = new Uint32Array(n + 1); const flat = [];
+  for (let i = 0; i < n; i++) { pOff[i] = flat.length; if (parentsTmp[i]) for (const h of parentsTmp[i].split(' ')) flat.push(idx.get(h)); }
+  pOff[n] = flat.length; pIdx = Int32Array.from(flat);
+}
+function layout() {
+  const lanes = [];
+  for (let i = 0; i < n; i++) {
+    if (i % K === 0) checkpoints.push(lanes.slice());
+    step(lanes, i, null);
+    if (lanes.length > maxLanes) maxLanes = lanes.length;
+  }
+}
+const seg = { top: [], bot: [], targets: [] };
+function lanesAt(first) { const lanes = checkpoints[Math.floor(first / K)].slice(); for (let i = Math.floor(first / K) * K; i < first; i++) step(lanes, i, null); return lanes; }
+function x(l) { return 8 + l * LANE; }
+const GW = MAXDRAW * LANE + 16;
+const frames = [], work = [];
+
+// ---- canvas renderer
+let cv, ctx, W, H;
+function setupCanvas() {
+  cv = document.createElement('canvas'); cv.id = 'cv'; spacer.appendChild(cv);
+  const fill = document.createElement('div'); fill.style.height = (n * ROW) + 'px'; spacer.appendChild(fill);
+  resize(); addEventListener('resize', resize);
+}
+function resize() {
+  const dpr = devicePixelRatio || 1; W = scroller.clientWidth; H = scroller.clientHeight;
+  cv.width = W * dpr; cv.height = H * dpr; cv.style.width = W + 'px'; cv.style.height = H + 'px'; cv.style.marginBottom = (-H) + 'px';
+  ctx = cv.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.font = '13px Segoe UI, sans-serif'; ctx.textBaseline = 'middle';
+}
+function drawCanvas() {
+  const t0 = performance.now();
+  const top = scroller.scrollTop, first = Math.floor(top / ROW), last = Math.min(n - 1, first + Math.ceil(H / ROW) + 1);
+  ctx.fillStyle = '#15181d'; ctx.fillRect(0, 0, W, H);
+  ctx.lineWidth = 2;
+  const lanes = lanesAt(first);
+  for (let i = first; i <= last; i++) {
+    const y = i * ROW - top, cy = y + ROW / 2;
+    const L = step(lanes, i, seg);
+    for (let s = 0; s < seg.top.length; s += 2) { const a = seg.top[s], b = seg.top[s + 1]; if (a >= MAXDRAW && b >= MAXDRAW) continue; ctx.strokeStyle = COLORS[a % 8]; ctx.beginPath(); ctx.moveTo(x(a), y); ctx.lineTo(x(b), cy); ctx.stroke(); }
+    for (let s = 0; s < seg.bot.length; s += 2) { const a = seg.bot[s], b = seg.bot[s + 1]; if (a >= MAXDRAW && b >= MAXDRAW) continue; ctx.strokeStyle = COLORS[b % 8]; ctx.beginPath(); ctx.moveTo(x(a), cy); ctx.lineTo(x(b), y + ROW); ctx.stroke(); }
+    ctx.fillStyle = COLORS[L % 8]; ctx.beginPath(); ctx.arc(x(Math.min(L, MAXDRAW)), cy, 4, 0, 6.2832); ctx.fill();
+    const r = meta[i];
+    ctx.fillStyle = '#dde'; ctx.fillText(r[2], GW, cy, Math.max(50, W - GW - 260));
+    ctx.fillStyle = '#9ab'; ctx.fillText(r[0], W - 250, cy, 150);
+    ctx.fillStyle = '#789'; ctx.fillText(r[1], W - 90, cy);
+  }
+  work.push(performance.now() - t0);
+}
+
+// ---- virtualized DOM renderer (SVG per row)
+let pool = [];
+function setupDom() {
+  spacer.style.height = (n * ROW) + 'px';
+  const count = Math.ceil(scroller.clientHeight / ROW) + 4;
+  for (let p = 0; p < count; p++) {
+    const d = document.createElement('div'); d.className = 'row';
+    d.innerHTML = `<svg height="24" width="${GW}"></svg><span class="s"></span><span class="a"></span><span class="d"></span>`;
+    spacer.appendChild(d); pool.push({ el: d, svg: d.firstChild, s: d.children[1], a: d.children[2], d: d.children[3], i: -1 });
+  }
+}
+function drawDom() {
+  const t0 = performance.now();
+  const top = scroller.scrollTop, first = Math.floor(top / ROW);
+  const lanes = lanesAt(first);
+  for (let p = 0; p < pool.length; p++) {
+    const i = first + p;
+    const slot = pool[i % pool.length];
+    if (i >= n) { slot.el.style.display = 'none'; continue; }
+    const L = step(lanes, i, seg);
+    slot.el.style.transform = `translateY(${i * ROW}px)`;
+    if (slot.i === i) continue;
+    slot.i = i;
+    let svg = '';
+    for (let s = 0; s < seg.top.length; s += 2) { const a = seg.top[s], b = seg.top[s + 1]; if (a < MAXDRAW || b < MAXDRAW) svg += `<line x1="${x(a)}" y1="0" x2="${x(b)}" y2="12" stroke="${COLORS[a % 8]}" stroke-width="2"/>`; }
+    for (let s = 0; s < seg.bot.length; s += 2) { const a = seg.bot[s], b = seg.bot[s + 1]; if (a < MAXDRAW || b < MAXDRAW) svg += `<line x1="${x(a)}" y1="12" x2="${x(b)}" y2="24" stroke="${COLORS[b % 8]}" stroke-width="2"/>`; }
+    svg += `<circle cx="${x(Math.min(L, MAXDRAW))}" cy="12" r="4" fill="${COLORS[L % 8]}"/>`;
+    slot.svg.innerHTML = svg;
+    const r = meta[i]; slot.s.textContent = r[2]; slot.a.textContent = r[0]; slot.d.textContent = r[1];
+  }
+  work.push(performance.now() - t0);
+}
+
+let draw, benching = false;
+function stats(label) {
+  const f = frames.slice(1).sort((a, b) => a - b), w = work.slice().sort((a, b) => a - b);
+  const avg = f.reduce((a, b) => a + b, 0) / f.length;
+  const res = { label, frames: f.length, fps: +(1000 / avg).toFixed(1), p95_frame_ms: +f[Math.floor(f.length * .95)].toFixed(1), over17_pct: +(100 * f.filter(v => v > 17.5).length / f.length).toFixed(1), p50_render_ms: +w[Math.floor(w.length * .5)].toFixed(2), p95_render_ms: +w[Math.floor(w.length * .95)].toFixed(2), max_render_ms: +w[w.length - 1].toFixed(2) };
+  frames.length = 0; work.length = 0; return res;
+}
+function run(pxPerSec, ms) {
+  return new Promise(done => {
+    let start = null, last = null; benching = true;
+    function step(t) {
+      if (start === null) { start = last = t; }
+      frames.push(t - last); last = t;
+      if (pxPerSec === 'jump') scroller.scrollTop = Math.random() * (n * ROW - 2000);
+      else scroller.scrollTop = ((t - start) / 1000 * pxPerSec) % (n * ROW - 2000);
+      draw();
+      if (t - start < ms) requestAnimationFrame(step); else { benching = false; done(stats(String(pxPerSec))); }
+    }
+    requestAnimationFrame(step);
+  });
+}
+
+(async () => {
+  const t0 = performance.now();
+  const text = await (await fetch('log.tsv')).text();
+  const t1 = performance.now();
+  parse(text);
+  const t2 = performance.now();
+  layout();
+  const t3 = performance.now();
+  if (mode === 'canvas') { setupCanvas(); draw = drawCanvas; } else { setupDom(); draw = drawDom; }
+  scroller.addEventListener('scroll', () => { if (!benching) draw(); });
+  draw();
+  const t4 = performance.now();
+  window.result = { mode, commits: n, maxLanes, fetch_ms: Math.round(t1 - t0), parse_ms: Math.round(t2 - t1), layout_ms: Math.round(t3 - t2), first_paint_ms: Math.round(t4 - t3), heapMB: performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1e6) : null };
+  bar.textContent = JSON.stringify(window.result);
+  window.runAll = async () => { window.result.runs = [await run(2000, 4000), await run(30000, 4000), await run('jump', 4000)]; bar.textContent = JSON.stringify(window.result); return window.result; };
+  if (new URLSearchParams(location.search).get('auto')) {
+    await new Promise(r => setTimeout(r, 1500));
+    const r = await window.runAll();
+    r.viewport = [innerWidth, innerHeight, devicePixelRatio];
+    await fetch('/result', { method: 'POST', body: JSON.stringify(r) });
+  }
+})();
+</script>

@@ -1,0 +1,297 @@
+[
+{
+  "id": "gui-gitkraken-client",
+  "file": "img/gui-gitkraken-client.webp",
+  "tool": "GitKraken",
+  "title": "GitKraken graph with Undo/Redo toolbar and agent WIP nodes",
+  "source": "https://www.gitkraken.com/git-client",
+  "checked": "2026-11-21",
+  "tags": ["graph", "undo", "agents"],
+  "pins": [
+    {"x": 39, "y": 13, "note": "Undo/Redo in the toolbar: reverts only the most recent supported action"},
+    {"x": 41, "y": 31, "note": "WIP node per worktree, here an agent session 'Awaiting Approval'"},
+    {"x": 19, "y": 23, "note": "Sidebar toggles List vs Agents view"},
+    {"x": 10, "y": 50, "note": "Remotes grouped by person in the sidebar"}
+  ],
+  "insight": "GitKraken now frames the graph as a control surface for parallel coding agents, each with its own WIP node; undo is single-step.",
+  "gitgud": "Claude's pick: steal WIP/agent nodes in the graph, but back them with a multi-step op-log undo instead of last-action-only."
+},
+{
+  "id": "gui-fork-home",
+  "file": "img/gui-fork-home.webp",
+  "tool": "Fork",
+  "title": "Fork main window: tabs, folder-grouped branches, graph, commit detail",
+  "source": "https://fork.dev",
+  "checked": "2026-11-21",
+  "tags": ["graph", "sidebar", "palette"],
+  "pins": [
+    {"x": 15, "y": 51, "note": "Branches grouped by folder prefix (aozgaa/, dev/, lego/)"},
+    {"x": 14, "y": 9, "note": "Quick Launch: command palette for checkout, file history, custom commands"},
+    {"x": 27, "y": 32, "note": "Compact graph lanes beside one-line commits"},
+    {"x": 30, "y": 55, "note": "Commit / Changes / File Tree tabs for the selected commit"}
+  ],
+  "insight": "Dense native UI, one repo per tab, palette-driven; the reference 'fast and friendly' classic client at $59.99 one-time.",
+  "gitgud": "Claude's pick: match Fork's density and Quick Launch, add what it lacks: Linux, custom shortcuts and uncommitted changes in the graph."
+},
+{
+  "id": "gui-sublime-merge-home",
+  "file": "img/gui-sublime-merge-home.webp",
+  "tool": "Sublime Merge",
+  "title": "Sublime Merge: hunk/line staging inside the commit summary",
+  "source": "https://www.sublimemerge.com/",
+  "checked": "2026-11-21",
+  "tags": ["staging", "diff", "performance"],
+  "pins": [
+    {"x": 87, "y": 43, "note": "Per-hunk Discard / Stage buttons inline with the diff"},
+    {"x": 62, "y": 61, "note": "Selected lines become their own stageable chunk"},
+    {"x": 21, "y": 28, "note": "Unstaged changes listed as the top row of the commit list"},
+    {"x": 62, "y": 8, "note": "Find-as-you-type search across message, author, path, content"}
+  ],
+  "insight": "Staging happens in the diff itself with no modal; speed comes from a custom toolkit and own git reader.",
+  "gitgud": "Claude's pick: stage/discard controls on the hunk itself plus keyboard 'stage and next'; gix reads give us the same no-wait feel."
+},
+{
+  "id": "gui-tower-undo",
+  "file": "img/gui-tower-undo.webp",
+  "tool": "Tower",
+  "title": "Tower 'Undo Anything': Ctrl+Z across commit, branch and stash actions",
+  "source": "https://www.git-tower.com/features/undo",
+  "checked": "2026-11-21",
+  "tags": ["undo", "safety"],
+  "pins": [
+    {"x": 32, "y": 11, "note": "Single shortcut: Ctrl+Z, redo with Shift+Ctrl+Z"},
+    {"x": 68, "y": 45, "note": "Undo staging, discarding a chunk, deleting a file, the commit itself"},
+    {"x": 24, "y": 91, "note": "Also undo merge, rebase and interactive rebase"},
+    {"x": 58, "y": 88, "note": "Branch context menu actions are all reversible"}
+  ],
+  "insight": "Tower makes undo a global keyboard habit covering working-copy, branch and stash operations, not a separate recovery tool.",
+  "gitgud": "Claude's pick: steal the Ctrl+Z contract wholesale, powered by a GitButler-style snapshot log so discards are recoverable too."
+},
+{
+  "id": "gui-tower-dragdrop",
+  "file": "img/gui-tower-dragdrop.webp",
+  "tool": "Tower",
+  "title": "Tower drag-and-drop history rewriting with modifier keys",
+  "source": "https://www.git-tower.com/features/drag-and-drop",
+  "checked": "2026-11-21",
+  "tags": ["rebase", "drag-drop", "safety"],
+  "pins": [
+    {"x": 31, "y": 56, "note": "Confirm dialog reminds the move can be undone via reflog"},
+    {"x": 67, "y": 56, "note": "Drag commits in History to reorder (interactive rebase)"},
+    {"x": 86, "y": 76, "note": "Drag commit to HEAD = cherry-pick; hold Alt = revert"},
+    {"x": 66, "y": 84, "note": "Drop commit onto commit = squash; Alt = fixup"}
+  ],
+  "insight": "Every history edit is a drag with an Alt variant; the confirm dialog explicitly tells users the escape hatch.",
+  "gitgud": "Claude's pick: same drag verbs, but skip the confirm when the op log can undo it; confirm only what can't be undone (push)."
+},
+{
+  "id": "gui-github-desktop-home",
+  "file": "img/gui-github-desktop-home.webp",
+  "tool": "GitHub Desktop",
+  "title": "GitHub Desktop: checkbox file list and click-to-select diff lines",
+  "source": "https://desktop.github.com/",
+  "checked": "2026-11-21",
+  "tags": ["staging", "simplicity"],
+  "pins": [
+    {"x": 12, "y": 24, "note": "Checkbox per file = include in commit, no separate index view"},
+    {"x": 36, "y": 55, "note": "Click gutter line numbers to include/exclude individual lines"},
+    {"x": 17, "y": 64, "note": "Stashed changes drawer under the file list"},
+    {"x": 14, "y": 90, "note": "Co-author picker in the commit box"},
+    {"x": 56, "y": 9, "note": "Primary action button changes with state (Pull origin, 3 behind)"}
+  ],
+  "insight": "Simplest model in the field: no visible index, no graph; the single state-aware sync button is its best idea.",
+  "gitgud": "Claude's pick: steal the state-aware primary sync button and gutter line selection; avoid hiding the graph (its #3 most-wanted issue)."
+},
+{
+  "id": "gui-sourcegit-graph",
+  "file": "img/gui-sourcegit-graph.webp",
+  "tool": "SourceGit",
+  "title": "SourceGit main window: sidebar, graph, commit information",
+  "source": "https://github.com/sourcegit-org/sourcegit/raw/master/screenshots/theme_dark.png",
+  "checked": "2026-11-21",
+  "tags": ["graph", "sidebar", "open-source"],
+  "pins": [
+    {"x": 13, "y": 36, "note": "Worktrees and submodules are first-class sidebar sections"},
+    {"x": 25, "y": 32, "note": "Graph lanes merged into the subject column"},
+    {"x": 49, "y": 8, "note": "Toolbar: fetch, pull, push, stash, apply, branch, git-flow, bisect"},
+    {"x": 28, "y": 57, "note": "Information / Changes / Files tabs for the selected commit"},
+    {"x": 60, "y": 74, "note": "Signature verification badge next to the SHA"}
+  ],
+  "insight": "A free MIT Avalonia clone of the Fork layout with LFS, worktrees, image diff and AI messages; maintainer capacity is its risk.",
+  "gitgud": "Claude's pick: proof a free cross-platform client can cover Fork's feature set; differentiate on LFS locking, Unity merges and undo."
+},
+{
+  "id": "gui-gitbutler-home",
+  "file": "img/gui-gitbutler-home.webp",
+  "tool": "GitButler",
+  "title": "GitButler feature grid: stacked, parallel, unlimited undo, agents",
+  "source": "https://gitbutler.com/",
+  "checked": "2026-11-21",
+  "tags": ["virtual-branches", "undo", "agents"],
+  "pins": [
+    {"x": 12, "y": 39, "note": "Stacked branches: dependent features reviewed and landed separately"},
+    {"x": 42, "y": 39, "note": "Parallel branches: several branches applied in one folder"},
+    {"x": 71, "y": 39, "note": "Unlimited undo/redo, even after commits"},
+    {"x": 42, "y": 80, "note": "Move changes between commits, absorb, reorder"},
+    {"x": 72, "y": 80, "note": "Agent-optimised CLI with structured output"}
+  ],
+  "insight": "GitButler now sells itself as version control for agents; its mechanics (oplog, absorb, stacks) are the most advanced in the field.",
+  "gitgud": "Claude's pick: steal oplog undo, absorb and stacks on top of plain branches; don't adopt the workspace-merge model (no LFS)."
+},
+{
+  "id": "gui-gitbutler-oplog",
+  "file": "img/gui-gitbutler-oplog.webp",
+  "tool": "GitButler",
+  "title": "GitButler operations history with per-entry Revert",
+  "source": "https://docs.gitbutler.com/features/timeline",
+  "checked": "2026-11-21",
+  "tags": ["undo", "oplog", "safety"],
+  "pins": [
+    {"x": 30, "y": 61, "note": "Hover an entry to get Revert"},
+    {"x": 35, "y": 65, "note": "Tooltip: restores app and files to before this op; revert is undoable"},
+    {"x": 39, "y": 74, "note": "Every operation type is logged, incl. discards"},
+    {"x": 49, "y": 10, "note": "Revert 'Create commit' returns to just before that commit"}
+  ],
+  "insight": "Snapshots of branch state, uncommitted work and conflicts are stored in the git object DB before each action, so restore is exact.",
+  "gitgud": "Claude's pick: build gitgud's undo on the same snapshot-in-ODB idea; show it as a timeline panel plus Ctrl+Z."
+},
+{
+  "id": "gui-gitbutler-parallel",
+  "file": "img/gui-gitbutler-parallel.webp",
+  "tool": "GitButler",
+  "title": "GitButler parallel branches: but status vs git log of the workspace commit",
+  "source": "https://docs.gitbutler.com/parallel-branches",
+  "checked": "2026-11-21",
+  "tags": ["virtual-branches", "cli"],
+  "pins": [
+    {"x": 31, "y": 32, "note": "but status: each applied branch with short IDs for commits"},
+    {"x": 29, "y": 43, "note": "Two branches live in the same working folder"},
+    {"x": 63, "y": 67, "note": "Git sees a synthetic merge on gitbutler/workspace"},
+    {"x": 44, "y": 83, "note": "Workspace commit merges both branches over main"}
+  ],
+  "insight": "Virtual branches are a synthetic merge commit; other tools still work but see an unusual HEAD.",
+  "gitgud": "Claude's pick: avoid as default for Unity repos; borrow the short-ID addressing for gitgud's agent CLI."
+},
+{
+  "id": "gui-smartgit-conflict",
+  "file": "img/gui-smartgit-conflict.webp",
+  "tool": "SmartGit",
+  "title": "SmartGit Conflict Solver: three-way with one-click takes",
+  "source": "https://www.smartgit.dev/features/",
+  "checked": "2026-11-21",
+  "tags": ["conflict", "merge"],
+  "pins": [
+    {"x": 39, "y": 56, "note": "Ours | working tree | theirs, side by side"},
+    {"x": 33, "y": 71, "note": "Connector bands link each conflict across panes"},
+    {"x": 39, "y": 30, "note": "Toolbar take-left / take-right / both actions"},
+    {"x": 67, "y": 71, "note": "One-click resolutions, external tool optional"}
+  ],
+  "insight": "Classic three-pane solver where the middle pane is the editable working tree.",
+  "gitgud": "Claude's pick: text conflicts need this baseline; gitgud's edge is a file-level step first for Unity assets."
+},
+{
+  "id": "gui-sourcetree-home",
+  "file": "img/gui-sourcetree-home.webp",
+  "tool": "Sourcetree",
+  "title": "Sourcetree (Max's baseline): graph, hunk reverse, binary before/after",
+  "source": "https://www.sourcetreeapp.com/",
+  "checked": "2026-11-21",
+  "tags": ["baseline", "graph", "staging"],
+  "pins": [
+    {"x": 59, "y": 25, "note": "Graph + commit table with branch filter dropdowns"},
+    {"x": 46, "y": 52, "note": "Per-hunk 'Reverse hunk' / stage buttons"},
+    {"x": 79, "y": 88, "note": "Binary file shown as before/after image"},
+    {"x": 54, "y": 26, "note": "Shelved and subrepositories in sidebar (Hg heritage)"}
+  ],
+  "insight": "Feature-complete but maintenance-mode; Windows LFS slowness comes from per-file LFS calls and embedded git-lfs.",
+  "gitgud": "Claude's pick: keep Sourcetree's familiar layout cues for Max, fix its LFS batching and add real undo."
+},
+{
+  "id": "gui-lazygit-readme",
+  "file": "img/gui-lazygit-readme.webp",
+  "tool": "lazygit",
+  "title": "lazygit TUI: numbered panels and command log",
+  "source": "https://github.com/jesseduffield/lazygit",
+  "checked": "2026-11-21",
+  "tags": ["keyboard", "tui", "undo"],
+  "pins": [
+    {"x": 14, "y": 11, "note": "Panels numbered 1-5: jump with a digit"},
+    {"x": 20, "y": 18, "note": "Tabs inside a panel: Files / Worktrees / Submodules"},
+    {"x": 16, "y": 62, "note": "Commits / Reflog tabs: undo walks the reflog"},
+    {"x": 33, "y": 83, "note": "Command log shows the git commands just run"}
+  ],
+  "insight": "Everything is one keystroke from a numbered panel; transparency comes from the always-visible command log.",
+  "gitgud": "Claude's pick: steal digit-jump panels and the command log; keep a mouse-first path too."
+},
+{
+  "id": "gui-vscode-merge-editor",
+  "file": "img/gui-vscode-merge-editor.webp",
+  "tool": "VS Code",
+  "title": "VS Code 3-way merge editor: Incoming, Current, Result",
+  "source": "https://code.visualstudio.com/docs/sourcecontrol/merge-conflicts",
+  "checked": "2026-11-21",
+  "tags": ["conflict", "merge", "ide"],
+  "pins": [
+    {"x": 39, "y": 32, "note": "Accept Incoming / Accept Combination per conflict"},
+    {"x": 65, "y": 32, "note": "Mirror actions on the Current side"},
+    {"x": 35, "y": 59, "note": "Editable Result pane below"},
+    {"x": 73, "y": 59, "note": "Conflicts-remaining counter"},
+    {"x": 74, "y": 87, "note": "Complete Merge stages the file"}
+  ],
+  "insight": "Free IDE baseline Max already has: result pane plus a remaining-conflicts counter and a single finish action.",
+  "gitgud": "Claude's pick: match the counter and Complete action; beat it with whole-file asset choices and Unity smart merge."
+},
+{
+  "id": "gui-jetbrains-merge",
+  "file": "img/gui-jetbrains-merge.webp",
+  "tool": "JetBrains",
+  "title": "JetBrains Conflicts dialog: per-file Accept Yours/Theirs",
+  "source": "https://www.jetbrains.com/help/idea/resolve-conflicts.html",
+  "checked": "2026-11-21",
+  "tags": ["conflict", "merge", "ide"],
+  "pins": [
+    {"x": 32, "y": 25, "note": "Resolve All Simple Conflicts in one click"},
+    {"x": 56, "y": 47, "note": "Accept Yours / Accept Theirs for a whole file"},
+    {"x": 31, "y": 41, "note": "All unresolved files listed up front"},
+    {"x": 66, "y": 92, "note": "Resolve Manually opens the 3-pane editor"}
+  ],
+  "insight": "Conflicts start as a file list with whole-file decisions; text merging is the second step, not the first.",
+  "gitgud": "Claude's pick: steal this as gitgud's conflict entry point; it fits prefabs, scenes and binary assets best."
+},
+{
+  "id": "gui-gitcomet-readme",
+  "file": "img/gui-gitcomet-readme.webp",
+  "tool": "GitComet",
+  "title": "GitComet (2026, Rust + GPUI + gix): graph with staging sidebar",
+  "source": "https://github.com/Auto-Explore/GitComet",
+  "checked": "2026-11-21",
+  "tags": ["newcomer", "graph", "lfs"],
+  "pins": [
+    {"x": 31, "y": 22, "note": "Uncommitted changes as the top graph row"},
+    {"x": 54, "y": 19, "note": "Unstaged list always visible right of the graph"},
+    {"x": 54, "y": 48, "note": "Staged area and commit box below"},
+    {"x": 15, "y": 61, "note": "Worktrees section in the sidebar"},
+    {"x": 27, "y": 50, "note": "Graph with merge nodes highlighted"}
+  ],
+  "insight": "Newest serious OSS client, same gix read path as gitgud, and the only one advertising LFS locks plus git-annex.",
+  "gitgud": "Claude's pick: benchmark against it on big repos; win on Unity awareness, undo and agent review."
+},
+{
+  "id": "gui-gg-readme",
+  "file": "img/gui-gg-readme.webp",
+  "tool": "GG (jj GUI)",
+  "title": "GG: Tauri + Svelte GUI for jj with drag-rebase and Undo",
+  "source": "https://github.com/gulbanana/gg",
+  "checked": "2026-11-21",
+  "tags": ["newcomer", "undo", "drag-drop", "tauri"],
+  "pins": [
+    {"x": 33, "y": 54, "note": "Context menu: new child, squash into parent, restore, abandon"},
+    {"x": 66, "y": 65, "note": "Undo button backed by jj's operation log"},
+    {"x": 28, "y": 13, "note": "Revset query box filters the log"},
+    {"x": 62, "y": 28, "note": "Squash / Restore buttons on the working-copy commit"},
+    {"x": 60, "y": 65, "note": "Push/fetch per remote from the status bar"}
+  ],
+  "insight": "Built on gitgud's exact stack; treats history as always editable because every op is undoable.",
+  "gitgud": "Claude's pick: steal the 'always mid-rebase, but safe' feel and study its Tauri/Svelte code as a reference."
+}
+]

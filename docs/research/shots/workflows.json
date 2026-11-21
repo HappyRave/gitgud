@@ -1,0 +1,186 @@
+[
+{
+  "id": "wf-github-stacked-prs",
+  "file": "img/wf-github-stacked-prs.webp",
+  "tool": "GitHub",
+  "title": "GitHub native stacked PRs: each PR targets the branch below",
+  "source": "https://docs.github.com/en/pull-requests/get-started/about-stacked-prs",
+  "checked": "2026-11-21",
+  "tags": ["stacked-prs", "workflow"],
+  "pins": [
+    {"x": 45, "y": 44, "note": "Stack model: bottom PR targets main, each layer targets the branch below"},
+    {"x": 50, "y": 61, "note": "Each PR shows only its layer's diff"},
+    {"x": 50, "y": 66, "note": "Key rule: dependencies must live in the same or a lower layer"}
+  ],
+  "insight": "Stacks are now a host-native concept (GA 2026-10-06) driven by the gh stack CLI, with server-side cascading rebase when a lower layer merges.",
+  "gitgud": "Claude's pick: show stacks as a unit in the graph and restack descendants locally after an amend; leave PR creation to the browser."
+},
+{
+  "id": "wf-graphite-cli",
+  "file": "img/wf-graphite-cli.webp",
+  "tool": "Graphite",
+  "title": "Graphite CLI quick start: stacking workflow",
+  "source": "https://graphite.com/docs/cli-quick-start",
+  "checked": "2026-11-21",
+  "tags": ["stacked-prs", "cli", "ai-review"],
+  "pins": [
+    {"x": 50, "y": 21, "note": "Two goals: simplify sharp git edges (rebasing) and enable stacking"},
+    {"x": 9, "y": 41, "note": "AI Reviews and Agents sections: review is the product now"},
+    {"x": 7, "y": 89, "note": "GT MCP listed: Graphite exposes stacking to agents"},
+    {"x": 88, "y": 22, "note": "Workflow: create, stack, address feedback, sync from trunk"}
+  ],
+  "insight": "The incumbent stacking tool wraps rebasing behind create/modify/restack/sync verbs and now sits inside Cursor (acquired Dec 2025).",
+  "gitgud": "Claude's pick: steal the verb set (modify = amend + restack above) as GUI actions; don't depend on Graphite's service."
+},
+{
+  "id": "wf-gitbutler-agents",
+  "file": "img/wf-gitbutler-agents.webp",
+  "tool": "GitButler",
+  "title": "GitButler for coding agents: but agent setup",
+  "source": "https://docs.gitbutler.com/ai-agents/overview",
+  "checked": "2026-11-21",
+  "tags": ["agents", "cli", "hunks", "undo"],
+  "pins": [
+    {"x": 28, "y": 54, "note": "One command installs a skill + VCS policy for the agent"},
+    {"x": 50, "y": 81, "note": "Agents commit selected hunks by ID; rest stays uncommitted"},
+    {"x": 50, "y": 37, "note": "Vendor benchmark: ~80% fewer commands vs plain Git"},
+    {"x": 50, "y": 97, "note": "but oplog restores earlier state before publishing"}
+  ],
+  "insight": "GitButler steers agents through a skill file and a CLI with hunk IDs, history-edit commands and an op log; the human reviews the same branches in the desktop app.",
+  "gitgud": "Claude's pick: steal hunk IDs, op log and a setup command; avoid requiring a virtual-branch workspace."
+},
+{
+  "id": "wf-gitbutler-parallel",
+  "file": "img/wf-gitbutler-parallel.webp",
+  "tool": "GitButler",
+  "title": "Parallel agents in one workspace vs worktrees",
+  "source": "https://docs.gitbutler.com/ai-agents/parallel-agents",
+  "checked": "2026-11-21",
+  "tags": ["agents", "worktrees", "parallel"],
+  "pins": [
+    {"x": 50, "y": 37, "note": "Branch routing is the agent's job; prompt stays small"},
+    {"x": 50, "y": 42, "note": "Agents must call out overlap when touching the same file"},
+    {"x": 57, "y": 85, "note": "Comparison table: one shared dir vs one dir per agent"},
+    {"x": 67, "y": 94, "note": "Setup cost: reuse one install and dev server"}
+  ],
+  "insight": "GitButler's answer to worktree setup cost is several active branches in one working directory, at the price of shared runtime state.",
+  "gitgud": "Claude's pick: support both, but gitgud's proposals need neither: agents propose commits from the one working copy without moving branches."
+},
+{
+  "id": "wf-codex-review-pane",
+  "file": "img/wf-codex-review-pane.webp",
+  "tool": "Codex app",
+  "title": "Codex review pane: review scopes and inline findings",
+  "source": "https://developers.openai.com/codex/app/review",
+  "checked": "2026-11-21",
+  "tags": ["agents", "review", "staging"],
+  "pins": [
+    {"x": 50, "y": 12, "note": "Review pane: line feedback, then stage, revert, commit or push"},
+    {"x": 50, "y": 36, "note": "Scopes: Unstaged, Staged, Commit, Branch, Last turn"},
+    {"x": 50, "y": 32, "note": "Shows all repo changes, not only what Codex edited"},
+    {"x": 50, "y": 80, "note": "Review findings rendered as inline comments in the diff"}
+  ],
+  "insight": "OpenAI built a mini Git GUI inside the agent app: diff scopes including 'last turn', chunk staging and revert, commit/push/PR.",
+  "gitgud": "Claude's pick: a 'by agent turn / by proposal' diff scope is worth stealing; gitgud should be the place this review happens, not each agent app."
+},
+{
+  "id": "wf-mcp-git-server",
+  "file": "img/wf-mcp-git-server.webp",
+  "tool": "mcp-server-git (official)",
+  "title": "Official MCP git server: tool list",
+  "source": "https://github.com/modelcontextprotocol/servers/tree/main/src/git",
+  "checked": "2026-11-21",
+  "tags": ["mcp", "agents"],
+  "pins": [
+    {"x": 30, "y": 30, "note": "Tools mirror plain git verbs: status, diffs, commit, add..."},
+    {"x": 31, "y": 78, "note": "git_commit commits directly: no review gate"},
+    {"x": 30, "y": 99, "note": "git_add takes file paths only, no hunks"}
+  ],
+  "insight": "The reference server is a thin, hardened CLI mirror: it disables hooks, signing and repo-defined drivers, and offers no proposal/approval concept.",
+  "gitgud": "Claude's pick: gitgud's MCP should expose hunk-level 'propose', not 'commit'; real commits (with hooks and signing) happen when Max approves."
+},
+{
+  "id": "wf-git-254-history",
+  "file": "img/wf-git-254-history.webp",
+  "tool": "Git 2.54",
+  "title": "git history reword / split",
+  "source": "https://github.blog/open-source/git/highlights-from-git-2-54/",
+  "checked": "2026-11-21",
+  "tags": ["history-edit", "git-release"],
+  "pins": [
+    {"x": 39, "y": 13, "note": "Why: rebase -i can leave you in a conflicted state"},
+    {"x": 39, "y": 43, "note": "reword: no worktree/index touch, updates descendant branches"},
+    {"x": 30, "y": 65, "note": "split: pick hunks like add -p into a new parent commit"},
+    {"x": 39, "y": 89, "note": "Refuses merge commits and any conflicting operation"}
+  ],
+  "insight": "Git now ships targeted, refuse-on-conflict history edits (reword/split 2.54, fixup 2.55, drop 2.56) built on git replay.",
+  "gitgud": "Claude's pick: map these to direct-manipulation actions with a preview, falling back to own replay logic where git history is still experimental."
+},
+{
+  "id": "wf-octoverse-2026",
+  "file": "img/wf-octoverse-2026.webp",
+  "tool": "GitHub Octoverse 2026",
+  "title": "Agents start >40% of PRs; commits 34.3B",
+  "source": "https://github.blog/news-insights/octoverse/octoverse-commits-pushes-reach-new-highs-in-2026-as-developers-build-with-agents/",
+  "checked": "2026-11-21",
+  "tags": ["data", "agents"],
+  "pins": [
+    {"x": 40, "y": 14, "note": "More than 40% of PRs start with an agent (17% in March)"},
+    {"x": 40, "y": 5, "note": "Repos with agent config file: 8x commits"},
+    {"x": 36, "y": 78, "note": "Commits 12.9B (2025) to 34.3B (2026)"},
+    {"x": 60, "y": 85, "note": "Merged PRs 1.3B in the 12 months to Sept 2026"}
+  ],
+  "insight": "Commit volume nearly tripled in a year and review is now how developers shape agent output.",
+  "gitgud": "Claude's pick: optimise gitgud for reviewing many agent-made changes fast, not for authoring."
+},
+{
+  "id": "wf-claude-worktrees",
+  "file": "img/wf-claude-worktrees.webp",
+  "tool": "Claude Code",
+  "title": "Claude Code: parallel sessions with worktrees",
+  "source": "https://code.claude.com/docs/en/worktrees",
+  "checked": "2026-11-21",
+  "tags": ["agents", "worktrees"],
+  "pins": [
+    {"x": 49, "y": 28, "note": "--worktree flag, .worktreeinclude, cleanup, non-git hooks"},
+    {"x": 49, "y": 40, "note": "Each session gets its own checkout and branch"},
+    {"x": 88, "y": 39, "note": "Enforced isolation: edits to main checkout blocked"},
+    {"x": 88, "y": 61, "note": "Copy gitignored files into worktrees"}
+  ],
+  "insight": "Claude Code defaults parallel work to worktrees under .claude/worktrees with branch worktree-<name>, and skips repo-local filter drivers (LFS pointers result).",
+  "gitgud": "Claude's pick: list these worktrees in gitgud's sidebar and offer an LFS 'hydrate' and 'turn into proposal' action."
+},
+{
+  "id": "wf-git-absorb",
+  "file": "img/wf-git-absorb.webp",
+  "tool": "git-absorb",
+  "title": "git absorb: automatic fixup targets",
+  "source": "https://github.com/tummychow/git-absorb",
+  "checked": "2026-11-21",
+  "tags": ["history-edit", "fixup"],
+  "pins": [
+    {"x": 88, "y": 10, "note": "5.8k stars: real demand for automatic fixups"},
+    {"x": 39, "y": 54, "note": "Port of hg absorb: fold fixes into the right ancestor"},
+    {"x": 39, "y": 71, "note": "One command: absorb --and-rebase"},
+    {"x": 25, "y": 84, "note": "Or inspect fixup! commits, then autosquash"}
+  ],
+  "insight": "Absorb finds the target commit per staged hunk by commutation, removing the 'find the SHA, rebase -i' chore.",
+  "gitgud": "Claude's pick: an 'Absorb' button that previews hunk → commit assignments before applying."
+},
+{
+  "id": "wf-so-2025-ai",
+  "file": "img/wf-so-2025-ai.webp",
+  "tool": "Stack Overflow Survey 2025",
+  "title": "AI in the development workflow: committing and reviewing",
+  "source": "https://survey.stackoverflow.co/2025/ai",
+  "checked": "2026-11-21",
+  "tags": ["data", "ai"],
+  "pins": [
+    {"x": 60, "y": 75, "note": "Committing and reviewing code: only 10.2% mostly AI"},
+    {"x": 67, "y": 21, "note": "Search for answers: 54.1% mostly AI"},
+    {"x": 19, "y": 34, "note": "Most resistance for high-responsibility tasks"}
+  ],
+  "insight": "Developers hand search and docs to AI but keep committing and reviewing for themselves (58.7% don't plan to use AI there).",
+  "gitgud": "Claude's pick: AI drafts, human decides: proposals and opt-in messages, never silent commits."
+}
+]

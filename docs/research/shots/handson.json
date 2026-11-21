@@ -1,0 +1,559 @@
+[
+  {
+    "id": "ho-fork-graph",
+    "file": "img/ho-fork-graph.webp",
+    "tool": "Fork",
+    "title": "Fork graph on the BoatAttack test repo",
+    "source": "hands-on 2026-11-21",
+    "checked": "2026-11-21",
+    "tags": [
+      "graph",
+      "sidebar",
+      "stash"
+    ],
+    "pins": [
+      {
+        "x": 18,
+        "y": 11,
+        "note": "Stash drawn as its own node in the graph"
+      },
+      {
+        "x": 3,
+        "y": 20,
+        "note": "Branches grouped by folder prefix (conflict/, feature/, hotfix/)"
+      },
+      {
+        "x": 4,
+        "y": 4,
+        "note": "Quick Launch (Ctrl+P): fuzzy commands, repos, branches"
+      },
+      {
+        "x": 15,
+        "y": 22,
+        "note": "Lanes coloured per branch; usable < 3 s after open"
+      }
+    ],
+    "insight": "Graph, sidebar and stash-as-node were ready before the first screenshot; nothing to wait for on a 1.8k-commit Unity repo.",
+    "gitgud": "Claude's pick: show stashes as graph nodes and group branches by prefix folder."
+  },
+  {
+    "id": "ho-fork-imagediff",
+    "file": "img/ho-fork-imagediff.webp",
+    "tool": "Fork",
+    "title": "Fork image diff of an LFS texture, side by side",
+    "source": "hands-on 2026-11-21",
+    "checked": "2026-11-21",
+    "tags": [
+      "diff",
+      "lfs",
+      "image"
+    ],
+    "pins": [
+      {
+        "x": 14,
+        "y": 3,
+        "note": "LFS badge on each side: Fork smudges the pointer to show pixels"
+      },
+      {
+        "x": 53,
+        "y": 98,
+        "note": "Side-by-Side / Swipe / Onion Skin"
+      },
+      {
+        "x": 31,
+        "y": 96,
+        "note": "Dimensions and byte size under each image"
+      }
+    ],
+    "insight": "Selecting a changed LFS PNG opens a real image diff straight away, no extra click.",
+    "gitgud": "Claude's pick: steal the three image modes and the LFS badge; this is table stakes for game repos."
+  },
+  {
+    "id": "ho-fork-swipe",
+    "file": "img/ho-fork-swipe.webp",
+    "tool": "Fork",
+    "title": "Fork image diff, Swipe mode",
+    "source": "hands-on 2026-11-21",
+    "checked": "2026-11-21",
+    "tags": [
+      "diff",
+      "image"
+    ],
+    "pins": [
+      {
+        "x": 57,
+        "y": 49,
+        "note": "Draggable swipe divider: old left, new right"
+      },
+      {
+        "x": 56,
+        "y": 98,
+        "note": "Mode switch"
+      }
+    ],
+    "insight": "Swipe makes a hue shift obvious in one glance.",
+    "gitgud": "Claude's pick: steal."
+  },
+  {
+    "id": "ho-fork-rebase",
+    "file": "img/ho-fork-rebase.webp",
+    "tool": "Fork",
+    "title": "Fork interactive rebase dialog",
+    "source": "hands-on 2026-11-21",
+    "checked": "2026-11-21",
+    "tags": [
+      "rebase",
+      "history"
+    ],
+    "pins": [
+      {
+        "x": 6,
+        "y": 17,
+        "note": "fixup! commit pre-set to Fixup and moved under its target (autosquash)"
+      },
+      {
+        "x": 8,
+        "y": 14,
+        "note": "Per-row action: P/E/R/S/F/D keys, Ctrl+Up/Down to reorder"
+      },
+      {
+        "x": 69,
+        "y": 9,
+        "note": "Update dependent branches"
+      },
+      {
+        "x": 3,
+        "y": 95,
+        "note": "Backup current state with a temporary branch"
+      }
+    ],
+    "insight": "The whole rebase plan is edited up front, reword included; nothing pops an editor mid-rebase.",
+    "gitgud": "Claude's pick: steal the todo-list dialog with autosquash pre-applied and the backup-branch checkbox."
+  },
+  {
+    "id": "ho-fork-merge-predict",
+    "file": "img/ho-fork-merge-predict.webp",
+    "tool": "Fork",
+    "title": "Fork merge dialog predicting conflicts",
+    "source": "hands-on 2026-11-21",
+    "checked": "2026-11-21",
+    "tags": [
+      "merge",
+      "conflicts"
+    ],
+    "pins": [
+      {
+        "x": 19,
+        "y": 86,
+        "note": "'Merge will cause conflicts' shown before anything runs"
+      },
+      {
+        "x": 65,
+        "y": 64,
+        "note": "Merge option: default / no-ff / squash"
+      }
+    ],
+    "insight": "Fork dry-runs the merge and warns before you commit to it; cherry-pick shows 'can be done without conflicts' the same way.",
+    "gitgud": "Claude's pick: steal the pre-flight conflict prediction for merge, rebase and cherry-pick."
+  },
+  {
+    "id": "ho-fork-merge",
+    "file": "img/ho-fork-merge.webp",
+    "tool": "Fork",
+    "title": "Fork built-in merge on a Unity prefab",
+    "source": "hands-on 2026-11-21",
+    "checked": "2026-11-21",
+    "tags": [
+      "merge",
+      "conflicts",
+      "unity"
+    ],
+    "pins": [
+      {
+        "x": 52,
+        "y": 10,
+        "note": "Tick a side to take it for every conflict"
+      },
+      {
+        "x": 95,
+        "y": 8,
+        "note": "Resolved counter with prev/next"
+      },
+      {
+        "x": 50,
+        "y": 77,
+        "note": "Editable result pane; prefab merged as plain YAML text"
+      }
+    ],
+    "insight": "Good text merger, but no UnityYAMLMerge: external tools list only Visual Studio and VS Code.",
+    "gitgud": "Claude's pick: same 3-pane shape, plus UnityYAMLMerge detected and offered first for .prefab/.unity."
+  },
+  {
+    "id": "ho-sm-workdir",
+    "file": "img/ho-sm-workdir.webp",
+    "tool": "Sublime Merge",
+    "title": "Sublime Merge working directory: image and text diffs in one scroll",
+    "source": "hands-on 2026-11-21",
+    "checked": "2026-11-21",
+    "tags": [
+      "diff",
+      "lfs",
+      "staging"
+    ],
+    "pins": [
+      {
+        "x": 65,
+        "y": 20,
+        "note": "Side by side / Onion skin"
+      },
+      {
+        "x": 49,
+        "y": 17,
+        "note": "LFS tag"
+      },
+      {
+        "x": 65,
+        "y": 75,
+        "note": "Hover a hunk: Stage Hunk / Discard Hunk"
+      },
+      {
+        "x": 62,
+        "y": 9,
+        "note": "Commit message box sits above the changes"
+      }
+    ],
+    "insight": "Every changed file is expanded inline; staging a hunk is one click on the hunk's own row.",
+    "gitgud": "Claude's pick: steal inline per-hunk buttons that stay put; avoid Fork's far-right hover pill."
+  },
+  {
+    "id": "ho-sm-palette",
+    "file": "img/ho-sm-palette.webp",
+    "tool": "Sublime Merge",
+    "title": "Sublime Merge command palette",
+    "source": "hands-on 2026-11-21",
+    "checked": "2026-11-21",
+    "tags": [
+      "palette",
+      "keyboard"
+    ],
+    "pins": [
+      {
+        "x": 64,
+        "y": 11,
+        "note": "Each command shows the git command it runs"
+      },
+      {
+        "x": 71,
+        "y": 9,
+        "note": "...and its shortcut"
+      }
+    ],
+    "insight": "The palette teaches git: 'Pop Stash' is labelled 'git stash pop'. Commands chain into flag pickers.",
+    "gitgud": "Claude's pick: steal the git-equivalent column; it doubles as documentation."
+  },
+  {
+    "id": "ho-sm-edit-menu",
+    "file": "img/ho-sm-edit-menu.webp",
+    "tool": "Sublime Merge",
+    "title": "Sublime Merge commit Edit menu (no rebase todo list)",
+    "source": "hands-on 2026-11-21",
+    "checked": "2026-11-21",
+    "tags": [
+      "rebase",
+      "history"
+    ],
+    "pins": [
+      {
+        "x": 48,
+        "y": 41,
+        "note": "Edit message / contents, squash with parent, move up/down, drop"
+      },
+      {
+        "x": 56,
+        "y": 65,
+        "note": "Fixup squash needs a multi-selection"
+      }
+    ],
+    "insight": "History edits are one commit at a time; squash with parent kept the 'fixup!' line in the message.",
+    "gitgud": "Claude's pick: offer per-commit quick actions, but also the full todo-list with autosquash."
+  },
+  {
+    "id": "ho-sm-merge-dialog",
+    "file": "img/ho-sm-merge-dialog.webp",
+    "tool": "Sublime Merge",
+    "title": "Sublime Merge merge dialog",
+    "source": "hands-on 2026-11-21",
+    "checked": "2026-11-21",
+    "tags": [
+      "merge"
+    ],
+    "pins": [
+      {
+        "x": 34,
+        "y": 66,
+        "note": "'Runs git command git merge conflict/theirs'"
+      },
+      {
+        "x": 12,
+        "y": 42,
+        "note": "Flags as checkboxes"
+      }
+    ],
+    "insight": "Shows exactly what will run; no conflict prediction.",
+    "gitgud": "Claude's pick: steal the command preview, add Fork's prediction."
+  },
+  {
+    "id": "ho-sm-conflicts",
+    "file": "img/ho-sm-conflicts.webp",
+    "tool": "Sublime Merge",
+    "title": "Sublime Merge mid-merge: conflicts inline",
+    "source": "hands-on 2026-11-21",
+    "checked": "2026-11-21",
+    "tags": [
+      "merge",
+      "conflicts"
+    ],
+    "pins": [
+      {
+        "x": 47,
+        "y": 4,
+        "note": "'failed' badge + raw git message as a toast"
+      },
+      {
+        "x": 92,
+        "y": 23,
+        "note": "Resolve / Using Ours / Using Theirs per file"
+      },
+      {
+        "x": 95,
+        "y": 17,
+        "note": "'Stage all unmerged files to continue': stages conflict markers as-is"
+      }
+    ],
+    "insight": "Conflict markers show inline in the normal diff; per-file resolve choices are one dropdown away.",
+    "gitgud": "Claude's pick: steal per-file ours/theirs; avoid a one-click 'stage all unmerged'."
+  },
+  {
+    "id": "ho-sm-3way",
+    "file": "img/ho-sm-3way.webp",
+    "tool": "Sublime Merge",
+    "title": "Sublime Merge 3-way merge tool",
+    "source": "hands-on 2026-11-21",
+    "checked": "2026-11-21",
+    "tags": [
+      "merge",
+      "conflicts"
+    ],
+    "pins": [
+      {
+        "x": 50,
+        "y": 16,
+        "note": "Merged pane in the middle, Base/Merged toggle"
+      },
+      {
+        "x": 69,
+        "y": 15,
+        "note": "Arrow per hunk: 'Use this hunk' (Ctrl+Shift+])"
+      },
+      {
+        "x": 50,
+        "y": 4,
+        "note": "'all conflicts resolved'"
+      },
+      {
+        "x": 97,
+        "y": 4,
+        "note": "Save and Stage"
+      }
+    ],
+    "insight": "Taking both sides is two arrow clicks; the header confirms when nothing is left.",
+    "gitgud": "Claude's pick: steal the ours | merged | theirs layout with per-hunk arrows."
+  },
+  {
+    "id": "ho-gb-lfs-psa",
+    "file": "img/ho-gb-lfs-psa.webp",
+    "tool": "GitButler",
+    "title": "GitButler warns that LFS filters are skipped",
+    "source": "hands-on 2026-11-21",
+    "checked": "2026-11-21",
+    "tags": [
+      "lfs",
+      "onboarding"
+    ],
+    "pins": [
+      {
+        "x": 88,
+        "y": 72,
+        "note": "'Filters will silently not be applied during workspace operations' + 185 LFS files"
+      },
+      {
+        "x": 30,
+        "y": 59,
+        "note": "Workspace mode switches HEAD to gitbutler/workspace"
+      }
+    ],
+    "insight": "GitButler's virtual-branch workspace bypasses git-lfs; it says so honestly, but it is a blocker for Unity repos.",
+    "gitgud": "Claude's pick: avoid any workspace model that bypasses smudge/clean filters."
+  },
+  {
+    "id": "ho-gb-lfs-diff",
+    "file": "img/ho-gb-lfs-diff.webp",
+    "tool": "GitButler",
+    "title": "GitButler diff of the LFS texture",
+    "source": "hands-on 2026-11-21",
+    "checked": "2026-11-21",
+    "tags": [
+      "diff",
+      "lfs"
+    ],
+    "pins": [
+      {
+        "x": 48,
+        "y": 37,
+        "note": "Pointer text only: oid and size"
+      }
+    ],
+    "insight": "No image diff at all for LFS files.",
+    "gitgud": "Claude's pick: avoid."
+  },
+  {
+    "id": "ho-gb-hunks",
+    "file": "img/ho-gb-hunks.webp",
+    "tool": "GitButler",
+    "title": "GitButler commit with hunk and line checkboxes",
+    "source": "hands-on 2026-11-21",
+    "checked": "2026-11-21",
+    "tags": [
+      "staging",
+      "commit"
+    ],
+    "pins": [
+      {
+        "x": 27,
+        "y": 17,
+        "note": "Hunk checkbox (each line has one too)"
+      },
+      {
+        "x": 27,
+        "y": 58,
+        "note": "Unticked hunk B stays out"
+      },
+      {
+        "x": 2,
+        "y": 14,
+        "note": "File-level checkbox"
+      }
+    ],
+    "insight": "Selecting what goes into a commit is ticking boxes in the diff; no separate staging area.",
+    "gitgud": "Claude's pick: steal checkbox selection as an alternative to stage/unstage."
+  },
+  {
+    "id": "ho-gb-apply-refused",
+    "file": "img/ho-gb-apply-refused.webp",
+    "tool": "GitButler",
+    "title": "GitButler refuses to apply a conflicting branch",
+    "source": "hands-on 2026-11-21",
+    "checked": "2026-11-21",
+    "tags": [
+      "branches",
+      "conflicts"
+    ],
+    "pins": [
+      {
+        "x": 88,
+        "y": 92,
+        "note": "'It conflicts with stack ht-branch-1. Unapply it first'"
+      },
+      {
+        "x": 47,
+        "y": 24,
+        "note": "Applied stack lane"
+      }
+    ],
+    "insight": "Two branches touching the same lines can't be in the workspace together; there is no branch-into-branch merge.",
+    "gitgud": "Claude's pick: avoid: merging is a core task."
+  },
+  {
+    "id": "ho-gb-squash-drag",
+    "file": "img/ho-gb-squash-drag.webp",
+    "tool": "GitButler",
+    "title": "GitButler squash by drag and drop",
+    "source": "hands-on 2026-11-21",
+    "checked": "2026-11-21",
+    "tags": [
+      "rebase",
+      "history"
+    ],
+    "pins": [
+      {
+        "x": 48,
+        "y": 39,
+        "note": "Drop target labelled 'Squash'"
+      }
+    ],
+    "insight": "Drag a commit onto another to squash; the target says what will happen.",
+    "gitgud": "Claude's pick: steal labelled drop targets for history edits."
+  },
+  {
+    "id": "ho-gb-diverged",
+    "file": "img/ho-gb-diverged.webp",
+    "tool": "GitButler",
+    "title": "GitButler after rewriting a pushed branch",
+    "source": "hands-on 2026-11-21",
+    "checked": "2026-11-21",
+    "tags": [
+      "rebase",
+      "push"
+    ],
+    "pins": [
+      {
+        "x": 47,
+        "y": 33,
+        "note": "'This branch and its remote have diverged'"
+      },
+      {
+        "x": 47,
+        "y": 37,
+        "note": "Prominent 'Update local branch...' would pull the old commits back"
+      },
+      {
+        "x": 43,
+        "y": 29,
+        "note": "Force push"
+      }
+    ],
+    "insight": "After a deliberate rewrite the loudest button undoes it.",
+    "gitgud": "Claude's pick: avoid; after a rewrite, offer force-with-lease first."
+  },
+  {
+    "id": "ho-gb-oplog",
+    "file": "img/ho-gb-oplog.webp",
+    "tool": "GitButler",
+    "title": "GitButler operations history",
+    "source": "hands-on 2026-11-21",
+    "checked": "2026-11-21",
+    "tags": [
+      "undo",
+      "history"
+    ],
+    "pins": [
+      {
+        "x": 21,
+        "y": 15,
+        "note": "Revert itself is logged, so it can be reverted"
+      },
+      {
+        "x": 21,
+        "y": 30,
+        "note": "Discard is a logged, revertible op"
+      },
+      {
+        "x": 51,
+        "y": 4,
+        "note": "Manual snapshot"
+      }
+    ],
+    "insight": "Every operation, discards included, is a snapshot you can revert with one hover click. This recovered the discarded change; Fork and Sublime could not.",
+    "gitgud": "Claude's pick: steal: an op log covering discards is the undo model gitgud wants."
+  }
+]

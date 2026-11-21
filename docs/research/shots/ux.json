@@ -1,0 +1,210 @@
+[
+  {
+    "id": "ux-nng-response-times",
+    "file": "img/ux-nng-response-times.webp",
+    "tool": "Nielsen Norman Group",
+    "title": "Response times: the 0.1 s / 1 s / 10 s limits",
+    "source": "https://www.nngroup.com/articles/response-times-3-important-limits/",
+    "checked": "2026-11-21",
+    "tags": ["latency", "feedback"],
+    "pins": [
+      {"x": 10, "y": 55, "note": "0.1 s: feels instantaneous, just show the result"},
+      {"x": 10, "y": 64, "note": "1 s: flow of thought survives, feeling of direct control lost"},
+      {"x": 10, "y": 80, "note": "10 s: attention limit, needs progress and expected finish"}
+    ],
+    "insight": "Three perceptual budgets (source 1993) still frame every latency target; past 10 s users need percent-done and a way out.",
+    "gitgud": "Claude's pick: budget every action into one of the three bands; fetch/LFS pull get progress plus Cancel."
+  },
+  {
+    "id": "ux-lawsofux-doherty",
+    "file": "img/ux-lawsofux-doherty.webp",
+    "tool": "Laws of UX",
+    "title": "Doherty threshold: interact under 400 ms",
+    "source": "https://lawsofux.com/doherty-threshold/",
+    "checked": "2026-11-21",
+    "tags": ["latency"],
+    "pins": [
+      {"x": 48, "y": 70, "note": "Productivity rises when neither side waits; <400 ms"},
+      {"x": 30, "y": 97, "note": "Takeaway: feedback within 400 ms; perceived performance counts"}
+    ],
+    "insight": "IBM's 1982 finding sets a looser outer bound than 100 ms; perceived speed (progress, animation) also counts.",
+    "gitgud": "Claude's pick: 400 ms is the hard ceiling for anything non-network; aim for 50 ms like Superhuman."
+  },
+  {
+    "id": "ux-superhuman-100ms",
+    "file": "img/ux-superhuman-100ms.webp",
+    "tool": "Superhuman",
+    "title": "Applying the 100 ms rule to email",
+    "source": "https://blog.superhuman.com/superhuman-is-built-for-speed/",
+    "checked": "2026-11-21",
+    "tags": ["latency", "keyboard"],
+    "pins": [
+      {"x": 23, "y": 26, "note": "Speed as the product's headline promise (2022)"},
+      {"x": 50, "y": 91, "note": "Every interaction under 100 ms; internal target <50 ms"}
+    ],
+    "insight": "Superhuman treats 100 ms as a ceiling, buckets events into <50/<100/<1000 ms, keeps a local DB and prerenders likely next views.",
+    "gitgud": "Claude's pick: steal the bucketed latency metric and prefetch the diff of the next commit in the list."
+  },
+  {
+    "id": "ux-zed-gpui",
+    "file": "img/ux-zed-gpui.webp",
+    "tool": "Zed",
+    "title": "GPUI: rendering UI at 120 FPS",
+    "source": "https://zed.dev/blog/videogame",
+    "checked": "2026-11-21",
+    "tags": ["performance", "rendering"],
+    "pins": [
+      {"x": 39, "y": 45, "note": "8.33 ms per frame at 120 Hz: state, layout, paint"},
+      {"x": 39, "y": 62, "note": "Atom/Electron: GC pause or relayout = missed frame"},
+      {"x": 39, "y": 95, "note": "Built own GPU UI framework to hit the budget"}
+    ],
+    "insight": "Frame budget, not average speed, is what makes an app feel solid; web stacks lose frames to GC and DOM layout (source 2023).",
+    "gitgud": "Claude's pick: gitgud runs in WebView2, so draw the graph on canvas from Rust-precomputed lanes and virtualize every list."
+  },
+  {
+    "id": "ux-linear-shortcuts-help",
+    "file": "img/ux-linear-shortcuts-help.webp",
+    "tool": "Linear",
+    "title": "Searchable keyboard shortcut help on ?",
+    "source": "https://linear.app/changelog/2021-03-25-keyboard-shortcuts-help",
+    "checked": "2026-11-21",
+    "tags": ["keyboard", "command-palette", "discoverability"],
+    "pins": [
+      {"x": 54, "y": 33, "note": "Shortcut sheet is itself searchable"},
+      {"x": 61, "y": 40, "note": "Cmd/Ctrl+K opens the command menu"},
+      {"x": 48, "y": 66, "note": "? opens help from anywhere"}
+    ],
+    "insight": "Linear pairs a command menu that runs any action with a searchable shortcut sheet to convert mouse users to keys (source 2021).",
+    "gitgud": "Claude's pick: Ctrl+K palette showing each command's shortcut, plus ? for a searchable keymap generated from the same keymap file."
+  },
+  {
+    "id": "ux-linear-redesign",
+    "file": "img/ux-linear-redesign.webp",
+    "tool": "Linear",
+    "title": "2024 redesign: less noise, more density and hierarchy",
+    "source": "https://linear.app/now/how-we-redesigned-the-linear-ui",
+    "checked": "2026-11-21",
+    "tags": ["density", "themes"],
+    "pins": [
+      {"x": 50, "y": 4, "note": "March 2024 redesign write-up"},
+      {"x": 50, "y": 56, "note": "Goal: reduce noise, increase hierarchy and density"},
+      {"x": 50, "y": 81, "note": "Sidebar, list and detail panels tightened"}
+    ],
+    "insight": "Linear got denser by removing chrome, and generates every theme from base, accent and contrast in LCH.",
+    "gitgud": "Claude's pick: few theme tokens in OKLCH with a contrast knob; hierarchy from type and contrast instead of borders."
+  },
+  {
+    "id": "ux-fluent-spacing",
+    "file": "img/ux-fluent-spacing.webp",
+    "tool": "Windows / Fluent",
+    "title": "Windows content layout and spacing ramp",
+    "source": "https://learn.microsoft.com/en-us/windows/apps/design/basics/content-basics",
+    "checked": "2026-11-21",
+    "tags": ["density", "desktop-conventions"],
+    "pins": [
+      {"x": 61, "y": 47, "note": "8 epx between related controls"},
+      {"x": 61, "y": 82, "note": "12 epx between content areas"},
+      {"x": 62, "y": 91, "note": "16 epx surface-to-edge text"}
+    ],
+    "insight": "Windows groups UI by a small fixed spacing ramp; WinUI also offers a Compact density for pointer-driven, information-rich apps.",
+    "gitgud": "Claude's pick: 4 px grid with the 8/12/16 ramp at Compact density, so gitgud feels at home on Windows while staying dense."
+  },
+  {
+    "id": "ux-tower-undo",
+    "file": "img/ux-tower-undo.webp",
+    "tool": "Tower",
+    "title": "Undo anything with Ctrl+Z",
+    "source": "https://www.git-tower.com/features/undo",
+    "checked": "2026-11-21",
+    "tags": ["undo", "safety"],
+    "pins": [
+      {"x": 50, "y": 23, "note": "Undo as a headline feature"},
+      {"x": 32, "y": 68, "note": "Standard Ctrl+Z, no special mode"},
+      {"x": 62, "y": 95, "note": "Covers delete, stage/unstage, discard chunk"}
+    ],
+    "insight": "Tower maps the OS undo shortcut onto git: staging, discards, commits, branch ops, merges, interactive rebases and stashes.",
+    "gitgud": "Claude's pick: same Ctrl+Z contract, backed by an op log so it survives restarts and covers discards."
+  },
+  {
+    "id": "ux-gitbutler-oplog",
+    "file": "img/ux-gitbutler-oplog.webp",
+    "tool": "GitButler",
+    "title": "Operations history: snapshot before every action",
+    "source": "https://docs.gitbutler.com/features/timeline",
+    "checked": "2026-11-21",
+    "tags": ["undo", "oplog", "safety"],
+    "pins": [
+      {"x": 50, "y": 30, "note": "Snapshots branch state, uncommitted work, conflicts into git ODB"},
+      {"x": 36, "y": 47, "note": "Each entry names the operation and time"},
+      {"x": 37, "y": 61, "note": "Even DiscardChanges is listed, so discards are recoverable"},
+      {"x": 50, "y": 88, "note": "Revert restores state to just before that op"}
+    ],
+    "insight": "GitButler's oplog covers what reflog misses (working tree, conflict state) by snapshotting before each major action.",
+    "gitgud": "Claude's pick: same model in gitgud-core under a private ref; the list is the visible undo history."
+  },
+  {
+    "id": "ux-jj-oplog",
+    "file": "img/ux-jj-oplog.webp",
+    "tool": "Jujutsu (jj)",
+    "title": "Operation log: undo, revert, restore",
+    "source": "https://docs.jj-vcs.dev/latest/operation-log/",
+    "checked": "2026-11-21",
+    "tags": ["undo", "oplog"],
+    "pins": [
+      {"x": 50, "y": 25, "note": "Every op stores a view: refs, heads, working-copy commit"},
+      {"x": 50, "y": 39, "note": "undo last, revert any op, restore whole repo"},
+      {"x": 50, "y": 96, "note": "--at-op: inspect the repo as it was"}
+    ],
+    "insight": "jj makes the operation, not the commit, the unit of undo; any past state is viewable and restorable.",
+    "gitgud": "Claude's pick: offer 'view repo at this op' (read-only graph) before restoring, which fixes the fear in P3."
+  },
+  {
+    "id": "ux-gitbutler-drag",
+    "file": "img/ux-gitbutler-drag.webp",
+    "tool": "GitButler",
+    "title": "Commit editing by drag and drop",
+    "source": "https://docs.gitbutler.com/features/branch-management/commits",
+    "checked": "2026-11-21",
+    "tags": ["direct-manipulation", "history-editing"],
+    "pins": [
+      {"x": 50, "y": 25, "note": "Replaces rebase -i: most edits are drag-and-drop"},
+      {"x": 88, "y": 19, "note": "Squash, split, move, undo commits"},
+      {"x": 40, "y": 57, "note": "Commit editor inline in the branch lane"}
+    ],
+    "insight": "GitButler turns squash, reorder, amend-into and split into drags on the commit list, no rebase todo file.",
+    "gitgud": "Claude's pick: steal the drags, add a hover preview of the result and a keyboard twin for each."
+  },
+  {
+    "id": "ux-lazygit-vision",
+    "file": "img/ux-lazygit-vision.webp",
+    "tool": "lazygit",
+    "title": "Vision and design principles",
+    "source": "https://github.com/jesseduffield/lazygit/blob/master/VISION.md",
+    "checked": "2026-11-21",
+    "tags": ["principles", "discoverability", "safety"],
+    "pins": [
+      {"x": 30, "y": 46, "note": "Seven principles; safety and simplicity win conflicts"},
+      {"x": 45, "y": 77, "note": "'YOU ARE HERE' marker while rebasing"},
+      {"x": 45, "y": 83, "note": "Toast only when the affected entity is off-screen"},
+      {"x": 40, "y": 85, "note": "Disabled keybinding explains why"}
+    ],
+    "insight": "lazygit codifies discoverability, safety and speed: disable rather than hide, confirm only hard-to-reverse actions, respect git config.",
+    "gitgud": "Claude's pick: adopt its tie-break (safety and simplicity first, power via palette and keys) as gitgud's own."
+  },
+  {
+    "id": "ux-nng-confirmation",
+    "file": "img/ux-nng-confirmation.webp",
+    "tool": "Nielsen Norman Group",
+    "title": "Confirmation dialogs: only when not overused",
+    "source": "https://www.nngroup.com/articles/confirmation-dialog/",
+    "checked": "2026-11-21",
+    "tags": ["safety", "dialogs"],
+    "pins": [
+      {"x": 35, "y": 16, "note": "Overused warnings get clicked through"},
+      {"x": 37, "y": 74, "note": "Good: dialog names the exact file and its details"},
+      {"x": 33, "y": 97, "note": "Weak: '2 items', generic Yes/No"}
+    ],
+    "insight": "Confirm only serious, irreversible actions; restate the target; label buttons by outcome; prefer undo where possible.",
+    "gitgud": "Claude's pick: confirm only force-push and remote deletes, naming branch, remote and commits lost."
+  }
+]
