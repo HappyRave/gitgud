@@ -41,7 +41,7 @@ pick, the pick is kept for the record.
 | Q16 | Remove `GIT_CURL_VERBOSE=0` from the environment? | **Claude removes it.** Done: user variable deleted (new terminals pick it up). | spikes.md 4.6 |
 | Q17 | Minimum Git version? | **Bundle our own Git; use the system Git by default when it meets the floor, bundled Git as fallback.** Floor: 2.45.2. Claude's pick was "≥ 2.45.2, recommend ≥ 2.54, no bundle"; the system-first default keeps hooks, credential helpers and signing identical to the terminal. | spikes.md, workflows.md |
 | Q18 | lazygit hands-on column? | **Skip it.** | handson.md |
-| Q19 | Keep the test repos (rust 1.2 GB, BoatAttack 1.1 GB) in the old session scratchpad? | **Keep until the spec is done.** They live in Temp, so a cleanup could still wipe them. | — |
+| Q19 | Keep the test repos (rust 1.2 GB, BoatAttack 1.1 GB) in the old session scratchpad? | **Keep until the spec is done.** Deleted after the spec, 2026-11-21 (Max: "Delete both"). `handson_setup.py` and S1b need a fresh BoatAttack clone (`git clone https://github.com/Unity-Technologies/BoatAttack` + `git lfs pull`), with `SRC` pointed at it. | — |
 
 Downloads approved by Max on 2026-11-21 ("ok all downloads"). Used for the Unity repo: Unity-Technologies/BoatAttack (public, Claude's pick, since none was named).
 
