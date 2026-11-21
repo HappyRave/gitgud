@@ -1,0 +1,20 @@
+[package]
+name = "gitgud"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+# Distinct lib name avoids a bin/lib name clash on Windows (rust-lang/cargo#8519).
+name = "gitgud_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+gitgud-core = { path = "../crates/gitgud-core" }
+tauri = { version = "2", features = [] }
+
+[dev-dependencies]
+serde_json = "1.0.154"
