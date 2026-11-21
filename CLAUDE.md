@@ -3,8 +3,9 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 gitgud is a desktop Git GUI. The repo was wiped on 2026-11-21 for a fresh start; the earlier
-prototype is still in git history (`5f1257d` and before). Scaffolded 2026-11-21: the shell runs and
-locates the system git; no repo features yet. Update this file as pieces land.
+prototype is still in git history (`5f1257d` and before). Built so far: locating the system git, and
+opening a repo (folder picker, or `GITGUD_OPEN=<path>` at launch) to show its working-copy status
+as a bare list. Update this file as pieces land.
 
 The approved product spec is `docs/spec.md` (2026-11-21); design verdicts are in `docs/lab/decisions.md`.
 
@@ -52,12 +53,15 @@ pnpm e2e                            # debug build, then e2e/*.test.ts against th
 Every feature is tested at each layer it touches:
 
 - **Core** (`crates/gitgud-core`): unit tests next to the code, integration tests in `tests/`. They
-  use the real `git` in temp dirs (throwaway repos, or fake `git` scripts on a custom search path),
-  never a mocked git.
-- **Commands** (`src-tauri`): unit tests that the serialized result matches the shape `api.ts`
-  declares.
+  use the real `git` in temp dirs, never a mocked git. `testing::TestRepo` (feature `test-util`)
+  builds throwaway repos through the git CLI. Gix-based reads are checked against the CLI as an
+  oracle, e.g. `TestRepo::cli_status()` parses `git status --porcelain=v2`.
+- **Commands** (`src-tauri`): unit tests, on a `TestRepo`, that the serialized result matches the
+  shape `api.ts` declares. Commands are `async` so they stay off the main thread.
 - **Frontend** (vitest + jsdom + Testing Library): `$lib/test/ipc.ts`'s `mockCommands` answers
   commands from typed handlers. An unmocked command fails the test. Add every new command to
-  `Commands` in `api.ts`.
-- **Real app** (`e2e/`): `launchApp()` starts `target/debug/gitgud.exe` with a throwaway WebView2
-  profile, and Playwright drives it. Screenshots go to `e2e/out/` (ignored). Windows only.
+  `Commands` in `api.ts`, plugin commands (`plugin:dialog|open`) included.
+- **Real app** (`e2e/`): `launchApp(env)` starts `target/debug/gitgud.exe` with a throwaway WebView2
+  profile, and Playwright drives it. `e2e/repo.ts` mirrors `TestRepo`. Pass `GITGUD_OPEN` to open a
+  repo, since native dialogs can't be driven. Files run one at a time (one CDP port). Screenshots
+  go to `e2e/out/` (ignored). Windows only.

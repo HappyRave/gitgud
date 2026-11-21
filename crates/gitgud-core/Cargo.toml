@@ -4,10 +4,18 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 
+[features]
+# Exposes `testing::TestRepo` to other crates' tests.
+test-util = ["dep:tempfile"]
+
 [dependencies]
+gix = { version = "0.90", features = ["status", "parallel"] }
 serde = { version = "1.0.229", features = ["derive"] }
+tempfile = { version = "3.27.0", optional = true }
 thiserror = "2.0.21"
 which = "8.0.6"
 
 [dev-dependencies]
+gitgud-core = { path = ".", features = ["test-util"] }
+serde_json = "1.0.154"
 tempfile = "3.27.0"
