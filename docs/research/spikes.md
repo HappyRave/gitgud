@@ -266,8 +266,8 @@ real index), `commit-tree`, `update-ref refs/gitgud/oplog`. That's 6–7 `git` p
 - Snapshot LFS files only when they're dirty and about to be overwritten, so most actions copy no
   binary.
 - Count LFS objects that only the op log uses in the op log's size, and prune them with its retention.
-- Next step (S1b): write the working-tree snapshot in-process with `gix`, to drop the ~150 ms of process
-  spawns. Untested, including whether `gix` runs the LFS clean filter.
+- An in-process `gix` snapshot (S1b) could drop the ~150 ms of process spawns. Not pursued: dropped by
+  Max on 2026-11-21 ("we won't do them").
 
 ## 4.9 Library refresh with 150+ repos (spec S2, 2026-11-21)
 
@@ -302,7 +302,5 @@ over 150 synthetic repos ([`spikes/scripts/make_library.py`](../../spikes/script
 
 - **Hands-on GUI round:** done 2026-11-21 for Fork, Sublime Merge and GitButler; see
   [handson.md](handson.md). Not run: Sourcetree (Max's work install) and lazygit (terminals are
-  click-only for computer use). Test repo built by
-  [`spikes/scripts/handson_setup.py`](../../spikes/scripts/handson_setup.py).
+  click-only for computer use). The test-repo setup script was removed on 2026-11-21.
 - 4K/DPR 2 graph run; `gix` index write-back; Job Object cancel; LFS lock API against a real host.
-- S1b: in-process (`gix`) working-tree snapshot, including whether `gix` runs the LFS clean filter.

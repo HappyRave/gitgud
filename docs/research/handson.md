@@ -4,7 +4,7 @@ Run **2026-11-21** with computer use, on Windows 11 (3440×1440). Labels: `fact`
 `Claude's pick`, `open`. Screenshots with pins: `docs/research/shots/handson.json` (19 shots, `ho-*`).
 
 Test repo: BoatAttack (Unity, ~185 LFS files), local bare `remote.git` as origin, reset with
-`spikes/scripts/handson_setup.py` before each tool. Same 10 tasks for every tool; mechanics only.
+a setup script before each tool (`handson_setup.py`, removed 2026-11-21 since the round won't be re-run). Same 10 tasks for every tool; mechanics only.
 
 **Not run:**
 

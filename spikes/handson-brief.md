@@ -11,7 +11,7 @@ once for Sourcetree, Fork, Sublime Merge, GitButler and the terminal that hosts 
 - Test repo: `C:\Users\Happy\Documents\Projects\gitgud-handson\boat` (Unity + LFS BoatAttack). Its origin is
   `..\remote.git`.
 - Reset before each tool: delete `C:\Users\Happy\Documents\Projects\gitgud-handson`, then run
-  `python spikes/scripts/handson_setup.py`.
+  `python spikes/scripts/handson_setup.py` (script removed 2026-11-21; the round won't be re-run).
 
 ## Task list (same for every tool)
 

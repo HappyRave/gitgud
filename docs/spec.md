@@ -296,7 +296,7 @@ Targets are pick. Evidence is fact from `docs/research/spikes.md` (Max's PC) unl
 | Local read action (select, switch file, open palette) paints in ≤ 100 ms | ux-principles 1 |
 | Stage / unstage hunk ≤ 150 ms including its op-log entry | `git apply --cached` 27 ms + index copy ~1 ms (spikes 4.8) |
 | Op-log entry for ref / index actions ≤ 10 ms | index file copy, no git process (spikes 4.8) |
-| Working-tree snapshot before a destructive action ≤ 250 ms with dirty text files; ≤ 1.5 s with 700 MB of dirty LFS files about to be overwritten | 200 ms clean, 1,416 ms with 673 MB (spikes 4.8; S1b may lower it) |
+| Working-tree snapshot before a destructive action ≤ 250 ms with dirty text files; ≤ 1.5 s with 700 MB of dirty LFS files about to be overwritten | 200 ms clean, 1,416 ms with 673 MB (spikes 4.8) |
 | Open a repo: first 500 commits drawn ≤ 300 ms **with a commit-graph**; ≤ 1 s without (lanes for visible rows from a partial walk) | `gix` 500 commits 2.3 ms; topology 106 ms with commit-graph, full walk 2,624 ms without |
 | Full graph topology of a 350k-commit repo ≤ 1 s in the background, with commit-graph | 106 ms measured |
 | Scrolling at display refresh, ≤ 1% frames over budget, also on scrollbar jumps | canvas 0% slow frames at 100 fps |
@@ -347,7 +347,7 @@ Rows in section 3 marked **must (v1.1)** belong to v1.1; every other must is v1.
 | O8 | git-lfs floor version (3.3 assumed) | open, verify |
 | O9 | Sourcetree baseline: clone, LFS pull, status, open on BoatAttack and a 150-repo setup | open, measure (by hand or with Max) |
 | S1 | ~~Op-log snapshot cost~~ Done 2026-11-21 (spikes 4.8): ~23 ms per git process on Windows; led to the split op log (section 3.3) | done |
-| S1b | In-process (`gix`) working-tree snapshot, including whether `gix` runs the LFS clean filter | open, spike |
+| S1b | ~~In-process (`gix`) working-tree snapshot~~ Dropped 2026-11-21 (Max: "we won't do them"); the CLI snapshot and its targets stand | dropped |
 | S2 | ~~Library refresh with 150+ repos~~ Done 2026-11-21 (spikes 4.9): targets hold. Still unmeasured: a cold disk cache, and 150 real Unity repos | done |
 
 ## 9. Decision log
