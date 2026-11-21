@@ -1,0 +1,10 @@
+[package]
+name = "librarybench"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+gix = { version = "0.90.0", features = ["status", "parallel"] }
+
+[profile.release]
+debug = false

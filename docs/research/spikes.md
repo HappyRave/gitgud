@@ -19,6 +19,8 @@ BoatAttack** (Unity, 1,376 files, 124 prefabs, 734 `.meta`, 185 LFS files = 903 
 | 4.5 `git` CLI | Progress parses cleanly; prompts fail fast when disabled; kill tree is clean except leftovers | Keep CLI for writes; cancel = kill tree + cleanup |
 | 4.6 Unity + LFS | UnityYAMLMerge works as an automatic driver **only with `--force`**; merges 3 of 5 conflict cases; silently loses data in 1 | Ship the driver + a post-merge check |
 | 4.7 Agent CLI/MCP | One core, two adapters works; proposal under hidden ref leaves Max's index untouched | Keep the design from agents.md §6 |
+| 4.8 Op-log snapshot | Each `git` process costs ~23 ms on Windows: a CLI snapshot is ~200 ms clean, 0.5–1.4 s with changed LFS files, and every changed LFS version is stored in full | Split the op log: index copy for most actions, working-tree snapshot only before destructive ones (decided) |
+| 4.9 Library refresh | 152 repos incl. rust refreshed in 0.5–1 s on 8 threads; one screen of rows in ~160 ms | Spec targets hold |
 
 ## 4.1 Old prototype (`5f1257d`, 10 commits, 2025-12-14)
 
@@ -225,6 +227,77 @@ Sourcetree comparison not run: it needs GUI driving, which is still pending (see
 **Verdict:** the design in agents.md §6 works as built. `rmcp` is easy to adopt (a derive-style
 `#[tool_router]`). Keep the logic in `gitgud-core`, with thin CLI and MCP adapters.
 
+## 4.8 Op-log snapshot cost (spec S1, 2026-11-21)
+
+**Question:** what does a snapshot before each action cost on a Unity + LFS repo, and how fast does
+`.git` grow? **Method:** [`spikes/scripts/snapbench.py`](../../spikes/scripts/snapbench.py) on a fresh
+BoatAttack clone, Git 2.56.1, git-lfs 3.8.1. A snapshot is: copy `.git/index` to a temp index,
+`GIT_INDEX_FILE=<tmp> git add -A` (runs the LFS clean filter on changed files), `write-tree` (temp and
+real index), `commit-tree`, `update-ref refs/gitgud/oplog`. That's 6–7 `git` processes.
+
+| Measurement | Median |
+|---|---|
+| Spawn `git --version` / `git rev-parse HEAD` | **23 / 25 ms per process** |
+| Stage one hunk: `git apply --cached` | 27 ms |
+| Snapshot, clean tree | **200 ms** (add -A 31, write-tree ×2 55, rev-parse + commit-tree + update-ref 114) |
+| `git stash create` (one process, no untracked files), for reference | 56 ms |
+| Snapshot, 3 dirty `.cs` files | 199 ms |
+| Snapshot, 1 changed LFS file (54 MB) | 552 ms (clean filter ≈ 340 ms) |
+| Snapshot, 20 changed LFS files (673 MB) | 1,416 ms |
+| `.git` growth after those LFS snapshots | `.git/objects` +0 MB, **`.git/lfs/objects` +673 MB** |
+| Snapshot right after a mass touch (all 185 LFS files, same content) | 1,868 ms, and 1,899 ms again on the next one (the temp index is re-copied from the stale real index) |
+| Same, with the snapshot index **kept** between snapshots | **212 ms** |
+| `update-index --refresh` on the real index after the touch | 1,689 ms, once |
+
+**Findings (`fact`):**
+- On Windows every `git` process costs ~23 ms before it does any work, so a CLI snapshot can't get near
+  20 ms. Process count, not hashing, sets the floor on a clean tree.
+- Every changed LFS file is stored in full in `.git/lfs/objects` on each snapshot that sees a new
+  version. Snapshotting before every action would copy big binaries again and again.
+- A temp index re-copied from a stale real index re-hashes every touched LFS file on every snapshot. A
+  persistent snapshot index avoids it.
+
+**Verdict (decided 2026-11-21, Max: "Split it"; the spec's section 3.3 is updated):**
+- Split the op log in two:
+  - Before actions that only move refs or the index (stage, unstage, commit, branch ops), save the
+    refs plus a **copy of the `.git/index` file** (about 1 ms, no git process).
+  - Before actions that can lose working-tree content (discard, checkout over changes, hard reset,
+    stash, rebase / merge start), also snapshot the dirty files through a **persistent snapshot index**.
+- Snapshot LFS files only when they're dirty and about to be overwritten, so most actions copy no
+  binary.
+- Count LFS objects that only the op log uses in the op log's size, and prune them with its retention.
+- Next step (S1b): write the working-tree snapshot in-process with `gix`, to drop the ~150 ms of process
+  spawns. Untested, including whether `gix` runs the LFS clean filter.
+
+## 4.9 Library refresh with 150+ repos (spec S2, 2026-11-21)
+
+**Question:** can the Library refresh branch, ahead/behind and dirty state for 150+ repos inside the
+spec's targets? **Method:** [`spikes/librarybench`](../../spikes/librarybench) (`gix` 0.90, std threads)
+over 150 synthetic repos ([`spikes/scripts/make_library.py`](../../spikes/scripts/make_library.py): 300 files,
+100 commits, upstream equal / ahead / behind, 15 dirty) plus BoatAttack and rust-lang/rust.
+
+| Run (152 repos) | 8 threads | 16 threads |
+|---|---|---|
+| Refs only: branch + ahead/behind | 386 ms (p95 45 ms per repo) | 190 ms |
+| Refs + `is_dirty`, first run | 953 ms (max 491 ms: rust) | 542 ms |
+| Refs + `is_dirty`, second run | 459 ms (p95 22 ms; rust 126 ms) | 499 ms |
+| 150 synthetic only, refs + dirty | 327–361 ms | — |
+| First 25 repos (one screen of rows), one thread, + dirty | 155–160 ms | — |
+
+**Findings (`fact`):**
+- A full refresh of 152 repos, including rust, fits in about 0.5–1 s with 8 threads. One screen of rows
+  takes ~160 ms on a single thread.
+- More threads help the refs-only pass and give nothing for the dirty check (disk-bound).
+- Not measured: a truly cold disk cache, which needs a standby-list flush and admin rights; and 150 real
+  Unity repos. BoatAttack (1.4k files) stays inside p95. A Unity repo right after a reimport pays the LFS
+  re-hash (~1.4 s, section 4.2) until its index is refreshed.
+
+**Verdict (`Claude's pick`):** the spec's Library targets hold:
+- Draw from the cache at once, then refresh the visible rows (~160 ms), then the rest in the background
+  on 8 threads.
+- Refresh the index of a repo whose dirty check was slow (`update-index --refresh`), as `git status`
+  does, so a reimport costs once and not on every refresh.
+
 ## Not done
 
 - **Hands-on GUI round:** done 2026-11-21 for Fork, Sublime Merge and GitButler; see
@@ -232,3 +305,4 @@ Sourcetree comparison not run: it needs GUI driving, which is still pending (see
   click-only for computer use). Test repo built by
   [`spikes/scripts/handson_setup.py`](../../spikes/scripts/handson_setup.py).
 - 4K/DPR 2 graph run; `gix` index write-back; Job Object cancel; LFS lock API against a real host.
+- S1b: in-process (`gix`) working-tree snapshot, including whether `gix` runs the LFS clean filter.

@@ -37,8 +37,9 @@ LFS, today on Sourcetree and IDE git. Open source later; no onboarding or suppor
    - Hands-on: none of Fork, Sublime Merge or GitButler offers UnityYAMLMerge, and GitButler bypasses
      LFS filters.
 2. **Every local action undoable.**
-   - An op log snapshots refs, index and dirty files before each action, behind Ctrl+Z, discards
-     and stashes included.
+   - An op log behind Ctrl+Z, discards and stashes included.
+   - It saves refs and the index before every action, and dirty files before any action that could
+     lose them.
    - Pushes and remote deletes can't be undone remotely; gitgud says so and offers a revert commit.
    - Hands-on: only GitButler could recover a discard.
 3. **Agents propose, you approve.**
@@ -142,8 +143,9 @@ picks unless marked. Effort flags come from the research; section 7 proposes spl
 | Feature | Tier | Label |
 |---|---|---|
 | Op log per repo under a private ref, behind Ctrl+Z | must | decided, Q9 |
-| Snapshot before every action: refs + index + dirty tracked and untracked (not ignored) files. LFS files go through the clean filter only when changed since the last snapshot (cached by size + mtime) | must | pick; cost: open, spike S1 |
-| Retention: last 30 days or 2,000 entries, whichever is larger; size shown in the op log; prune with preview | must | pick |
+| Before every action: save refs + a copy of the `.git/index` file (~1 ms, no git process) | must | decided 2026-11-21, after spike S1 (Max: "Split it") |
+| Before actions that can lose working-tree content (discard, checkout over changes, hard reset, stash, rebase / merge start): also snapshot the dirty tracked and untracked (not ignored) files through a persistent snapshot index; LFS files only when dirty and about to be overwritten | must | decided 2026-11-21, after spike S1 (Max: "Split it") |
+| Retention: last 30 days or 2,000 entries, whichever is larger; size shown in the op log, counting LFS objects only the op log uses; prune with preview | must | pick |
 | Redo: Ctrl+Y and Ctrl+Shift+Z | must | pick, ux-principles 3 |
 | Op log panel (sidebar entry, Ctrl+3) with Restore on any entry | must | decided (came with R1-A) |
 | Operations done outside gitgud (CLI, IDE, agents) show as "outside gitgud" entries from the reflog, restorable as far as the reflog allows | should | pick, ux-principles 3 |
@@ -292,8 +294,9 @@ Targets are pick. Evidence is fact from `docs/research/spikes.md` (Max's PC) unl
 | Target | Evidence / precondition |
 |---|---|
 | Local read action (select, switch file, open palette) paints in ≤ 100 ms | ux-principles 1 |
-| Stage / unstage hunk ≤ 150 ms including the op-log snapshot | not measured: CLI spawn cost on Windows + snapshot (spike S1) |
-| Op-log snapshot ≤ 20 ms with a few dirty text files; ≤ 300 ms with 100 MB of changed LFS files | not measured (spike S1) |
+| Stage / unstage hunk ≤ 150 ms including its op-log entry | `git apply --cached` 27 ms + index copy ~1 ms (spikes 4.8) |
+| Op-log entry for ref / index actions ≤ 10 ms | index file copy, no git process (spikes 4.8) |
+| Working-tree snapshot before a destructive action ≤ 250 ms with dirty text files; ≤ 1.5 s with 700 MB of dirty LFS files about to be overwritten | 200 ms clean, 1,416 ms with 673 MB (spikes 4.8; S1b may lower it) |
 | Open a repo: first 500 commits drawn ≤ 300 ms **with a commit-graph**; ≤ 1 s without (lanes for visible rows from a partial walk) | `gix` 500 commits 2.3 ms; topology 106 ms with commit-graph, full walk 2,624 ms without |
 | Full graph topology of a 350k-commit repo ≤ 1 s in the background, with commit-graph | 106 ms measured |
 | Scrolling at display refresh, ≤ 1% frames over budget, also on scrollbar jumps | canvas 0% slow frames at 100 fps |
@@ -301,7 +304,7 @@ Targets are pick. Evidence is fact from `docs/research/spikes.md` (Max's PC) unl
 | Status, cold cache on 65k files: show cached status at once, then fresh ≤ 10 s | `gix` 6,957 ms cold |
 | After a mass touch: one index refresh, then status back to warm figures; refresh ≤ 2 s per 200 LFS files | CLI refresh 1,902 ms for 185 files (`gix` write-back untested) |
 | Change outside gitgud visible ≤ 300 ms on small repos, ≤ 1 s on 65k files | watcher p95 0.35 ms + 150 ms debounce + status |
-| Library of 150+ repos opens ≤ 200 ms from cache; visible rows refreshed ≤ 1 s | not measured (spike S2) |
+| Library of 150+ repos opens ≤ 200 ms from cache; visible rows refreshed ≤ 1 s; all repos ≤ 2 s in the background | one screen of rows 160 ms; 152 repos incl. rust 0.5–1 s on 8 threads (spikes 4.9) |
 | Cancel any git operation ≤ 250 ms to stop; cleanup runs in the background | tree kill 170–190 ms |
 | Memory: ≤ 300 MB total app with one 350k-commit repo; + ≤ 50 MB per extra open tab | 123 MB JS heap measured with all rows in JS; Rust side not measured |
 | LFS pull / clone / checkout at least as fast as the `git` CLI (≥ 35 MB/s on BoatAttack) and faster than Sourcetree | CLI 39 MB/s (903 MB in 23.3 s); Sourcetree baseline not run (O9) |
@@ -343,8 +346,9 @@ Rows in section 3 marked **must (v1.1)** belong to v1.1; every other must is v1.
 | O7 | Hooks-driven auto-proposals vs explicit `propose` calls | open, design |
 | O8 | git-lfs floor version (3.3 assumed) | open, verify |
 | O9 | Sourcetree baseline: clone, LFS pull, status, open on BoatAttack and a 150-repo setup | open, measure (by hand or with Max) |
-| S1 | Spike: op-log snapshot cost on BoatAttack (dirty text, dirty LFS, after reimport) and `.git` growth over a week of use | open, spike |
-| S2 | Spike: Library cache and refresh with 150+ repos | open, spike |
+| S1 | ~~Op-log snapshot cost~~ Done 2026-11-21 (spikes 4.8): ~23 ms per git process on Windows; led to the split op log (section 3.3) | done |
+| S1b | In-process (`gix`) working-tree snapshot, including whether `gix` runs the LFS clean filter | open, spike |
+| S2 | ~~Library refresh with 150+ repos~~ Done 2026-11-21 (spikes 4.9): targets hold. Still unmeasured: a cold disk cache, and 150 real Unity repos | done |
 
 ## 9. Decision log
 
@@ -375,6 +379,7 @@ Max's verdicts with dates and his words. Full text: `docs/lab/decisions.md` (R1�
 | Conflicts | R4-A Property table; Smart Merge offered at first merge; auto merges listed collapsed; verify blocks commit; three-column code merge | "A, as picked"; "Offer at first merge"; "Listed, collapsed"; "Block until confirmed"; "Three columns" | 2026-11-21 | R4 |
 | Bitbucket | Repos are on Bitbucket Cloud: no LFS locks there | "Bitbucket Cloud" | 2026-11-21 | O1 |
 | Phasing | v1.0, then v1.1 (Unity structural work + agents) | "v1.0 then v1.1" | 2026-11-21 | section 7 |
+| Op log | Split: index copy before every action, working-tree snapshot only before destructive actions | "Split it" | 2026-11-21 | spike S1, section 3.3 |
 
 Answers given as option picks are quoted as the option label Max chose.
 
