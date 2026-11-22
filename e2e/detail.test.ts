@@ -25,7 +25,8 @@ test("clicking a commit shows its message, files and diff", async (t) => {
   const detail = page.getByRole("region", { name: "Commit" });
   await detail.getByRole("heading", { name: "Tweak lines" }).waitFor();
   assert.match(await detail.innerText(), /Two edits, far apart\./);
-  assert.deepEqual(await detail.getByRole("list", { name: "Changed files" }).getByRole("button").allInnerTexts(), [
+  const files = await detail.getByRole("list", { name: "Changed files" }).getByRole("button").allTextContents();
+  assert.deepEqual(files.map((f) => f.replace(/\s+/g, "")), [
     "ANEW.md",
     "Msrc/app.txt",
   ]);

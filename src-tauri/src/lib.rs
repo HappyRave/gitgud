@@ -2,12 +2,17 @@ use gitgud_core::branches::Branches;
 use gitgud_core::diff::{CommitDetail, FileDiff};
 use gitgud_core::git::{self, GitInfo};
 use gitgud_core::graph::Row;
+use gitgud_core::history::{Action, HistoryPlan, Step};
+use gitgud_core::merge::{ConflictSides, ConflictText, MergeState, Side as MergeSide};
 use gitgud_core::oplog::{OpEntry, label_commit, label_paths};
+use gitgud_core::rebase::{RebasePlan, RebaseState, RebaseStep};
 use gitgud_core::repo::{Error, Status};
-use gitgud_core::session::{Opened, Reverted, Session};
+use gitgud_core::session::{Opened, PlanPreview, Reverted, Session};
 use gitgud_core::task::Progress;
 use gitgud_core::worktree::{HunkHeader, Side};
-use tauri::{AppHandle, Builder, Emitter, Runtime, State};
+use tauri::{AppHandle, Builder, Emitter, Manager, Runtime, State};
+
+mod images;
 
 #[tauri::command]
 async fn git_info() -> Result<GitInfo, git::Error> {
@@ -58,6 +63,16 @@ async fn graph_rows(
 ) -> Result<Vec<Row>, Error> {
     let open = session.get(id)?;
     open.graph.rows(&open.repo, start, count)
+}
+
+#[tauri::command]
+async fn graph_find(
+    session: State<'_, Session>,
+    id: u32,
+    query: String,
+) -> Result<Vec<usize>, Error> {
+    let open = session.get(id)?;
+    open.graph.find(&open.repo, &query)
 }
 
 #[tauri::command]
@@ -173,6 +188,180 @@ async fn checkout(session: State<'_, Session>, id: u32, branch: String) -> Resul
 }
 
 #[tauri::command]
+async fn predict_merge(
+    session: State<'_, Session>,
+    id: u32,
+    branch: String,
+) -> Result<Vec<String>, Error> {
+    session.get(id)?.repo.predict_merge(session.git()?, &branch)
+}
+
+#[tauri::command]
+async fn merge(session: State<'_, Session>, id: u32, branch: String) -> Result<Opened, Error> {
+    session.merge(id, &branch)
+}
+
+#[tauri::command]
+async fn merge_state(session: State<'_, Session>, id: u32) -> Result<Option<MergeState>, Error> {
+    session.merge_state(id)
+}
+
+#[tauri::command]
+async fn conflict_text(
+    session: State<'_, Session>,
+    id: u32,
+    path: String,
+) -> Result<ConflictText, Error> {
+    session.get(id)?.repo.conflict_text(session.git()?, &path)
+}
+
+#[tauri::command]
+async fn conflict_sides(
+    session: State<'_, Session>,
+    id: u32,
+    path: String,
+) -> Result<ConflictSides, Error> {
+    session.get(id)?.repo.conflict_sides(&path)
+}
+
+#[tauri::command]
+async fn resolve_with(
+    session: State<'_, Session>,
+    id: u32,
+    path: String,
+    content: String,
+    how: String,
+) -> Result<Opened, Error> {
+    session.resolve_with(id, &path, &content, &how)
+}
+
+#[tauri::command]
+async fn resolve_side(
+    session: State<'_, Session>,
+    id: u32,
+    path: String,
+    side: MergeSide,
+) -> Result<Opened, Error> {
+    session.resolve_side(id, &path, side)
+}
+
+#[tauri::command]
+async fn merge_abort(session: State<'_, Session>, id: u32) -> Result<Opened, Error> {
+    session.merge_abort(id)
+}
+
+#[tauri::command]
+async fn merge_commit(
+    session: State<'_, Session>,
+    id: u32,
+    message: String,
+) -> Result<Opened, Error> {
+    session.merge_commit(id, &message)
+}
+
+#[tauri::command]
+async fn predict_rebase(
+    session: State<'_, Session>,
+    id: u32,
+    onto: String,
+) -> Result<RebasePlan, Error> {
+    session.get(id)?.repo.predict_rebase(session.git()?, &onto)
+}
+
+#[tauri::command]
+async fn rebase(session: State<'_, Session>, id: u32, onto: String) -> Result<Opened, Error> {
+    session.rebase(id, &onto)
+}
+
+#[tauri::command]
+async fn rebase_state(session: State<'_, Session>, id: u32) -> Result<Option<RebaseState>, Error> {
+    session.rebase_state(id)
+}
+
+#[tauri::command]
+async fn rebase_step(
+    session: State<'_, Session>,
+    id: u32,
+    step: RebaseStep,
+) -> Result<Opened, Error> {
+    session.rebase_step(id, step)
+}
+
+#[tauri::command]
+async fn history_plan(
+    session: State<'_, Session>,
+    id: u32,
+    from: String,
+) -> Result<HistoryPlan, Error> {
+    session.history_plan(id, &from)
+}
+
+#[tauri::command]
+async fn plan_preview(
+    session: State<'_, Session>,
+    id: u32,
+    onto: String,
+    base: String,
+    steps: Vec<Step>,
+) -> Result<PlanPreview, Error> {
+    session.plan_preview(id, &onto, &base, &steps)
+}
+
+#[tauri::command]
+async fn preview_rows(
+    session: State<'_, Session>,
+    id: u32,
+    start: usize,
+    count: usize,
+) -> Result<Vec<Row>, Error> {
+    session.preview_rows(id, start, count)
+}
+
+#[tauri::command]
+async fn predicted_file(
+    session: State<'_, Session>,
+    id: u32,
+    tree: String,
+    path: String,
+) -> Result<String, Error> {
+    session
+        .get(id)?
+        .repo
+        .predicted_file(session.git()?, &tree, &path)
+}
+
+#[tauri::command]
+async fn run_plan(
+    session: State<'_, Session>,
+    id: u32,
+    onto: String,
+    base: String,
+    steps: Vec<Step>,
+    update_refs: bool,
+) -> Result<Opened, Error> {
+    session.run_plan(id, &onto, &base, &steps, update_refs)
+}
+
+#[tauri::command]
+async fn reword_head(
+    session: State<'_, Session>,
+    id: u32,
+    message: String,
+) -> Result<Opened, Error> {
+    session.reword_head(id, &message)
+}
+
+#[tauri::command]
+async fn quick_edit(
+    session: State<'_, Session>,
+    id: u32,
+    commit: String,
+    action: Action,
+) -> Result<Opened, Error> {
+    session.quick_edit(id, &commit, action)
+}
+
+#[tauri::command]
 async fn op_log(session: State<'_, Session>, id: u32) -> Result<Vec<OpEntry>, Error> {
     session.op_log(id)
 }
@@ -228,6 +417,13 @@ async fn redo(session: State<'_, Session>, id: u32) -> Result<Reverted, Error> {
 fn app<R: Runtime>(builder: Builder<R>) -> Builder<R> {
     builder
         .manage(Session::default())
+        .register_asynchronous_uri_scheme_protocol("gitgud", |ctx, request, responder| {
+            let app = ctx.app_handle().clone();
+            let uri = request.uri().to_string();
+            std::thread::spawn(move || {
+                responder.respond(images::respond(&app.state::<Session>(), &uri));
+            });
+        })
         .invoke_handler(tauri::generate_handler![
             git_info,
             launch_path,
@@ -235,6 +431,7 @@ fn app<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             close_repo,
             repo_status,
             graph_rows,
+            graph_find,
             commit_detail,
             commit_file_diff,
             worktree_file_diff,
@@ -254,7 +451,27 @@ fn app<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             restore_to,
             restore_files,
             branches,
-            checkout
+            checkout,
+            predict_merge,
+            merge,
+            merge_state,
+            conflict_text,
+            conflict_sides,
+            resolve_with,
+            resolve_side,
+            merge_abort,
+            merge_commit,
+            predict_rebase,
+            rebase,
+            rebase_state,
+            rebase_step,
+            history_plan,
+            plan_preview,
+            preview_rows,
+            predicted_file,
+            run_plan,
+            reword_head,
+            quick_edit
         ])
 }
 
@@ -373,6 +590,23 @@ mod tests {
             .unwrap();
         assert_eq!(rows[0]["wip"], true);
         assert_eq!(rows[1]["subject"], "via ipc");
+    }
+
+    #[test]
+    fn graph_find_returns_matching_rows() {
+        let ipc = Ipc::new();
+        let repo = history();
+        let id = open(&ipc, &repo)["id"].clone();
+        assert_eq!(
+            ipc.call("graph_find", json!({ "id": id, "query": "FIRST" }))
+                .unwrap(),
+            json!([1])
+        );
+        assert_eq!(
+            ipc.call("graph_find", json!({ "id": id, "query": "v1" }))
+                .unwrap(),
+            json!([0])
+        );
     }
 
     #[test]
@@ -648,6 +882,232 @@ mod tests {
     }
 
     #[test]
+    fn merge_with_conflicts_through_ipc() {
+        let ipc = Ipc::new();
+        let repo = TestRepo::init();
+        repo.write("a.txt", "1\n2\n3\n").commit_all("base");
+        repo.git(&["checkout", "-q", "-b", "other"]);
+        repo.write("a.txt", "1\ntheirs\n3\n").commit_all("theirs");
+        repo.git(&["checkout", "-q", "main"]);
+        repo.write("a.txt", "1\nyours\n3\n").commit_all("yours");
+        let id = open(&ipc, &repo)["id"].clone();
+
+        assert_eq!(
+            ipc.call("predict_merge", json!({ "id": id, "branch": "other" }))
+                .unwrap(),
+            json!(["a.txt"])
+        );
+        assert_eq!(
+            ipc.call("merge_state", json!({ "id": id })).unwrap(),
+            Value::Null
+        );
+        ipc.call("merge", json!({ "id": id, "branch": "other" }))
+            .unwrap();
+        assert_eq!(
+            ipc.call("merge_state", json!({ "id": id })).unwrap(),
+            json!({
+                "theirs": "other",
+                "message": "Merge branch 'other'",
+                "conflicts": [{ "path": "a.txt", "kind": "code", "resolved": false }],
+            })
+        );
+        assert_eq!(
+            ipc.call("conflict_text", json!({ "id": id, "path": "a.txt" }))
+                .unwrap(),
+            json!({
+                "finalNewline": true,
+                "chunks": [
+                    { "kind": "same", "lines": ["1"] },
+                    { "kind": "conflict", "yours": ["yours"], "base": ["2"], "theirs": ["theirs"] },
+                    { "kind": "same", "lines": ["3"] },
+                ],
+            })
+        );
+
+        ipc.call(
+            "resolve_with",
+            json!({ "id": id, "path": "a.txt", "content": "1\nyours\ntheirs\n3\n", "how": "use both" }),
+        )
+        .unwrap();
+        ipc.call(
+            "merge_commit",
+            json!({ "id": id, "message": "Merge branch 'other'" }),
+        )
+        .unwrap();
+        assert_eq!(
+            ipc.call("merge_state", json!({ "id": id })).unwrap(),
+            Value::Null
+        );
+
+        let repo2 = TestRepo::init();
+        repo2.write("f.txt", "1\n").commit_all("base");
+        repo2.git(&["checkout", "-q", "-b", "other"]);
+        repo2.write("f.txt", "2\n").commit_all("theirs");
+        repo2.git(&["checkout", "-q", "main"]);
+        repo2.write("f.txt", "3\n").commit_all("yours");
+        let id2 = open(&ipc, &repo2)["id"].clone();
+        ipc.call("merge", json!({ "id": id2, "branch": "other" }))
+            .unwrap();
+        assert_eq!(
+            ipc.call("conflict_sides", json!({ "id": id2, "path": "f.txt" }))
+                .unwrap(),
+            json!({ "yours": { "size": 2, "lfs": false }, "theirs": { "size": 2, "lfs": false } })
+        );
+        ipc.call(
+            "resolve_side",
+            json!({ "id": id2, "path": "f.txt", "side": "theirs" }),
+        )
+        .unwrap();
+        ipc.call("merge_abort", json!({ "id": id2 })).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(repo2.path().join("f.txt")).unwrap(),
+            "3\n"
+        );
+    }
+
+    #[test]
+    fn rebase_with_conflicts_through_ipc() {
+        let ipc = Ipc::new();
+        let repo = TestRepo::init();
+        repo.write("a.txt", "1\n2\n3\n").commit_all("base");
+        repo.git(&["checkout", "-q", "-b", "feature"]);
+        repo.write("a.txt", "1\nF\n3\n").commit_all("f1");
+        repo.git(&["checkout", "-q", "main"]);
+        repo.write("a.txt", "1\nM\n3\n").commit_all("m1");
+        repo.git(&["checkout", "-q", "feature"]);
+        let id = open(&ipc, &repo)["id"].clone();
+
+        let plan = ipc
+            .call("predict_rebase", json!({ "id": id, "onto": "main" }))
+            .unwrap();
+        assert_eq!(plan["commits"], 1);
+        assert_eq!(plan["conflict"]["paths"], json!(["a.txt"]));
+        assert_eq!(plan["conflict"]["subject"], "f1");
+
+        ipc.call("rebase", json!({ "id": id, "onto": "main" }))
+            .unwrap();
+        let state = ipc.call("rebase_state", json!({ "id": id })).unwrap();
+        assert_eq!(state["step"], 1);
+        assert_eq!(state["total"], 1);
+        assert_eq!(state["onto"], "main");
+        assert_eq!(state["conflicts"][0]["path"], "a.txt");
+
+        ipc.call("rebase_step", json!({ "id": id, "step": "abort" }))
+            .unwrap();
+        assert_eq!(
+            ipc.call("rebase_state", json!({ "id": id })).unwrap(),
+            Value::Null
+        );
+    }
+
+    #[test]
+    fn history_plan_preview_and_run_through_ipc() {
+        let ipc = Ipc::new();
+        let repo = TestRepo::init();
+        repo.write("a.txt", "a\n").commit_all("base");
+        repo.git(&["checkout", "-q", "-b", "feature"]);
+        repo.write("b.txt", "b\n").commit_all("Add b rgiht");
+        repo.write("c.txt", "c\n").commit_all("Add c");
+        repo.write("c.txt", "c2\n").commit_all("fixup! Add c");
+        let id = open(&ipc, &repo)["id"].clone();
+
+        let plan = ipc
+            .call("history_plan", json!({ "id": id, "from": "HEAD~2" }))
+            .unwrap();
+        assert_eq!(plan["branch"], "feature");
+        assert_eq!(plan["commits"][0]["action"], "fixup");
+        assert_eq!(plan["commits"][2]["subject"], "Add b rgiht");
+        let id_of = |i: usize| plan["commits"][i]["id"].clone();
+        let steps = json!([
+            { "id": id_of(0), "action": "fixup" },
+            { "id": id_of(1), "action": "pick" },
+            { "id": id_of(2), "action": "reword", "message": "Add b right" },
+        ]);
+        let args = json!({ "id": id, "onto": plan["base"], "base": plan["base"], "steps": steps });
+
+        let preview = ipc.call("plan_preview", args.clone()).unwrap();
+        assert_eq!(preview["rows"], 6);
+        assert_eq!(preview["prediction"]["after"], 2);
+        assert_eq!(preview["prediction"]["changed"], 0);
+        assert_eq!(
+            preview["prediction"]["steps"][2]["outcome"]["kind"],
+            "clean"
+        );
+        let rows = ipc
+            .call("preview_rows", json!({ "id": id, "start": 0, "count": 3 }))
+            .unwrap();
+        assert_eq!(rows[1]["subject"], "Add b right");
+        assert_eq!(rows[1]["after"], "reworded");
+        assert_eq!(rows[0]["layout"]["segments"][0]["stroke"], "dashed");
+        assert_eq!(rows[2]["faded"], true);
+
+        let mut run = args;
+        run["updateRefs"] = json!(false);
+        ipc.call("run_plan", run).unwrap();
+        assert_eq!(
+            repo.git(&["log", "--format=%s", "main..HEAD"]),
+            "Add c\nAdd b right\n"
+        );
+
+        ipc.call(
+            "reword_head",
+            json!({ "id": id, "message": "Add c, smoothed" }),
+        )
+        .unwrap();
+        let tip = repo.git(&["rev-parse", "HEAD"]);
+        ipc.call(
+            "quick_edit",
+            json!({ "id": id, "commit": tip.trim(), "action": "drop" }),
+        )
+        .unwrap();
+        assert_eq!(
+            repo.git(&["log", "--format=%s", "main..HEAD"]),
+            "Add b right\n"
+        );
+        let undone = ipc.call("undo", json!({ "id": id })).unwrap();
+        assert_eq!(undone["action"], "Drop \"Add c, smoothed\"");
+    }
+
+    #[test]
+    fn predicted_conflicts_carry_the_file_with_markers() {
+        let ipc = Ipc::new();
+        let repo = TestRepo::init();
+        repo.write("a.txt", "1\n2\n3\n").commit_all("base");
+        repo.git(&["checkout", "-q", "-b", "feature"]);
+        repo.write("a.txt", "1\nA\n3\n").commit_all("one");
+        repo.write("a.txt", "1\nB\n3\n").commit_all("two");
+        let id = open(&ipc, &repo)["id"].clone();
+        let plan = ipc
+            .call("history_plan", json!({ "id": id, "from": "HEAD~1" }))
+            .unwrap();
+        let steps = json!([
+            { "id": plan["commits"][1]["id"], "action": "pick" },
+            { "id": plan["commits"][0]["id"], "action": "pick" },
+        ]);
+        let preview = ipc
+            .call(
+                "plan_preview",
+                json!({ "id": id, "onto": "main", "base": plan["base"], "steps": steps }),
+            )
+            .unwrap();
+        let first = &preview["prediction"]["steps"][1];
+        assert_eq!(first["step"], 1);
+        assert_eq!(first["outcome"]["kind"], "conflict");
+        assert_eq!(first["outcome"]["paths"], json!(["a.txt"]));
+        let text = ipc
+            .call(
+                "predicted_file",
+                json!({ "id": id, "tree": first["outcome"]["tree"], "path": "a.txt" }),
+            )
+            .unwrap();
+        assert!(text.as_str().unwrap().contains("<<<<<<<"));
+        assert_eq!(
+            preview["prediction"]["steps"][0]["outcome"],
+            json!({ "kind": "conflict", "paths": ["a.txt"], "tree": preview["prediction"]["steps"][0]["outcome"]["tree"] })
+        );
+    }
+
+    #[test]
     fn outside_changes_emit_repo_changed_with_the_id() {
         use std::sync::mpsc;
         use std::time::Duration;
@@ -727,6 +1187,8 @@ mod tests {
                     { "kind": "tag", "name": "v1" },
                 ],
                 "wip": false,
+                "after": null,
+                "faded": false,
                 "layout": {
                     "node": 0,
                     "segments": [{ "from": 0, "to": 0, "part": "bottom" }],

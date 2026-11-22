@@ -26,15 +26,34 @@ export class RowStore {
     return Promise.all(wanted.map((c) => this.#load(c))).then(() => undefined);
   }
 
+  /** Drops every loaded chunk, e.g. when a plan preview changes; loads in flight are ignored. */
+  reset() {
+    this.#generation++;
+    this.#chunks.clear();
+    this.#pending.clear();
+    this.error = null;
+    this.version++;
+  }
+
+  #generation = 0;
+
   async #load(chunk: number) {
+    const generation = this.#generation;
     this.#pending.add(chunk);
     try {
-      this.#chunks.set(chunk, await this.#fetch(chunk * CHUNK, CHUNK));
-      this.version++;
+      const rows = await this.#fetch(chunk * CHUNK, CHUNK);
+      if (generation === this.#generation) {
+        this.#chunks.set(chunk, rows);
+        this.version++;
+      }
     } catch (err) {
-      this.error = String(err);
+      if (generation === this.#generation) {
+        this.error = String(err);
+      }
     } finally {
-      this.#pending.delete(chunk);
+      if (generation === this.#generation) {
+        this.#pending.delete(chunk);
+      }
     }
   }
 }

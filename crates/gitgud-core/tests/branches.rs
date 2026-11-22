@@ -124,6 +124,33 @@ fn lists_remote_branches_without_origin_head() {
 }
 
 #[test]
+fn reports_when_the_repo_last_fetched() {
+    let (repo, _origin) = with_upstream();
+    let fetched = repo::open(repo.path())
+        .unwrap()
+        .branches()
+        .unwrap()
+        .fetched
+        .expect("with_upstream fetched");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    assert!((now - fetched).abs() < 300, "fetched {fetched}, now {now}");
+
+    let fresh = TestRepo::init();
+    fresh.write("a.txt", "a\n").commit_all("a");
+    assert_eq!(
+        repo::open(fresh.path())
+            .unwrap()
+            .branches()
+            .unwrap()
+            .fetched,
+        None
+    );
+}
+
+#[test]
 fn detached_head_marks_no_branch_current() {
     let (repo, _origin) = with_upstream();
     repo.git(&["checkout", "-q", "--detach"]);

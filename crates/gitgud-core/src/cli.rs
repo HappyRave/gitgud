@@ -70,6 +70,44 @@ impl GitCli {
         )))
     }
 
+    /// Runs `git <args>` and returns its exit code with stdout and stderr, for
+    /// commands whose non-zero exit is an answer, not a failure (`merge-file`
+    /// counts conflicts, `merge-tree` exits 1 when there are some).
+    ///
+    /// # Errors
+    /// [`Error::Command`] only when git can't start or is killed by a signal.
+    pub fn run_status(
+        &self,
+        cwd: &Path,
+        args: &[&str],
+        stdin: Option<&[u8]>,
+    ) -> Result<(i32, String, String), Error> {
+        let fail = |message: String| command_error(args, message);
+        let mut cmd = self.command(cwd, args);
+        cmd.stdin(if stdin.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        });
+        let mut child = cmd.spawn().map_err(|e| fail(e.to_string()))?;
+        let output = std::thread::scope(|s| {
+            if let (Some(bytes), Some(mut pipe)) = (stdin, child.stdin.take()) {
+                s.spawn(move || pipe.write_all(bytes));
+            }
+            child.wait_with_output()
+        })
+        .map_err(|e| fail(e.to_string()))?;
+        let code = output
+            .status
+            .code()
+            .ok_or_else(|| fail("git was killed".into()))?;
+        Ok((
+            code,
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        ))
+    }
+
     /// `git <args>` in `cwd` with piped output, no console window and no prompts.
     pub(crate) fn command(&self, cwd: &Path, args: &[&str]) -> Command {
         let mut cmd = Command::new(&self.path);

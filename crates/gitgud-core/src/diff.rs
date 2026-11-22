@@ -212,7 +212,7 @@ fn file_change(change: &ChangeDetached) -> Option<FileChange> {
     })
 }
 
-fn blob_at(
+pub(crate) fn blob_at(
     repo: &gix::Repository,
     commit: &gix::Commit<'_>,
     path: &str,

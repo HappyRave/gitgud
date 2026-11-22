@@ -5,6 +5,7 @@
     status,
     busy = false,
     selected = null,
+    lastAction = null,
     onstage,
     onunstage,
     onselectfile,
@@ -14,6 +15,8 @@
     busy?: boolean;
     /** The file whose diff is shown, and on which side. */
     selected?: { path: string; side: Side } | null;
+    /** What Ctrl+Z would undo, named on the clean state (R1 state 5). */
+    lastAction?: string | null;
     onstage: (paths: string[]) => void;
     onunstage: (paths: string[]) => void;
     onselectfile?: (path: string, side: Side) => void;
@@ -76,20 +79,28 @@
   }
 </script>
 
-<section aria-label="Working copy">
-  <p class="head" data-testid="head" class:detached={status.head.kind === "detached"}>{headText(status.head)}</p>
-  <p class="root">{status.root}</p>
+<section class="wc" aria-label="Working copy">
+  <div class="ph" title={status.root}>
+    Working copy <span class="ct">· <span data-testid="head" class:detached={status.head.kind === "detached"}>{headText(status.head)}</span></span>
+    <span class="r">Ctrl+1</span>
+  </div>
 
   {#if groups.length === 0}
-    <p class="clean">Nothing to commit, working tree clean.</p>
+    <div class="empty">
+      <b>Nothing to commit, working tree clean.</b>
+      <span>on {headText(status.head)}</span>
+      {#if lastAction}
+        <span class="ab">Last action: {lastAction} · Ctrl+Z undoes it</span>
+      {/if}
+    </div>
   {/if}
 
   {#each groups as group (group.title)}
-    <h2>
+    <h2 class="grp">
       {group.title} <span class="count">{group.rows.length}</span>
       {#if group.all}
         <button
-          class="all"
+          class="bare all"
           disabled={busy}
           aria-label="{group.all} ({group.title})"
           onclick={() => group.act(group.rows.map((e) => e.path))}>{group.all}</button
@@ -98,18 +109,21 @@
     </h2>
     <ul aria-label={group.title}>
       {#each group.rows as entry (entry.path)}
+        {@const letter = group.change(entry)}
+        {@const cut = entry.path.lastIndexOf("/") + 1}
         <li>
-          <span class="badge">{group.change(entry)}</span>
+          <span class="badge l-{letter === '?' ? 'q' : letter === '!' ? 'x' : letter}">{letter}</span>
           {#if group.side && onselectfile}
             {@const side = group.side}
             <button
-              class="path"
+              class="bare path"
               class:current={selected?.path === entry.path && selected.side === side}
               aria-pressed={selected?.path === entry.path && selected.side === side}
-              onclick={() => onselectfile(entry.path, side)}>{entry.path}</button
+              title={entry.path}
+              onclick={() => onselectfile(entry.path, side)}><span class="dir">{entry.path.slice(0, cut)}</span>{entry.path.slice(cut)}</button
             >
           {:else}
-            <span class="path">{entry.path}</span>
+            <span class="path" title={entry.path}><span class="dir">{entry.path.slice(0, cut)}</span>{entry.path.slice(cut)}</span>
           {/if}
           {#if group.side === "unstaged" && ondiscard}
             <button class="act" disabled={busy} aria-label="Discard {entry.path}" onclick={() => ondiscard([entry.path])}
@@ -126,50 +140,78 @@
 </section>
 
 <style>
-  .head {
-    font-weight: 600;
-    margin: 0;
+  .wc {
+    display: flex;
+    flex-direction: column;
   }
   .detached {
-    color: #b3261e;
-  }
-  .root {
-    color: #666;
-    font-size: 0.85em;
-    margin: 0 0 1rem;
+    color: var(--bad-ink);
+    font-weight: 600;
   }
   h2 {
-    font-size: 0.8rem;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    margin: 1rem 0 0.25rem;
+    margin: 0;
+  }
+  .grp:first-of-type {
+    border-top: 0;
   }
   .count {
-    color: #888;
+    font-weight: 400;
+  }
+  .all {
+    all: unset;
+    margin-left: auto;
+    text-transform: none;
+    letter-spacing: 0;
+    font: 500 11px var(--body);
+    color: var(--l0);
+    cursor: default;
+  }
+  .all:hover:not(:disabled) {
+    text-decoration: underline;
+  }
+  .all:disabled {
+    color: var(--muted);
   }
   ul {
     list-style: none;
     margin: 0;
-    padding: 0;
-    font-family: ui-monospace, monospace;
-    font-size: 0.85rem;
+    padding: 2px 0;
   }
   li {
-    line-height: 24px;
     display: flex;
     align-items: center;
+    gap: 6px;
+    height: 24px;
+    padding: 0 6px 0 10px;
   }
   li:hover {
-    background: #f4f4f4;
+    background: var(--hover);
+  }
+  li:has(.current) {
+    background: var(--sel);
   }
   .badge {
-    display: inline-block;
-    width: 1.5em;
+    all: unset;
+    font: 600 10.5px var(--mono);
+    width: 14px;
+    text-align: center;
     flex: none;
-    color: #888;
+    color: var(--muted);
+  }
+  .l-M,
+  .l-T {
+    color: var(--l4);
+  }
+  .l-A {
+    color: var(--l2);
+  }
+  .l-D,
+  .l-x {
+    color: var(--bad-ink);
   }
   .path {
     flex: 1;
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -177,34 +219,28 @@
   button.path {
     all: unset;
     flex: 1;
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    cursor: pointer;
-  }
-  button.path.current {
-    background: #e3ecfd;
+    cursor: default;
   }
   button.path:focus-visible {
-    outline: 2px solid #4c8bf5;
+    outline: 2px solid var(--l0);
+    outline-offset: -2px;
   }
-  button {
-    font: inherit;
-    font-family: system-ui, sans-serif;
-    font-size: 0.75rem;
-    text-transform: none;
-    letter-spacing: 0;
-    padding: 0 0.4rem;
+  .dir {
+    color: var(--muted);
   }
   /* Hidden until hover, but still focusable and announced: opacity, not visibility. */
   .act {
+    height: 20px;
+    padding: 0 7px;
+    font-size: 11px;
     opacity: 0;
   }
   li:hover .act,
   .act:focus-visible {
     opacity: 1;
-  }
-  .all {
-    margin-left: 0.5rem;
   }
 </style>

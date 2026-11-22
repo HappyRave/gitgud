@@ -85,6 +85,16 @@ once as tabs.
     remote" button.
 - **Not applied yet:** the instant single-commit edits aren't drawn; the 3-way / Smart Merge resolver
   is round 3; no spec.
+- **Decided 2026-11-22** (while building, screens the mocks don't draw; Max picked Claude's pick each time):
+  - "Edit history" opens from a commit row: Shift+E or right-click → "Edit history from here"; the plan
+    covers that commit up to HEAD, onto its parent; the Onto chip lists local branches. Max picked
+    "Commit row: Shift+E + menu".
+  - An Edit (E) stop keeps the graph and working copy; the R1 state 1 banner reads "Stopped at step n
+    of m to edit …" with Continue (amends what is staged) / Abort. Max picked "Banner + normal layout".
+  - "Show the conflict" shows the predicted file with git's conflict markers in the plan's diff area,
+    yours / theirs tinted, read-only. Max picked "File in the plan's diff area".
+  - History with merge commits in the range, and the root commit, are refused in v1 with a plain
+    message. Max picked "Refuse for now".
 
 ## R1 · Main window layout (2026-11-21)
 

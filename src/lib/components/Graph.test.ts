@@ -97,7 +97,9 @@ describe("Graph", () => {
     expect(within(li).getByText("v1")).toHaveClass("tag");
     expect(li).toHaveTextContent("Ada");
     expect(li).toHaveTextContent("0000000");
-    expect(li).toHaveTextContent(/\d{4}-\d{2}-\d{2} \d{2}:\d{2}/);
+    expect(li.querySelector(".date")?.getAttribute("title")).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
+    expect(li.querySelector(".date")?.textContent).not.toBe("");
+    expect(within(li).getByText("main").style.getPropertyValue("--lane")).toBe("var(--l0)");
     expect(within(screen.getByText("commit 1").closest("li")!).getByText("HEAD")).toHaveClass("head");
   });
 
@@ -107,7 +109,8 @@ describe("Graph", () => {
 
     const li = (await screen.findByText("Uncommitted changes")).closest("li")!;
     expect(li).toHaveClass("wip");
-    expect(li).not.toHaveTextContent(/\d{4}-/);
+    expect(li.querySelector(".date")?.textContent).toBe("");
+    expect(li.querySelector(".date")).not.toHaveAttribute("title");
   });
 
   it("selects a row on click", async () => {
@@ -150,6 +153,34 @@ describe("Graph", () => {
     expect(selectedSubjects()).toEqual([]);
   });
 
+  it("Ctrl+C hands over the selected commit; nothing for the working-copy row", async () => {
+    serve(3, { 0: { wip: true, subject: "Uncommitted changes" } });
+    const oncopy = vi.fn();
+    render(Graph, { repoId: 1, rowCount: 3, oncopy });
+    await screen.findByText("commit 2");
+
+    await fireEvent.click(screen.getByText("Uncommitted changes"));
+    await fireEvent.keyDown(list(), { key: "c", ctrlKey: true });
+    await fireEvent.click(screen.getByText("commit 2"));
+    await fireEvent.keyDown(list(), { key: "c", ctrlKey: true });
+
+    expect(oncopy.mock.calls.map(([row]) => row.subject)).toEqual(["commit 2"]);
+  });
+
+  it("reveal selects a far row, reports it once loaded, and marks find hits", async () => {
+    const calls = serve(1000);
+    const onselect = vi.fn();
+    const view = render(Graph, { repoId: 1, rowCount: 1000, onselect, hits: new Set([700]) });
+    await screen.findByText("commit 0");
+
+    view.component.reveal(700);
+
+    await vi.waitFor(() => expect(onselect).toHaveBeenCalledWith(expect.objectContaining({ subject: "commit 700" })));
+    expect(onselect).not.toHaveBeenCalledWith(null);
+    expect(calls.some((c) => (c.args as { start: number }).start <= 700)).toBe(true);
+    expect((await screen.findByText("commit 700")).closest("li")).toHaveClass("hit", "selected");
+  });
+
   it("follows a selection set from outside", async () => {
     serve(3);
     const view = render(Graph, { repoId: 1, rowCount: 3, selected: 2 });
@@ -190,6 +221,69 @@ describe("Graph", () => {
     await screen.findByText("commit 1");
 
     expect(container.querySelector("canvas")).toHaveStyle({ width: `${4 * 14 + 8}px` });
+  });
+
+  it("draws a plan preview from its own rows: after rows tagged, replaced rows faded", async () => {
+    mockCommands({});
+    const preview = (start: number, count: number) =>
+      Promise.resolve(
+        [row(0, { id: "", shortId: "", subject: "Move camera right", after: "reworded" }), row(1, { faded: true })].slice(start, start + count),
+      );
+    const { rerender } = render(Graph, { repoId: 1, rowCount: 2, rows: preview, rowsVersion: 1 });
+
+    const ghost = (await screen.findByText("Move camera right")).closest("li")!;
+    expect(ghost).toHaveClass("ghost");
+    expect(within(ghost).getByText("reworded")).toBeInTheDocument();
+    expect(screen.getByText("commit 1").closest("li")).toHaveClass("faded");
+
+    const next = (start: number, count: number) => Promise.resolve([row(0, { subject: "Move camera, again", after: "reworded" })].slice(start, start + count));
+    await rerender({ repoId: 1, rowCount: 1, rows: next, rowsVersion: 2 });
+    expect(await screen.findByText("Move camera, again")).toBeInTheDocument();
+  });
+
+  it("R, F, D and Shift+E on a selected commit ask for an edit; not on the working copy or an after row", async () => {
+    serve(3, { 0: { wip: true, subject: "Uncommitted changes" } });
+    const onedit = vi.fn();
+    render(Graph, { repoId: 1, rowCount: 3, onedit });
+    await screen.findByText("commit 2");
+
+    await fireEvent.keyDown(list(), { key: "ArrowDown" });
+    await fireEvent.keyDown(list(), { key: "r" });
+    expect(onedit).not.toHaveBeenCalled();
+    await fireEvent.keyDown(list(), { key: "ArrowDown" });
+    await fireEvent.keyDown(list(), { key: "f" });
+    await fireEvent.keyDown(list(), { key: "E", shiftKey: true });
+    expect(onedit.mock.calls.map(([r, e]) => [r.subject, e])).toEqual([
+      ["commit 1", "fixup"],
+      ["commit 1", "plan"],
+    ]);
+  });
+
+  it("right-click on a commit selects it and asks for the menu", async () => {
+    serve(3);
+    const onmenu = vi.fn();
+    render(Graph, { repoId: 1, rowCount: 3, onmenu });
+    const target = await screen.findByText("commit 2");
+
+    await fireEvent.contextMenu(target, { clientX: 40, clientY: 50 });
+
+    expect(onmenu).toHaveBeenCalledWith(expect.objectContaining({ subject: "commit 2" }), 40, 50);
+    expect(selectedSubjects()[0]).toContain("commit 2");
+  });
+
+  it("renames inline: Enter gives the new subject, Esc gives null", async () => {
+    serve(3);
+    const onrename = vi.fn();
+    render(Graph, { repoId: 1, rowCount: 3, renaming: 0, onrename });
+
+    const input = await screen.findByRole("textbox", { name: "New commit subject" });
+    expect(input).toHaveValue("commit 0");
+    expect(screen.getByText("Enter save · Esc cancel")).toBeInTheDocument();
+    await fireEvent.input(input, { target: { value: "commit zero" } });
+    await fireEvent.keyDown(input, { key: "Enter" });
+    expect(onrename).toHaveBeenCalledWith("commit zero");
+    await fireEvent.keyDown(input, { key: "Escape" });
+    expect(onrename).toHaveBeenLastCalledWith(null);
   });
 
   it("shows a failed fetch", async () => {

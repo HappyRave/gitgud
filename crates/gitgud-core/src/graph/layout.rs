@@ -22,6 +22,25 @@ pub struct Segment {
     pub from: u16,
     pub to: u16,
     pub part: Part,
+    #[serde(skip_serializing_if = "Stroke::is_solid")]
+    pub stroke: Stroke,
+}
+
+/// How a line is drawn: history plan previews dash the planned result and fade
+/// the commits it replaces.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Stroke {
+    #[default]
+    Solid,
+    Dashed,
+    Faded,
+}
+
+impl Stroke {
+    fn is_solid(&self) -> bool {
+        *self == Stroke::Solid
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -35,8 +54,8 @@ pub enum Part {
     Through,
 }
 
-/// Each lane holds the row it is waiting for, `None` when free.
-type Lanes = Vec<Option<u32>>;
+/// Each lane holds the row it is waiting for and how its line is drawn, `None` when free.
+type Lanes = Vec<Option<(u32, Stroke)>>;
 
 /// Lane state every [`CHECKPOINT_EVERY`] rows, so any window of rows is laid out
 /// by replaying at most that many rows instead of keeping every row's segments.
@@ -52,7 +71,7 @@ impl Layout {
             if row % CHECKPOINT_EVERY == 0 {
                 checkpoints.push(lanes.clone());
             }
-            step(&mut lanes, row, topology.parents(row));
+            step(&mut lanes, row, topology.parents(row), topology.stroke(row));
         }
         Self { checkpoints }
     }
@@ -66,18 +85,27 @@ impl Layout {
         let first = start - start % CHECKPOINT_EVERY;
         let mut lanes = self.checkpoints[first / CHECKPOINT_EVERY].clone();
         for row in first..start {
-            step(&mut lanes, row, topology.parents(row));
+            step(&mut lanes, row, topology.parents(row), topology.stroke(row));
         }
         (start..end)
-            .map(|row| cap(step(&mut lanes, row, topology.parents(row))))
+            .map(|row| {
+                cap(step(
+                    &mut lanes,
+                    row,
+                    topology.parents(row),
+                    topology.stroke(row),
+                ))
+            })
             .collect()
     }
 }
 
-/// Lays out `row` and advances `lanes` past it.
-fn step(lanes: &mut Lanes, row: usize, parents: &[u32]) -> RowLayout {
-    let me = Some(u32::try_from(row).expect("row fits u32"));
-    let node = match lanes.iter().position(|l| *l == me) {
+/// Lays out `row` and advances `lanes` past it. `stroke` is how the lines
+/// leaving the row are drawn, all the way down to its parents.
+fn step(lanes: &mut Lanes, row: usize, parents: &[u32], stroke: Stroke) -> RowLayout {
+    let me = u32::try_from(row).expect("row fits u32");
+    let waits_for = |l: &Option<(u32, Stroke)>, r: u32| l.is_some_and(|(w, _)| w == r);
+    let node = match lanes.iter().position(|l| waits_for(l, me)) {
         Some(lane) => lane,
         None => free_lane(lanes),
     };
@@ -85,11 +113,11 @@ fn step(lanes: &mut Lanes, row: usize, parents: &[u32]) -> RowLayout {
     let mut segments = Vec::with_capacity(lanes.len() + parents.len());
     for (lane, waiting) in lanes.iter_mut().enumerate() {
         match *waiting {
-            Some(_) if *waiting == me => {
-                segments.push(seg(lane, node, Part::Top));
+            Some((w, s)) if w == me => {
+                segments.push(seg(lane, node, Part::Top, s));
                 *waiting = None;
             }
-            Some(_) => segments.push(seg(lane, lane, Part::Through)),
+            Some((_, s)) => segments.push(seg(lane, lane, Part::Through, s)),
             None => {}
         }
     }
@@ -97,13 +125,13 @@ fn step(lanes: &mut Lanes, row: usize, parents: &[u32]) -> RowLayout {
     for (i, &parent) in parents.iter().enumerate() {
         let lane = if i == 0 {
             node
-        } else if let Some(lane) = lanes.iter().position(|l| *l == Some(parent)) {
+        } else if let Some(lane) = lanes.iter().position(|l| waits_for(l, parent)) {
             lane
         } else {
             free_lane(lanes)
         };
-        lanes[lane] = Some(parent);
-        segments.push(seg(node, lane, Part::Bottom));
+        lanes[lane] = Some((parent, stroke));
+        segments.push(seg(node, lane, Part::Bottom, stroke));
     }
 
     while lanes.last() == Some(&None) {
@@ -123,11 +151,12 @@ fn free_lane(lanes: &mut Lanes) -> usize {
     })
 }
 
-fn seg(from: usize, to: usize, part: Part) -> Segment {
+fn seg(from: usize, to: usize, part: Part, stroke: Stroke) -> Segment {
     Segment {
         from: lane_u16(from),
         to: lane_u16(to),
         part,
+        stroke,
     }
 }
 
@@ -158,25 +187,26 @@ mod tests {
     }
 
     fn top(from: u16, to: u16) -> Segment {
-        Segment {
-            from,
-            to,
-            part: Part::Top,
-        }
+        seg(from.into(), to.into(), Part::Top, Stroke::Solid)
     }
     fn bottom(from: u16, to: u16) -> Segment {
-        Segment {
-            from,
-            to,
-            part: Part::Bottom,
-        }
+        seg(from.into(), to.into(), Part::Bottom, Stroke::Solid)
     }
     fn through(lane: u16) -> Segment {
-        Segment {
-            from: lane,
-            to: lane,
-            part: Part::Through,
-        }
+        seg(lane.into(), lane.into(), Part::Through, Stroke::Solid)
+    }
+
+    #[test]
+    fn a_rows_stroke_follows_its_lines_down_to_the_parent() {
+        // 0 ghost(2) / 1 tip(2), faded / 2 base
+        let mut topology = t(&[&[2], &[2], &[]]);
+        topology.set_stroke(0, Stroke::Dashed);
+        topology.set_stroke(1, Stroke::Faded);
+        let rows = all(&topology);
+        let strokes = |r: &RowLayout| r.segments.iter().map(|s| s.stroke).collect::<Vec<_>>();
+        assert_eq!(strokes(&rows[0]), [Stroke::Dashed]);
+        assert_eq!(strokes(&rows[1]), [Stroke::Dashed, Stroke::Faded]);
+        assert_eq!(strokes(&rows[2]), [Stroke::Dashed, Stroke::Faded]);
     }
     fn row(node: u16, segments: Vec<Segment>) -> RowLayout {
         RowLayout {

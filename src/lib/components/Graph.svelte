@@ -1,31 +1,58 @@
 <script lang="ts">
   import { graphRows, type RefLabel, type Row } from "$lib/api";
-  import { onMount } from "svelte";
-  import { drawGraph, LANE_WIDTH, laneCount, MAX_LANES } from "$lib/graph/draw";
+  import { onMount, tick, untrack } from "svelte";
+  import { DEFAULT_THEME, drawGraph, LANE_WIDTH, laneCount, laneVar, MAX_LANES, readTheme } from "$lib/graph/draw";
   import { RowStore } from "$lib/graph/rows.svelte";
   import { ROW_HEIGHT, visibleRange } from "$lib/graph/window";
+  import { graphEditKey } from "$lib/keys";
+  import { age, fullDate } from "$lib/time";
 
   let {
     repoId,
     rowCount,
     selected = $bindable(null),
     onselect,
+    oncopy,
+    hits = null,
+    rows: fetchRows = (start, count) => graphRows(repoId, start, count),
+    onedit,
+    onmenu,
+    renaming = null,
+    onrename,
+    rowsVersion = 0,
   }: {
+    /** Bump to drop loaded rows and fetch them again (a new plan preview). */
+    rowsVersion?: number;
+    /** Rows matching the find bar, marked in the gutter. */
+    hits?: ReadonlySet<number> | null;
     repoId: number;
     rowCount: number;
     /** Index of the selected row. */
     selected?: number | null;
     /** The selected row once it is loaded, or `null` when the selection is cleared. */
     onselect?: (row: Row | null) => void;
+    /** Ctrl+C on a commit row: its full hash. */
+    oncopy?: (row: Row) => void;
+    /** Where rows come from; a history plan passes its preview. */
+    rows?: (start: number, count: number) => Promise<Row[]>;
+    /** R / F / D / Shift+E on a commit row (spec §3.4). */
+    onedit?: (row: Row, edit: "reword" | "fixup" | "drop" | "plan") => void;
+    /** Right-click on a commit row. */
+    onmenu?: (row: Row, x: number, y: number) => void;
+    /** Row whose subject is being renamed inline (R on the tip). */
+    renaming?: number | null;
+    /** The new subject on Enter, `null` on Esc. */
+    onrename?: (subject: string | null) => void;
   } = $props();
 
-  const store = new RowStore((start, count) => graphRows(repoId, start, count));
+  const store = new RowStore((start, count) => fetchRows(start, count));
 
   let viewport: HTMLDivElement;
   let canvas: HTMLCanvasElement;
   let scrollTop = $state(0);
   let height = $state(0);
   let lanes = $state(1);
+  let theme = $state(DEFAULT_THEME);
 
   const range = $derived(visibleRange(scrollTop, height, rowCount));
   const visible = $derived.by(() => {
@@ -41,7 +68,12 @@
   });
   const graphWidth = $derived(Math.min(lanes, MAX_LANES) * LANE_WIDTH + 8);
 
+  let loadedVersion = untrack(() => rowsVersion);
   $effect(() => {
+    if (rowsVersion !== loadedVersion) {
+      loadedVersion = rowsVersion;
+      store.reset();
+    }
     store.ensure(range);
   });
 
@@ -63,16 +95,29 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     drawGraph(
       ctx,
-      visible.map(({ index, row }) => ({ index, layout: row.layout, wip: row.wip })),
+      visible.map(({ index, row }) => ({ index, layout: row.layout, wip: row.wip, ghost: row.after != null, faded: row.faded })),
       scrollTop,
       graphWidth,
       height,
+      theme,
     );
   });
 
   onMount(() => {
     height = viewport.clientHeight;
+    theme = readTheme(document.documentElement);
+    const dark = window.matchMedia?.("(prefers-color-scheme: dark)");
+    const retheme = () => (theme = readTheme(document.documentElement));
+    dark?.addEventListener("change", retheme);
+    return () => dark?.removeEventListener("change", retheme);
   });
+
+  let list = $state<HTMLElement | null>(null);
+
+  /** Keyboard focus on the rows (Ctrl+2). */
+  export function focus() {
+    list?.focus();
+  }
 
   function onClick(event: MouseEvent) {
     const li = (event.target as HTMLElement).closest<HTMLElement>("li[data-index]");
@@ -81,14 +126,97 @@
     }
   }
 
+  /** A selected row that wasn't loaded yet: reported once its chunk arrives. */
+  let unreported = $state<number | null>(null);
+
+  $effect(() => {
+    void store.version;
+    if (unreported === null) {
+      return;
+    }
+    const row = store.get(unreported);
+    if (row) {
+      unreported = null;
+      onselect?.(row);
+    }
+  });
+
   function select(index: number | null) {
     selected = index;
-    onselect?.(index === null ? null : (store.get(index) ?? null));
+    const row = index === null ? null : store.get(index);
+    unreported = index !== null && !row ? index : null;
+    if (row !== undefined || index === null) {
+      onselect?.(row ?? null);
+    }
+  }
+
+  /** Selects row `index` and scrolls it to the middle of the view (find, Ctrl+F). */
+  export function reveal(index: number) {
+    select(index);
+    const top = index * ROW_HEIGHT;
+    if (top < viewport.scrollTop || top + ROW_HEIGHT > viewport.scrollTop + height) {
+      viewport.scrollTop = Math.max(0, top - height / 2);
+      scrollTop = viewport.scrollTop;
+    }
+  }
+
+  /** A row edits can act on: a real commit. */
+  const editable = (row: Row | undefined): row is Row => !!row && !row.wip && row.after == null;
+
+  function onContextMenu(event: MouseEvent) {
+    const li = (event.target as HTMLElement).closest<HTMLElement>("li[data-index]");
+    const index = li ? Number(li.dataset.index) : null;
+    const row = index === null ? undefined : store.get(index);
+    if (!onmenu || !editable(row)) {
+      return;
+    }
+    event.preventDefault();
+    select(index);
+    onmenu(row, event.clientX, event.clientY);
+  }
+
+  let renameInput = $state<HTMLInputElement | null>(null);
+  $effect(() => {
+    if (renaming !== null) {
+      tick().then(() => {
+        renameInput?.focus();
+        renameInput?.select();
+      });
+    }
+  });
+
+  function onRenameKey(event: KeyboardEvent) {
+    event.stopPropagation();
+    if (event.key === "Enter") {
+      event.preventDefault();
+      onrename?.(renameInput?.value ?? "");
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      onrename?.(null);
+      list?.focus();
+    }
   }
 
   function onKey(event: KeyboardEvent) {
     if (event.key === "Escape") {
       select(null);
+      return;
+    }
+    const edit = graphEditKey(event);
+    if (edit && onedit && selected !== null) {
+      const row = store.get(selected);
+      if (editable(row)) {
+        event.preventDefault();
+        onedit(row, edit);
+      }
+      return;
+    }
+    if (event.ctrlKey && event.key.toLowerCase() === "c" && selected !== null) {
+      const row = store.get(selected);
+      if (row && !row.wip) {
+        event.preventDefault();
+        oncopy?.(row);
+      }
       return;
     }
     const step = event.key === "ArrowDown" ? 1 : event.key === "ArrowUp" ? -1 : 0;
@@ -110,12 +238,6 @@
   function labelText(label: RefLabel) {
     return label.kind === "head" ? "HEAD" : label.name;
   }
-
-  function date(seconds: number) {
-    const d = new Date(seconds * 1000);
-    const pad = (n: number) => String(n).padStart(2, "0");
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  }
 </script>
 
 <svelte:window onresize={() => (height = viewport.clientHeight)} />
@@ -127,6 +249,7 @@
   <canvas bind:this={canvas} style:width="{graphWidth}px" style:height="{height}px" aria-hidden="true"></canvas>
   <div class="viewport" bind:this={viewport} onscroll={() => (scrollTop = viewport.scrollTop)}>
     <ul
+      bind:this={list}
       class="rows"
       role="listbox"
       aria-label="Commits"
@@ -134,6 +257,7 @@
       style:height="{rowCount * ROW_HEIGHT}px"
       onclick={onClick}
       onkeydown={onKey}
+      oncontextmenu={onContextMenu}
     >
       {#each visible as { index, row } (index)}
         <li
@@ -141,20 +265,41 @@
           role="option"
           data-index={index}
           class:wip={row.wip}
+          class:ghost={row.after != null}
+          class:faded={row.faded}
           class:selected={selected === index}
+          class:hit={hits?.has(index)}
           aria-selected={selected === index}
           style:top="{index * ROW_HEIGHT}px"
           style:padding-left="{graphWidth}px"
         >
           <span class="subject">
             {#each row.labels as label (labelText(label))}
-              <span class="label {label.kind}" class:current={label.kind === "branch" && label.current}>{labelText(label)}</span>
+              <span
+                class="label {label.kind}"
+                class:current={label.kind === "branch" && label.current}
+                style:--lane={laneVar(row.layout.node)}
+                title={label.kind === "branch" && label.current ? "Current branch" : undefined}>{labelText(label)}</span
+              >
             {/each}
-            <span class="text">{row.subject}</span>
+            {#if renaming === index}
+              <input
+                bind:this={renameInput}
+                class="rename"
+                aria-label="New commit subject"
+                value={row.subject}
+                onkeydown={onRenameKey}
+                onblur={() => onrename?.(null)}
+              />
+              <span class="tag">Enter save · Esc cancel</span>
+            {:else}
+              <span class="text">{row.subject}</span>
+              {#if row.after}<span class="tag">{row.after}</span>{/if}
+            {/if}
           </span>
-          <span class="author">{row.author}</span>
-          <span class="date">{row.wip ? "" : date(row.time)}</span>
-          <span class="id">{row.shortId}</span>
+          <span class="author">{row.wip ? "" : row.author}</span>
+          <span class="date" title={row.wip ? undefined : fullDate(row.time)}>{row.wip ? "" : age(row.time)}</span>
+          <span class="id">{row.wip ? "" : row.shortId}</span>
         </li>
       {/each}
     </ul>
@@ -184,30 +329,72 @@
     margin: 0;
     padding: 0;
   }
+  .rows:focus {
+    outline: none;
+  }
+  .rows:focus-visible .row.selected {
+    box-shadow: inset 2px 0 0 var(--l0);
+  }
   .row {
     position: absolute;
     left: 0;
     right: 0;
     height: 24px;
     display: grid;
-    grid-template-columns: minmax(12rem, 1fr) minmax(0, 9rem) 8.5rem 4.5rem;
-    gap: 0.75rem;
+    grid-template-columns: minmax(10rem, 1fr) minmax(0, 8rem) 4.5rem 4.5rem;
+    gap: 10px;
+    padding-right: 10px;
     align-items: center;
-    font-size: 0.85rem;
     white-space: nowrap;
     cursor: default;
   }
   .row:hover {
-    background: #f4f4f4;
+    background: var(--hover);
   }
   .row.selected {
-    background: #e3ecfd;
+    background: var(--sel);
   }
-  .wip .subject {
+  .row.hit .text {
+    background: color-mix(in srgb, var(--l4) 30%, transparent);
+    border-radius: 2px;
+  }
+  .wip .text {
     font-style: italic;
-    color: #666;
+    color: var(--muted);
   }
-  .subject,
+  .ghost .text {
+    font-style: italic;
+  }
+  .faded > * {
+    opacity: 0.45;
+  }
+  .tag {
+    flex: none;
+    font: 10px var(--mono);
+    color: var(--muted);
+    border: 1px dashed var(--line);
+    border-radius: 3px;
+    padding: 0 4px;
+  }
+  .rename {
+    flex: 1 1 auto;
+    min-width: 170px;
+    height: 18px;
+    padding: 0 4px;
+    font: inherit;
+    border: 1.5px solid var(--l0);
+    border-radius: 3px;
+    background: var(--panel);
+    color: var(--fg);
+  }
+  .subject {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    min-width: 0;
+    overflow: hidden;
+  }
+  .text,
   .author {
     overflow: hidden;
     text-overflow: ellipsis;
@@ -215,30 +402,43 @@
   .author,
   .date,
   .id {
-    color: #777;
+    color: var(--muted);
+    font-size: 11.5px;
   }
   .id {
-    font-family: ui-monospace, monospace;
+    font-family: var(--mono);
+    text-align: right;
   }
   .label {
-    display: inline-block;
-    padding: 0 0.35rem;
-    margin-right: 0.3rem;
+    flex: none;
+    max-width: 190px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    padding: 0 5px;
     border-radius: 3px;
-    font-size: 0.75rem;
-    line-height: 16px;
-    background: #eee;
+    border: 1px solid currentColor;
+    font: 600 10.5px/16px var(--mono);
+    color: var(--lane);
   }
   .label.current {
-    font-weight: 600;
+    background: var(--lane);
+    border-color: transparent;
+    color: var(--panel);
   }
-  .label.tag {
-    background: #fdf1d6;
+  .label.current::before {
+    content: "✓ ";
   }
   .label.remote {
-    background: #e8eefb;
+    opacity: 0.75;
+    font-weight: 400;
+  }
+  .label.tag {
+    border-style: dashed;
+    color: var(--muted);
   }
   .label.head {
-    background: #fbe3e1;
+    background: var(--warn);
+    color: var(--warn-ink);
+    border-color: transparent;
   }
 </style>

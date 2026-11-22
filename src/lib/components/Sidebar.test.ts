@@ -11,14 +11,17 @@ const DATA: Branches = {
     { name: "conflict/ours", current: false, upstream: null, ahead: 0, behind: 0 },
   ],
   remotes: [{ name: "origin", branches: ["origin/master", "origin/feature/stack"] }],
+  fetched: null,
 };
 
-function setup(props: { busy?: boolean; oplogOpen?: boolean } = {}) {
+function setup(props: { busy?: boolean; oplogOpen?: boolean; merging?: boolean } = {}) {
   const calls = mockCommands({ branches: () => DATA });
   const oncheckout = vi.fn();
+  const onmerge = vi.fn();
+  const onrebase = vi.fn();
   const onoplog = vi.fn();
-  const view = render(Sidebar, { repoId: 4, revision: 0, oncheckout, onoplog, ...props });
-  return { calls, oncheckout, onoplog, view };
+  const view = render(Sidebar, { repoId: 4, revision: 0, oncheckout, onmerge, onrebase, onoplog, ...props });
+  return { calls, oncheckout, onmerge, onrebase, onoplog, view };
 }
 
 const branchRows = () =>
@@ -78,8 +81,59 @@ describe("Sidebar", () => {
     const { calls, view } = setup();
     await screen.findByText("stack");
 
-    await view.rerender({ repoId: 4, revision: 1, oncheckout: vi.fn(), onoplog: vi.fn() });
+    await view.rerender({ repoId: 4, revision: 1, oncheckout: vi.fn(), onmerge: vi.fn(), onrebase: vi.fn(), onoplog: vi.fn() });
 
     await vi.waitFor(() => expect(calls).toHaveLength(2));
+  });
+
+  it("right-click on a branch offers check out, merge into and rebase onto it", async () => {
+    const { oncheckout, onmerge, onrebase } = setup();
+    await screen.findByText("stack");
+
+    await fireEvent.contextMenu(screen.getByRole("button", { name: /stack/ }), { clientX: 30, clientY: 40 });
+    const items = screen.getAllByRole("menuitem").map((i) => i.textContent?.trim());
+    expect(items).toEqual([
+      "Check out feature/stack Dbl-click",
+      "Merge feature/stack into master…",
+      "Rebase master onto feature/stack…",
+    ]);
+
+    await fireEvent.click(screen.getByRole("menuitem", { name: /Merge/ }));
+    expect(onmerge).toHaveBeenCalledWith("feature/stack");
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(oncheckout).not.toHaveBeenCalled();
+
+    await fireEvent.contextMenu(screen.getByRole("button", { name: /stack/ }), { clientX: 30, clientY: 40 });
+    await fireEvent.click(screen.getByRole("menuitem", { name: /Rebase/ }));
+    expect(onrebase).toHaveBeenCalledWith("feature/stack");
+  });
+
+  it("offers merge on remote branches, and Esc closes the menu", async () => {
+    const { onmerge } = setup();
+    const remotes = await screen.findByRole("region", { name: "Remotes" });
+    await fireEvent.click(await within(remotes).findByRole("button", { name: /origin/ }));
+
+    await fireEvent.contextMenu(within(remotes).getByRole("button", { name: /feature\/stack/ }));
+    expect(screen.getAllByRole("menuitem").map((i) => i.textContent?.trim())).toEqual([
+      "Merge origin/feature/stack into master…",
+      "Rebase master onto origin/feature/stack…",
+    ]);
+    await fireEvent.keyDown(window, { key: "Escape" });
+
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(onmerge).not.toHaveBeenCalled();
+  });
+
+  it("during a merge: no checkout, merge disabled", async () => {
+    const { oncheckout } = setup({ merging: true });
+    await screen.findByText("stack");
+
+    await fireEvent.dblClick(screen.getByRole("button", { name: /stack/ }));
+    await fireEvent.contextMenu(screen.getByRole("button", { name: /stack/ }));
+
+    expect(oncheckout).not.toHaveBeenCalled();
+    for (const item of screen.getAllByRole("menuitem")) {
+      expect(item).toBeDisabled();
+    }
   });
 });

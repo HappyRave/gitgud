@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { RowLayout } from "$lib/api";
 import { fakeContext } from "$lib/test/canvas";
-import { drawGraph, LANE_WIDTH, laneColor, laneCount, laneX, PALETTE, segmentLine } from "./draw";
+import { drawGraph, LANE_WIDTH, laneColor, laneCount, laneVar, laneX, PALETTE, segmentLine } from "./draw";
 import { ROW_HEIGHT } from "./window";
 
 const mid = ROW_HEIGHT / 2;
@@ -44,8 +44,9 @@ describe("lanes", () => {
     expect(laneX(1) - laneX(0)).toBe(LANE_WIDTH);
   });
 
-  it("cycles the palette", () => {
+  it("cycles the palette, in CSS too", () => {
     expect(laneColor(PALETTE.length)).toBe(laneColor(0));
+    expect(laneVar(PALETTE.length + 1)).toBe("var(--l1)");
   });
 
   it("counts the widest lane a row touches", () => {
@@ -78,6 +79,28 @@ describe("drawGraph", () => {
     const fill = ctx.calls.find((c) => c.op === "fill");
     expect(fill?.fillStyle).toBe("#fff");
     expect(ctx.calls.filter((c) => c.op === "stroke")).toHaveLength(2);
+  });
+
+  it("dashes a plan preview's after rows and draws their dots hollow", () => {
+    const ctx = fakeContext();
+    const dashed: RowLayout = { node: 0, segments: [{ from: 0, to: 0, part: "bottom", stroke: "dashed" }], overflow: false };
+    drawGraph(ctx, [{ index: 0, layout: dashed, wip: false, ghost: true }], 0, 100, 200);
+
+    const ops = ctx.calls.map((c) => (c.op === "setLineDash" ? `dash ${(c.args[0] as number[]).join(",")}` : c.op));
+    expect(ops.slice(ops.indexOf("dash 3,2"), ops.indexOf("dash 3,2") + 5)).toEqual(["dash 3,2", "beginPath", "moveTo", "lineTo", "stroke"]);
+    expect(ops).toContain("dash 2,2");
+    expect(ctx.calls.find((c) => c.op === "fill")?.fillStyle).toBe("#fff");
+    expect(ctx.globalAlpha).toBe(1);
+  });
+
+  it("uses the theme's colours, so dark mode reaches the canvas", () => {
+    const ctx = fakeContext();
+    const theme = { lanes: ["#111", "#222"], panel: "#000", muted: "#999" };
+    drawGraph(ctx, [{ index: 0, layout: { node: 1, segments: [], overflow: true }, wip: true }], 0, 100, 200, theme);
+
+    expect(ctx.calls.find((c) => c.op === "fill")?.fillStyle).toBe("#000");
+    expect(ctx.calls.find((c) => c.op === "stroke")?.strokeStyle).toBe("#222");
+    expect(ctx.calls.find((c) => c.op === "fillText")?.fillStyle).toBe("#999");
   });
 
   it("marks rows with folded lanes", () => {

@@ -1,5 +1,7 @@
 <script lang="ts">
   import { commitDetail, commitFileDiff, type Change, type CommitDetail, type FileDiff } from "$lib/api";
+  import { imageUrl, isImage } from "$lib/images";
+  import { prefs } from "$lib/prefs.svelte";
   import DiffView from "./DiffView.svelte";
 
   let { repoId, commit, onclose }: { repoId: number; commit: string; onclose: () => void } = $props();
@@ -50,42 +52,56 @@
 </script>
 
 <section class="detail" aria-label="Commit">
-  <header>
-    <button class="close" onclick={onclose} aria-label="Back to working copy">Close</button>
-    {#if detail}
-      <h2>{detail.subject}</h2>
-    {/if}
-  </header>
+  <div class="ph">
+    Commit <span class="ct">· {detail?.shortId ?? commit.slice(0, 7)}</span>
+    <span class="r"><button class="close" onclick={onclose} aria-label="Back to working copy" title="Esc in the graph">✕ Close</button></span>
+  </div>
 
   {#if error}
-    <p role="alert">{error}</p>
+    <p role="alert" class="pad">{error}</p>
   {/if}
 
   {#if detail}
-    {#if detail.body}
-      <p class="body">{detail.body}</p>
-    {/if}
-    <dl>
-      <dt>Author</dt>
-      <dd>{detail.author.name} &lt;{detail.author.email}&gt; · {date(detail.author.time)}</dd>
-      <dt>Commit</dt>
-      <dd class="mono">{detail.id}</dd>
-      <dt>Parents</dt>
-      <dd class="mono">{detail.parents.map((p) => p.slice(0, 7)).join(", ") || "none (root commit)"}</dd>
-    </dl>
+    <div class="card">
+      <div class="cbd">
+        <h2>{detail.subject}</h2>
+        {#if detail.body}
+          <p class="body">{detail.body}</p>
+        {/if}
+        <dl>
+          <dt>Author</dt>
+          <dd>{detail.author.name} &lt;{detail.author.email}&gt; · {date(detail.author.time)}</dd>
+          <dt>Commit</dt>
+          <dd class="mono">{detail.id}</dd>
+          <dt>Parents</dt>
+          <dd class="mono">{detail.parents.map((p) => p.slice(0, 7)).join(", ") || "none (root commit)"}</dd>
+        </dl>
+      </div>
+    </div>
 
+    <div class="grp">{detail.files.length} {detail.files.length === 1 ? "file" : "files"}</div>
     <ul class="files" aria-label="Changed files">
       {#each detail.files as f (f.path)}
+        {@const cut = f.path.lastIndexOf("/") + 1}
         <li>
-          <button class:current={f.path === file} aria-pressed={f.path === file} onclick={() => showFile(f.path)}>
-            <span class="badge">{LETTER[f.change]}</span>{f.path}
+          <button class="bare" class:current={f.path === file} aria-pressed={f.path === file} title={f.path} onclick={() => showFile(f.path)}>
+            <span class="badge l-{LETTER[f.change]}">{LETTER[f.change]}</span><span class="fp"><span class="dir">{f.path.slice(0, cut)}</span>{f.path.slice(cut)}</span>
           </button>
         </li>
       {/each}
     </ul>
 
     {#if diff}
-      <DiffView {diff} />
+      <DiffView
+        {diff}
+        split={prefs.split}
+        images={file && isImage(file)
+          ? {
+              before: { label: `Parent ${detail.parents[0]?.slice(0, 7) ?? "(none)"}`, url: imageUrl(repoId, file, { at: "parent", commit }) },
+              after: { label: detail.shortId, url: imageUrl(repoId, file, { at: "commit", commit }) },
+            }
+          : null}
+      />
     {/if}
   {:else if !error}
     <p class="note">Loading…</p>
@@ -96,68 +112,89 @@
   .detail {
     display: flex;
     flex-direction: column;
-    gap: 0.5rem;
     min-height: 0;
   }
-  header {
-    display: flex;
-    align-items: baseline;
-    gap: 0.5rem;
+  .close {
+    height: 20px;
+    padding: 0 7px;
+    font-size: 11px;
   }
   h2 {
-    font-size: 1rem;
+    font: 600 14px var(--display);
     margin: 0;
-  }
-  .close {
-    order: 2;
-    margin-left: auto;
   }
   .body {
     white-space: pre-wrap;
     margin: 0;
-    font-size: 0.85rem;
   }
   dl {
     display: grid;
     grid-template-columns: auto 1fr;
-    gap: 0.1rem 0.6rem;
+    gap: 1px 10px;
     margin: 0;
-    font-size: 0.8rem;
-    color: #555;
+    font-size: 11.5px;
+    color: var(--muted);
   }
   dd {
     margin: 0;
     overflow-wrap: anywhere;
   }
   .mono {
-    font-family: ui-monospace, monospace;
+    font-family: var(--mono);
+  }
+  .pad,
+  .note {
+    padding: 0 10px;
+    color: var(--muted);
   }
   .files {
     list-style: none;
     margin: 0;
-    padding: 0;
-    font-family: ui-monospace, monospace;
-    font-size: 0.85rem;
+    padding: 2px 0;
   }
   .files button {
     all: unset;
-    display: block;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    gap: 6px;
     width: 100%;
-    line-height: 22px;
-    cursor: pointer;
+    height: 24px;
+    padding: 0 10px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: default;
   }
   .files button:hover {
-    background: #f4f4f4;
+    background: var(--hover);
   }
   .files button.current {
-    background: #e3ecfd;
+    background: var(--sel);
+  }
+  .files button:focus-visible {
+    outline: 2px solid var(--l0);
+    outline-offset: -2px;
   }
   .badge {
-    display: inline-block;
-    width: 1.5em;
-    color: #888;
+    all: unset;
+    font: 600 10.5px var(--mono);
+    width: 14px;
+    text-align: center;
+    flex: none;
+    color: var(--l4);
   }
-  .note {
-    color: #888;
+  .l-A {
+    color: var(--l2);
+  }
+  .l-D {
+    color: var(--bad-ink);
+  }
+  .fp {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .dir {
+    color: var(--muted);
   }
 </style>

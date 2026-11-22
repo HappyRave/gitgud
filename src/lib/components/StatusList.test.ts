@@ -36,7 +36,7 @@ describe("StatusList", () => {
     render({ status: status([]) });
 
     expect(screen.getByTestId("head")).toHaveTextContent("main");
-    expect(screen.getByText("C:/work/repo")).toBeInTheDocument();
+    expect(screen.getByTestId("head").closest(".ph")).toHaveAttribute("title", "C:/work/repo");
   });
 
   it("says when the working tree is clean", () => {
@@ -44,6 +44,13 @@ describe("StatusList", () => {
 
     expect(screen.getByText("Nothing to commit, working tree clean.")).toBeInTheDocument();
     expect(screen.queryByRole("list")).not.toBeInTheDocument();
+  });
+
+  it("names the last action Ctrl+Z would undo on the clean state", () => {
+    renderComponent(StatusList, { status: status([]), lastAction: "Commit \"Tune foam\"", onstage: vi.fn(), onunstage: vi.fn() });
+
+    expect(screen.getByText("on main")).toBeInTheDocument();
+    expect(screen.getByText("Last action: Commit \"Tune foam\" · Ctrl+Z undoes it")).toBeInTheDocument();
   });
 
   it("groups entries with their change letter", () => {

@@ -7,8 +7,11 @@ use serde::Serialize;
 
 use crate::cli::GitCli;
 use crate::git;
-use crate::graph::Graph;
+use crate::graph::{Graph, Row};
+use crate::history::{Action, HistoryPlan, PlanPrediction, Step};
+use crate::merge::{MergeState, Side};
 use crate::oplog::{OpEntry, OpLog};
+use crate::rebase::{RebaseState, RebaseStep};
 use crate::repo::{self, Error, Repo};
 use crate::task::{Cancel, Progress};
 use crate::watch::RepoWatcher;
@@ -21,7 +24,18 @@ pub struct Session {
     watchers: Mutex<HashMap<u32, RepoWatcher>>,
     /// The running network task of each repo, so it can be cancelled.
     tasks: Mutex<HashMap<u32, Cancel>>,
+    /// The graph of each repo with its history plan drawn in.
+    previews: Mutex<HashMap<u32, Arc<Graph>>>,
     git: OnceLock<GitCli>,
+}
+
+/// A history plan's prediction and the size of its graph preview.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanPreview {
+    pub prediction: PlanPrediction,
+    /// Rows of the preview graph.
+    pub rows: usize,
 }
 
 /// A repository with its graph. Cheap to clone; a refresh swaps in a new graph
@@ -111,6 +125,10 @@ impl Session {
     /// [`Error::UnknownRepo`] when `id` was never opened or is already closed.
     pub fn close(&self, id: u32) -> Result<(), Error> {
         self.watchers().remove(&id);
+        self.previews
+            .lock()
+            .expect("preview lock poisoned")
+            .remove(&id);
         self.lock()
             .remove(&id)
             .map(drop)
@@ -175,6 +193,242 @@ impl Session {
         let paths = self.get(id)?.repo.checkout_paths(name)?;
         let action = format!("Check out {name}");
         self.write_destructive(id, &action, &paths, |repo, git| repo.checkout(git, name))
+    }
+
+    /// Merges `branch` into the current branch. Clean merges commit; conflicted
+    /// ones stop (see [`Session::merge_state`]). Undoable either way.
+    ///
+    /// # Errors
+    /// [`Error::Refused`] while a merge is in progress, or git's error.
+    pub fn merge(&self, id: u32, branch: &str) -> Result<Opened, Error> {
+        let open = self.get(id)?;
+        let paths = open.repo.merge_paths(self.git()?, branch)?;
+        let action = format!("Merge {branch}");
+        self.write_destructive(id, &action, &paths, |repo, git| {
+            repo.merge(git, branch).map(drop)
+        })
+    }
+
+    /// The merge in progress in repo `id`, if any.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`], or a read error.
+    pub fn merge_state(&self, id: u32) -> Result<Option<MergeState>, Error> {
+        self.get(id)?.repo.merge_state(self.git()?)
+    }
+
+    /// Resolves conflicted `path` with `content`, recorded as `how` ("use both"...).
+    ///
+    /// # Errors
+    /// A write error; then the file stays conflicted.
+    pub fn resolve_with(
+        &self,
+        id: u32,
+        path: &str,
+        content: &str,
+        how: &str,
+    ) -> Result<Opened, Error> {
+        let action = format!("Resolve {path} ({how})");
+        let paths = [path.to_owned()];
+        self.write_destructive(id, &action, &paths, |repo, git| {
+            repo.resolve_with(git, path, content)
+        })
+    }
+
+    /// Resolves conflicted `path` by keeping one side whole.
+    ///
+    /// # Errors
+    /// A write error; then the file stays conflicted.
+    pub fn resolve_side(&self, id: u32, path: &str, side: Side) -> Result<Opened, Error> {
+        let which = match side {
+            Side::Yours => "keep yours",
+            Side::Theirs => "keep theirs",
+        };
+        let action = format!("Resolve {path} ({which})");
+        let paths = [path.to_owned()];
+        self.write_destructive(id, &action, &paths, |repo, git| {
+            repo.resolve_side(git, path, side)
+        })
+    }
+
+    /// Aborts the merge in progress; undoable like any discard.
+    ///
+    /// # Errors
+    /// git's error.
+    pub fn merge_abort(&self, id: u32) -> Result<Opened, Error> {
+        let open = self.get(id)?;
+        let paths = open.repo.merge_paths(self.git()?, "MERGE_HEAD")?;
+        self.write_destructive(id, "Abort merge", &paths, |repo, git| repo.merge_abort(git))
+    }
+
+    /// Commits the resolved merge.
+    ///
+    /// # Errors
+    /// [`Error::Refused`] while files are conflicted, or git's error (a hook).
+    pub fn merge_commit(&self, id: u32, message: &str) -> Result<Opened, Error> {
+        self.write(id, "Commit merge", |repo, git| {
+            repo.merge_commit(git, message)
+        })
+    }
+
+    /// Rebases the current branch onto `onto`; stops on conflicts. Undoable.
+    ///
+    /// # Errors
+    /// [`Error::Refused`] while another operation is in progress, or git's error.
+    pub fn rebase(&self, id: u32, onto: &str) -> Result<Opened, Error> {
+        let open = self.get(id)?;
+        let paths = open.repo.rebase_paths(self.git()?, onto)?;
+        let action = format!("Rebase onto {onto}");
+        self.write_destructive(id, &action, &paths, |repo, git| {
+            repo.rebase(git, onto).map(drop)
+        })
+    }
+
+    /// The rebase in progress in repo `id`, if any.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`], or a read error.
+    pub fn rebase_state(&self, id: u32) -> Result<Option<RebaseState>, Error> {
+        self.get(id)?.repo.rebase_state(self.git()?)
+    }
+
+    /// Continues, skips the current commit of, or aborts the rebase in progress.
+    ///
+    /// # Errors
+    /// [`Error::Refused`] while files are conflicted (continue), or git's error.
+    pub fn rebase_step(&self, id: u32, step: RebaseStep) -> Result<Opened, Error> {
+        let open = self.get(id)?;
+        let paths = open.repo.rebase_paths_in_progress(self.git()?)?;
+        let action = match step {
+            RebaseStep::Continue => "Continue rebase",
+            RebaseStep::Skip => "Skip commit in rebase",
+            RebaseStep::Abort => "Abort rebase",
+        };
+        self.write_destructive(id, action, &paths, |repo, git| match step {
+            RebaseStep::Continue => repo.rebase_continue(git).map(drop),
+            RebaseStep::Skip => repo.rebase_skip(git).map(drop),
+            RebaseStep::Abort => repo.rebase_abort(git),
+        })
+    }
+
+    /// The history plan of repo `id` from commit `from` up to HEAD.
+    ///
+    /// # Errors
+    /// See [`Repo::history_plan`].
+    pub fn history_plan(&self, id: u32, from: &str) -> Result<HistoryPlan, Error> {
+        self.get(id)?.repo.history_plan(self.git()?, from)
+    }
+
+    /// Predicts `steps` replayed onto `onto` and lays out the graph with the
+    /// result drawn in, for [`Session::preview_rows`]. Touches nothing.
+    ///
+    /// # Errors
+    /// See [`Repo::predict_plan`].
+    pub fn plan_preview(
+        &self,
+        id: u32,
+        onto: &str,
+        base: &str,
+        steps: &[Step],
+    ) -> Result<PlanPreview, Error> {
+        let open = self.get(id)?;
+        let git = self.git()?;
+        let prediction = open.repo.predict_plan(git, onto, base, steps)?;
+        let ghosts = open.repo.plan_ghosts(steps, &prediction)?;
+        let oid = |rev: &str| -> Result<gix::ObjectId, Error> {
+            let hex = git.run(
+                open.repo.root(),
+                &["rev-parse", "--verify", &format!("{rev}^{{commit}}")],
+                None,
+            )?;
+            gix::ObjectId::from_hex(hex.trim().as_bytes()).map_err(repo::read_err)
+        };
+        let replaced = steps
+            .iter()
+            .map(|s| oid(&s.id))
+            .collect::<Result<Vec<_>, _>>()?;
+        let graph = open
+            .graph
+            .preview(oid("HEAD")?, oid(onto)?, ghosts, &replaced)?;
+        let rows = graph.len();
+        self.previews
+            .lock()
+            .expect("preview lock poisoned")
+            .insert(id, Arc::new(graph));
+        Ok(PlanPreview { prediction, rows })
+    }
+
+    /// Rows of the last [`Session::plan_preview`] of repo `id`.
+    ///
+    /// # Errors
+    /// [`Error::Refused`] when there is no preview, or a read error.
+    pub fn preview_rows(&self, id: u32, start: usize, count: usize) -> Result<Vec<Row>, Error> {
+        let open = self.get(id)?;
+        let graph = self
+            .previews
+            .lock()
+            .expect("preview lock poisoned")
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| Error::Refused("no plan is being previewed".into()))?;
+        graph.rows(&open.repo, start, count)
+    }
+
+    /// Runs a history plan: `git rebase -i` onto `onto`. Stops on a conflict or
+    /// an Edit step. One op-log entry, so Ctrl+Z undoes the whole rebase.
+    ///
+    /// # Errors
+    /// See [`Repo::run_plan`].
+    pub fn run_plan(
+        &self,
+        id: u32,
+        onto: &str,
+        base: &str,
+        steps: &[Step],
+        update_refs: bool,
+    ) -> Result<Opened, Error> {
+        let open = self.get(id)?;
+        let git = self.git()?;
+        let branch = open.repo.ensure_can_edit()?;
+        let moved = open.repo.resolves_to(git, onto, base)?;
+        let paths = open.repo.rebase_paths(git, onto)?;
+        let action = Repo::plan_label(&branch, (!moved).then_some(onto), steps);
+        self.previews
+            .lock()
+            .expect("preview lock poisoned")
+            .remove(&id);
+        self.write_destructive(id, &action, &paths, |repo, git| {
+            repo.run_plan(git, onto, base, steps, update_refs).map(drop)
+        })
+    }
+
+    /// Rewords the HEAD commit; undoable.
+    ///
+    /// # Errors
+    /// See [`Repo::reword_head`].
+    pub fn reword_head(&self, id: u32, message: &str) -> Result<Opened, Error> {
+        let subject = message.lines().next().unwrap_or_default();
+        let action = format!("Reword \"{subject}\"");
+        self.write(id, &action, |repo, git| repo.reword_head(git, message))
+    }
+
+    /// Folds `commit` into its parent or drops it, at once; undoable.
+    ///
+    /// # Errors
+    /// See [`Repo::quick_steps`] and [`Repo::run_plan`].
+    pub fn quick_edit(&self, id: u32, commit: &str, action: Action) -> Result<Opened, Error> {
+        let open = self.get(id)?;
+        let git = self.git()?;
+        let (base, steps) = open.repo.quick_steps(git, commit, action)?;
+        let subject = open.repo.subject(git, commit)?;
+        let label = match action {
+            Action::Fixup => format!("Fixup \"{subject}\" into its parent"),
+            _ => format!("Drop \"{subject}\""),
+        };
+        let paths = open.repo.rebase_paths(git, &base)?;
+        self.write_destructive(id, &label, &paths, |repo, git| {
+            repo.run_plan(git, &base, &base, &steps, false).map(drop)
+        })
     }
 
     /// The op log of repo `id`, newest first.

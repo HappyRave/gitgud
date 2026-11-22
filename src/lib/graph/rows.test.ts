@@ -42,6 +42,23 @@ describe("RowStore", () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
+  it("reset refetches and drops what was in flight before it", async () => {
+    let release: (rows: Row[]) => void = () => {};
+    const fetch = vi.fn((start: number) =>
+      start === 0 && fetch.mock.calls.length === 1 ? new Promise<Row[]>((r) => (release = r)) : Promise.resolve([row(100)]),
+    );
+    const store = new RowStore(fetch);
+    const stale = store.ensure({ start: 0, end: 10 });
+
+    store.reset();
+    await store.ensure({ start: 0, end: 10 });
+    release([row(1)]);
+    await stale;
+
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(store.get(0)?.subject).toBe("commit 100");
+  });
+
   it("keeps the error message when a fetch fails", async () => {
     const store = new RowStore(async () => {
       throw "repository 3 is not open";

@@ -70,7 +70,61 @@ struct State {
     /// Snapshot tree of the work tree, for destructive actions only.
     #[serde(default)]
     worktree: Option<String>,
+    /// git's files for a merge in progress (`MERGE_HEAD`...), so undo can put a
+    /// merge back into, or out of, progress.
+    #[serde(default)]
+    merge: Vec<(String, String)>,
+    /// During a rebase HEAD is detached: the branch being rebased (full ref) and its tip.
+    #[serde(default)]
+    rebasing: Option<(String, Option<String>)>,
+    /// Every local branch (full ref) and its tip, sorted, so actions that move
+    /// other branches (`rebase --update-refs`) undo them too.
+    #[serde(default)]
+    branches: Vec<(String, String)>,
 }
+
+/// Branches an entry moved, created or deleted, other than the ones HEAD and
+/// the rebase state already cover.
+fn moved_branches(entry: &Entry) -> Vec<String> {
+    let covered = |name: &str| {
+        [&entry.before, &entry.after].iter().any(|s| {
+            matches!(&s.head, HeadState::Branch { name: n, .. } if n == name)
+                || s.rebasing.as_ref().is_some_and(|(n, _)| n == name)
+        })
+    };
+    let mut names: Vec<String> = entry
+        .before
+        .branches
+        .iter()
+        .chain(&entry.after.branches)
+        .map(|(n, _)| n.clone())
+        .filter(|n| !covered(n))
+        .collect();
+    names.sort();
+    names.dedup();
+    names.retain(|n| tip_in(&entry.before, n) != tip_in(&entry.after, n));
+    names
+}
+
+fn tip_in<'a>(state: &'a State, name: &str) -> Option<&'a str> {
+    state
+        .branches
+        .iter()
+        .find(|(n, _)| n == name)
+        .map(|(_, t)| t.as_str())
+}
+
+/// The files that make a merge "in progress", relative to the git dir.
+const MERGE_FILES: [&str; 5] = [
+    "MERGE_HEAD",
+    "MERGE_MSG",
+    "MERGE_MODE",
+    "gitgud/merge.json",
+    "gitgud/rebase.json",
+];
+
+/// git's folder for a rebase in progress; its files are kept like [`MERGE_FILES`].
+const REBASE_DIR: &str = "rebase-merge";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
@@ -205,12 +259,14 @@ impl OpLog {
             return Err(Error::Refused("nothing to undo".into()));
         };
         let entry = &entries[pos];
-        self.ensure_at(repo, git, &entry.after, &entry.paths, "undo", &entry.action)?;
+        let moved = moved_branches(entry);
+        self.ensure_at(repo, git, entry, &entry.after, &moved, "undo")?;
         self.restore(
             repo,
             git,
             &entry.before,
             &entry.paths,
+            &moved,
             &format!("gitgud: undo {}", entry.action),
         )?;
         entries[pos].undone = true;
@@ -229,19 +285,14 @@ impl OpLog {
             return Err(Error::Refused("nothing to redo".into()));
         };
         let entry = &entries[pos];
-        self.ensure_at(
-            repo,
-            git,
-            &entry.before,
-            &entry.paths,
-            "redo",
-            &entry.action,
-        )?;
+        let moved = moved_branches(entry);
+        self.ensure_at(repo, git, entry, &entry.before, &moved, "redo")?;
         self.restore(
             repo,
             git,
             &entry.after,
             &entry.paths,
+            &moved,
             &format!("gitgud: redo {}", entry.action),
         )?;
         entries[pos].undone = false;
@@ -269,25 +320,100 @@ impl OpLog {
         let worktree = snapshot
             .map(|git| Snapshots::for_repo(repo).take(repo, git))
             .transpose()?;
+        let merge = self.merge_files()?;
+        let rebasing = match merge.iter().find(|(n, _)| n == "rebase-merge/head-name") {
+            Some((_, name)) => {
+                let name = name.trim().to_owned();
+                let tip = branch_tip(repo, &name)?;
+                Some((name, tip))
+            }
+            None => None,
+        };
         Ok(State {
             head: head_state(repo)?,
             index: copy,
             worktree,
+            merge,
+            rebasing,
+            branches: branch_tips(repo)?,
         })
     }
 
+    fn merge_files(&self) -> Result<Vec<(String, String)>, Error> {
+        let mut found = Vec::new();
+        for name in MERGE_FILES {
+            match fs::read_to_string(self.git_dir.join(name)) {
+                Ok(text) => found.push((name.to_owned(), text)),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(read_err(e)),
+            }
+        }
+        let dir = match fs::read_dir(self.git_dir.join(REBASE_DIR)) {
+            Ok(dir) => dir,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(found),
+            Err(e) => return Err(read_err(e)),
+        };
+        let mut files = Vec::new();
+        for entry in dir {
+            let entry = entry.map_err(read_err)?;
+            if entry.file_type().map_err(read_err)?.is_file() {
+                let text = fs::read_to_string(entry.path()).map_err(read_err)?;
+                files.push((
+                    format!("{REBASE_DIR}/{}", entry.file_name().to_string_lossy()),
+                    text,
+                ));
+            }
+        }
+        files.sort();
+        found.extend(files);
+        Ok(found)
+    }
+
+    fn restore_merge_files(&self, to: &State) -> Result<(), Error> {
+        for name in MERGE_FILES {
+            let path = self.git_dir.join(name);
+            match to.merge.iter().find(|(n, _)| n == name) {
+                Some((_, text)) => fs::write(&path, text).map_err(read_err)?,
+                None => match fs::remove_file(&path) {
+                    Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(read_err(e)),
+                    _ => {}
+                },
+            }
+        }
+        let dir = self.git_dir.join(REBASE_DIR);
+        match fs::remove_dir_all(&dir) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(read_err(e)),
+            _ => {}
+        }
+        let prefix = format!("{REBASE_DIR}/");
+        let rebase: Vec<_> = to
+            .merge
+            .iter()
+            .filter_map(|(n, t)| n.strip_prefix(&prefix).map(|f| (f, t)))
+            .collect();
+        if !rebase.is_empty() {
+            fs::create_dir_all(&dir).map_err(read_err)?;
+            for (file, text) in rebase {
+                fs::write(dir.join(file), text).map_err(read_err)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Refuses when HEAD, the staged content, or (for destructive actions) the
-    /// touched files differ from `expected`: something happened outside gitgud
-    /// that the op log didn't see, and undoing over it would lose it.
+    /// touched files differ from `expected`, one side of `entry`: something
+    /// happened outside gitgud that the op log didn't see, and undoing over it
+    /// would lose it.
     fn ensure_at(
         &self,
         repo: &Repo,
         git: &GitCli,
+        entry: &Entry,
         expected: &State,
-        paths: &[String],
+        moved: &[String],
         verb: &str,
-        action: &str,
     ) -> Result<(), Error> {
+        let (paths, action) = (&entry.paths, &entry.action);
         let refused = || {
             Error::Refused(format!(
                 "can't {verb} \"{action}\": the repository changed outside gitgud since"
@@ -299,7 +425,26 @@ impl OpLog {
                 Some(name) => index_entries(&self.dir.join(name))?,
                 None => Vec::new(),
             };
-        if here != expected.head || !same_index {
+        let files = self.merge_files()?;
+        let marker = |files: &[(String, String)]| -> Vec<(String, String)> {
+            files
+                .iter()
+                .filter(|(n, _)| {
+                    n == "MERGE_HEAD" || n == "rebase-merge/msgnum" || n == "rebase-merge/orig-head"
+                })
+                .map(|(n, t)| (n.clone(), t.trim().to_owned()))
+                .collect()
+        };
+        let same_merge = marker(&files) == marker(&expected.merge);
+        let same_rebasing = match &expected.rebasing {
+            Some((name, tip)) => branch_tip(repo, name)? == *tip,
+            None => true,
+        };
+        let mut same_branches = true;
+        for name in moved {
+            same_branches &= branch_tip(repo, name)?.as_deref() == tip_in(expected, name);
+        }
+        if here != expected.head || !same_index || !same_merge || !same_rebasing || !same_branches {
             return Err(refused());
         }
         if let (Some(tree), false) = (&expected.worktree, paths.is_empty()) {
@@ -319,13 +464,25 @@ impl OpLog {
         git: &GitCli,
         to: &State,
         paths: &[String],
+        moved: &[String],
         message: &str,
     ) -> Result<(), Error> {
         self.restore_refs_and_index(repo, git, to, message)?;
+        for name in moved {
+            match (tip_in(to, name), branch_tip(repo, name)?) {
+                (Some(t), now) if now.as_deref() != Some(t) => {
+                    git.run(repo.root(), &["update-ref", "-m", message, name, t], None)?;
+                }
+                (None, Some(now)) => {
+                    git.run(repo.root(), &["update-ref", "-d", name, &now], None)?;
+                }
+                _ => {}
+            }
+        }
         if let (Some(tree), false) = (&to.worktree, paths.is_empty()) {
             restore_files(repo, git, tree, paths)?;
         }
-        Ok(())
+        self.restore_merge_files(to)
     }
 
     fn restore_refs_and_index(
@@ -368,6 +525,11 @@ impl OpLog {
                     )?;
                 }
             }
+        }
+        if let Some((name, Some(tip))) = &to.rebasing
+            && branch_tip(repo, name)?.as_ref() != Some(tip)
+        {
+            git.run(root, &["update-ref", "-m", message, name, tip], None)?;
         }
         self.restore_index(to)
     }
@@ -530,6 +692,20 @@ fn branch_tip(repo: &Repo, name: &str) -> Result<Option<String>, Error> {
         .and_then(|r| r.target().try_id().map(|id| id.to_hex().to_string())))
 }
 
+fn branch_tips(repo: &Repo) -> Result<Vec<(String, String)>, Error> {
+    let gix = repo.gix();
+    let platform = gix.references().map_err(read_err)?;
+    let mut tips = Vec::new();
+    for r in platform.local_branches().map_err(read_err)? {
+        let r = r.map_err(|e| Error::Read(e.to_string()))?;
+        if let Some(id) = r.target().try_id() {
+            tips.push((r.name().as_bstr().to_string(), id.to_hex().to_string()));
+        }
+    }
+    tips.sort();
+    Ok(tips)
+}
+
 /// What an index stages, ignoring the stat data `git status` rewrites.
 fn index_entries(path: &Path) -> Result<Vec<(String, String, u32, u32)>, Error> {
     if !path.exists() {
@@ -568,6 +744,9 @@ mod tests {
             head: HeadState::Detached { id: "0".repeat(40) },
             index,
             worktree: None,
+            merge: Vec::new(),
+            rebasing: None,
+            branches: Vec::new(),
         };
         Entry {
             id,

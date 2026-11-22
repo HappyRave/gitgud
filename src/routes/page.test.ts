@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, within } from "@testing-library/svelte";
 import { emit } from "@tauri-apps/api/event";
 import { describe, expect, it, vi } from "vitest";
-import type { Commands, Row, Status } from "$lib/api";
+import type { Commands, MergeState, RebaseState, Row, Status } from "$lib/api";
 import { mockCommands } from "$lib/test/ipc";
 import Page from "./+page.svelte";
 
@@ -34,11 +34,16 @@ function app(extra: Handlers = {}) {
     launch_path: () => null,
     open_repo: ({ path }: Commands["open_repo"]["args"]) => ({ id: next++, root: path, rows: 1, graphVersion: 0 }),
     repo_status: () => STATUS,
+    merge_state: () => null,
+    rebase_state: () => null,
+    op_log: () => [],
     graph_rows: () => [ROW],
     close_repo: () => null,
+    "plugin:window|set_title": () => null,
     branches: () => ({
       local: [{ name: "main", current: true, upstream: null, ahead: 0, behind: 0 }],
       remotes: [],
+      fetched: null,
     }),
     ...extra,
   };
@@ -248,6 +253,7 @@ describe("start page: sidebar", () => {
           { name: "feature/login", current: false, upstream: null, ahead: 0, behind: 0 },
         ],
         remotes: [{ name: "origin", branches: ["origin/main"] }],
+        fetched: null,
       }),
       checkout: () => ({ id: 1, root: "C:/work/repo", rows: 1, graphVersion: 1 }),
     });
@@ -260,6 +266,43 @@ describe("start page: sidebar", () => {
 
     await vi.waitFor(() => expect(calls.find((c) => c.cmd === "checkout")?.args).toEqual({ id: 1, branch: "feature/login" }));
     await vi.waitFor(() => expect(calls.filter((c) => c.cmd === "branches")).toHaveLength(2));
+  });
+
+  it("the toolbar shows the repo, the branch with ahead / behind, or a detached HEAD", async () => {
+    app({
+      launch_path: () => "C:/work/repo",
+      branches: () => ({
+        local: [{ name: "main", current: true, upstream: "origin/main", ahead: 2, behind: 1 }],
+        remotes: [],
+        fetched: Math.floor(Date.now() / 1000) - 300,
+      }),
+    });
+    const view = render(Page);
+    const toolbar = view.container.querySelector("header.tb") as HTMLElement;
+
+    await vi.waitFor(() => expect(toolbar).toHaveTextContent("main ↑2 ↓1"));
+    expect(within(toolbar).getByRole("button", { name: "Open repository…" })).toHaveTextContent("repo");
+    expect(view.container.querySelector("footer.strip")).toHaveTextContent("● ↑2 ↓1 against origin/main · fetched 5 min ago");
+  });
+
+  it("names the open repo in the window title", async () => {
+    const calls = app({ launch_path: () => "C:/work/repo" });
+    render(Page);
+    await screen.findByText("first commit");
+
+    await vi.waitFor(() =>
+      expect(calls.filter((c) => c.cmd === "plugin:window|set_title").at(-1)?.args).toEqual({
+        label: "main",
+        value: "repo · C:/work/repo — gitgud",
+      }),
+    );
+  });
+
+  it("calls out a detached HEAD in the toolbar", async () => {
+    app({ launch_path: () => "C:/work/repo", repo_status: () => ({ ...STATUS, head: { kind: "detached", id: "abcdef1234" } }) });
+    render(Page);
+
+    expect(await screen.findByText("⚠ Detached HEAD at abcdef1")).toBeInTheDocument();
   });
 
   it("its Op log entry opens the panel", async () => {
@@ -292,6 +335,90 @@ describe("start page: op log panel", () => {
     expect(screen.getByRole("form", { name: "Commit" })).toBeInTheDocument();
   });
 
+  it("Ctrl+F opens find in the history; a match opens that commit; Esc closes it", async () => {
+    const calls = app({
+      launch_path: () => "C:/work/repo",
+      graph_find: () => [0],
+      commit_detail: () => ({
+        id: ROW.id,
+        shortId: ROW.shortId,
+        subject: ROW.subject,
+        body: "",
+        author: { name: "Ada", email: "a@x", time: 0 },
+        committer: { name: "Ada", email: "a@x", time: 0 },
+        parents: [],
+        files: [],
+      }),
+    });
+    render(Page);
+    await screen.findByText("first commit");
+
+    await fireEvent.keyDown(window, { key: "f", ctrlKey: true });
+    const field = screen.getByRole("textbox", { name: "Find commits" });
+    expect(field).toHaveFocus();
+    await fireEvent.input(field, { target: { value: "first" } });
+
+    expect(await screen.findByRole("region", { name: "Commit" })).toBeInTheDocument();
+    expect(calls.find((c) => c.cmd === "graph_find")?.args).toEqual({ id: 1, query: "first" });
+    await fireEvent.keyDown(field, { key: "Escape" });
+    expect(screen.queryByRole("textbox", { name: "Find commits" })).not.toBeInTheDocument();
+    expect(screen.getByRole("listbox", { name: "Commits" })).toHaveFocus();
+  });
+
+  it("Ctrl+2 puts focus on the graph rows", async () => {
+    app({ launch_path: () => "C:/work/repo" });
+    render(Page);
+    await screen.findByText("first commit");
+
+    await fireEvent.keyDown(window, { key: "2", ctrlKey: true });
+
+    expect(screen.getByRole("listbox", { name: "Commits" })).toHaveFocus();
+  });
+
+  it("F6 and Shift+F6 move focus between sidebar, graph and inspector", async () => {
+    app({ launch_path: () => "C:/work/repo" });
+    render(Page);
+    await screen.findByText("first commit");
+    const graphRows = screen.getByRole("listbox", { name: "Commits" });
+
+    await fireEvent.keyDown(window, { key: "F6" });
+    expect(screen.getByRole("region", { name: "Branches" }).contains(document.activeElement)).toBe(true);
+    await fireEvent.keyDown(window, { key: "F6" });
+    expect(graphRows).toHaveFocus();
+    await fireEvent.keyDown(window, { key: "F6" });
+    expect(screen.getByRole("group", { name: "Working copy pane" })).toHaveFocus();
+    await fireEvent.keyDown(window, { key: "F6", shiftKey: true });
+    expect(graphRows).toHaveFocus();
+  });
+
+  it("Esc closes the commit detail; Ctrl+C on a commit row copies its hash", async () => {
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    app({
+      launch_path: () => "C:/work/repo",
+      commit_detail: () => ({
+        id: ROW.id,
+        shortId: ROW.shortId,
+        subject: ROW.subject,
+        body: "",
+        author: { name: "Ada", email: "a@x", time: 0 },
+        committer: { name: "Ada", email: "a@x", time: 0 },
+        parents: [],
+        files: [],
+      }),
+    });
+    render(Page);
+    await fireEvent.click(await screen.findByText("first commit"));
+    await screen.findByRole("region", { name: "Commit" });
+
+    await fireEvent.keyDown(screen.getByRole("listbox", { name: "Commits" }), { key: "c", ctrlKey: true });
+    expect(writeText).toHaveBeenCalledWith(ROW.id);
+    expect(await screen.findByRole("status")).toHaveTextContent("Copied aaaaaaa");
+
+    await fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(screen.queryByRole("region", { name: "Commit" })).not.toBeInTheDocument();
+  });
+
   it("Restore on an older entry restores to before it and says so", async () => {
     const calls = app({
       launch_path: () => "C:/work/repo",
@@ -318,11 +445,22 @@ describe("start page: op log panel", () => {
     await screen.findByText("first commit");
     await fireEvent.keyDown(window, { key: "3", ctrlKey: true });
 
-    await fireEvent.click(await screen.findByRole("button", { name: /Discard a\.txt/ }));
+    const panel = await screen.findByRole("region", { name: "Op log" });
+    await fireEvent.click(await within(panel).findByRole("button", { name: /Discard a\.txt/ }));
+    const before = calls.filter((c) => c.cmd === "op_log").length;
     await fireEvent.click(screen.getByRole("button", { name: "Restore these files" }));
 
     await vi.waitFor(() => expect(calls.find((c) => c.cmd === "restore_files")?.args).toEqual({ id: 1, entry: 7 }));
-    await vi.waitFor(() => expect(calls.filter((c) => c.cmd === "op_log")).toHaveLength(2));
+    // The panel and the toolbar's Undo label both reload.
+    await vi.waitFor(() => expect(calls.filter((c) => c.cmd === "op_log").length).toBe(before + 2));
+  });
+
+  it("the toolbar's Undo names the action it would undo", async () => {
+    app({ launch_path: () => "C:/work/repo", op_log: () => [{ ...ENTRY, undone: true }, OLDER] });
+    render(Page);
+
+    expect(await screen.findByRole("button", { name: /^Undo: Stage b\.txt/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Redo" })).toHaveAttribute("title", "Redo: Discard a.txt (Ctrl+Y)");
   });
 });
 
@@ -755,5 +893,497 @@ describe("start page: staging and committing", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("lint: trailing whitespace in a.txt");
     expect(screen.getByRole("textbox", { name: "Commit message" })).toHaveValue("wip");
+  });
+});
+
+describe("start page: merge", () => {
+  const OPENED = { id: 1, root: "C:/work/repo", rows: 1, graphVersion: 1 };
+  const BRANCHES = {
+    local: [
+      { name: "main", current: true, upstream: null, ahead: 0, behind: 0 },
+      { name: "other", current: false, upstream: null, ahead: 0, behind: 0 },
+    ],
+    remotes: [],
+    fetched: null,
+  };
+  const TEXT = {
+    finalNewline: true,
+    chunks: [
+      { kind: "same" as const, lines: ["1"] },
+      { kind: "conflict" as const, yours: ["yours"], base: ["2"], theirs: ["theirs"] },
+      { kind: "same" as const, lines: ["3"] },
+    ],
+  };
+
+  /** A repo where merging `other` stops on a.txt (code) and t.png (binary). */
+  function merging(extra: Handlers = {}) {
+    let state: MergeState | null = null;
+    const resolve = (path: string) => {
+      state = { ...state!, conflicts: state!.conflicts.map((c) => (c.path === path ? { ...c, resolved: true } : c)) };
+      return OPENED;
+    };
+    const calls = app({
+      launch_path: () => "C:/work/repo",
+      branches: () => BRANCHES,
+      merge_state: () => state,
+      predict_merge: () => ["a.txt", "t.png"],
+      merge: () => {
+        state = {
+          theirs: "other",
+          message: "Merge branch 'other'",
+          conflicts: [
+            { path: "a.txt", kind: "code", resolved: false },
+            { path: "t.png", kind: "binary", resolved: false },
+          ],
+        };
+        return OPENED;
+      },
+      conflict_text: () => TEXT,
+      conflict_sides: () => ({ yours: { size: 2048, lfs: true }, theirs: { size: 4096, lfs: true } }),
+      resolve_with: ({ path }) => resolve(path),
+      resolve_side: ({ path }) => resolve(path),
+      merge_commit: () => {
+        state = null;
+        return OPENED;
+      },
+      merge_abort: () => {
+        state = null;
+        return OPENED;
+      },
+      ...extra,
+    });
+    return calls;
+  }
+
+  async function startMerge() {
+    render(Page);
+    const branches = await screen.findByRole("region", { name: "Branches" });
+    await fireEvent.contextMenu(await within(branches).findByRole("button", { name: /other/ }), { clientX: 5, clientY: 5 });
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Merge other into main…" }));
+    const dialog = await screen.findByRole("dialog");
+    await within(dialog).findByText("a.txt");
+    await fireEvent.click(within(dialog).getByRole("button", { name: /Merge/ }));
+    return screen.findByRole("region", { name: "Merge in progress" });
+  }
+
+  it("predicts conflicts, merges, and shows the banner and conflict list instead of the graph", async () => {
+    const calls = merging();
+    const banner = await startMerge();
+
+    expect(calls.find((c) => c.cmd === "predict_merge")?.args).toEqual({ id: 1, branch: "other" });
+    expect(calls.find((c) => c.cmd === "merge")?.args).toEqual({ id: 1, branch: "other" });
+    expect(banner).toHaveTextContent("Merging other into main · 2 of 2 files left");
+    expect(within(banner).getByRole("button", { name: "Commit merge" })).toBeDisabled();
+    expect(screen.queryByText("first commit")).not.toBeInTheDocument();
+    const list = screen.getByRole("navigation", { name: "Conflicts" });
+    expect(within(list).getAllByRole("button").map((b) => b.textContent?.replace(/\s+/g, " ").trim())).toEqual([
+      "U a.txt text merge",
+      "U t.png pick a side",
+    ]);
+    expect(await screen.findByRole("region", { name: "Merge a.txt" })).toBeInTheDocument();
+  });
+
+  it("resolves a text hunk, then a binary side, then commits with the summary message", async () => {
+    const calls = merging();
+    const banner = await startMerge();
+    await screen.findByText("Conflict 1 of 1");
+
+    await fireEvent.keyDown(window, { key: "ArrowDown", altKey: true });
+    await fireEvent.keyDown(window, { key: "Enter", ctrlKey: true });
+
+    await vi.waitFor(() =>
+      expect(calls.find((c) => c.cmd === "resolve_with")?.args).toEqual({
+        id: 1,
+        path: "a.txt",
+        content: "1\nyours\ntheirs\n3\n",
+        how: "use both",
+      }),
+    );
+    const pick = await screen.findByRole("region", { name: "Pick a side for t.png" });
+    expect(await within(pick).findByText("4.0 KB")).toBeInTheDocument();
+    await fireEvent.keyDown(window, { key: "2" });
+
+    await vi.waitFor(() => expect(calls.find((c) => c.cmd === "resolve_side")?.args).toEqual({ id: 1, path: "t.png", side: "theirs" }));
+    const message = await screen.findByRole("textbox", { name: "Merge commit message" });
+    expect(message).toHaveValue("Merge branch 'other'\n\nConflicts resolved:\n- a.txt: use both\n- t.png: take theirs");
+    expect(banner).toHaveTextContent("all 2 files resolved");
+
+    await fireEvent.click(within(banner).getByRole("button", { name: "Commit merge" }));
+
+    await vi.waitFor(() =>
+      expect(calls.find((c) => c.cmd === "merge_commit")?.args).toEqual({
+        id: 1,
+        message: "Merge branch 'other'\n\nConflicts resolved:\n- a.txt: use both\n- t.png: take theirs",
+      }),
+    );
+    expect(await screen.findByRole("status")).toHaveTextContent("Merge committed");
+    expect(screen.queryByRole("region", { name: "Merge in progress" })).not.toBeInTheDocument();
+    expect(await screen.findByText("first commit")).toBeInTheDocument();
+  });
+
+  it("Abort ends the merge and says Ctrl+Z brings it back", async () => {
+    const calls = merging();
+    const banner = await startMerge();
+
+    await fireEvent.click(within(banner).getByRole("button", { name: "Abort, back to before" }));
+
+    await vi.waitFor(() => expect(calls.some((c) => c.cmd === "merge_abort")).toBe(true));
+    expect(await screen.findByRole("status")).toHaveTextContent("Merge aborted · Ctrl+Z brings it back");
+    expect(screen.queryByRole("region", { name: "Merge in progress" })).not.toBeInTheDocument();
+  });
+
+  it("a clean merge says so and stays on the graph", async () => {
+    merging({ predict_merge: () => [], merge: () => OPENED });
+    render(Page);
+    const branches = await screen.findByRole("region", { name: "Branches" });
+    await fireEvent.contextMenu(await within(branches).findByRole("button", { name: /other/ }), { clientX: 5, clientY: 5 });
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Merge other into main…" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByText(/No conflicts expected/)).toBeInTheDocument();
+    await fireEvent.click(within(dialog).getByRole("button", { name: /Merge/ }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent("Merged other into main");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("Esc in the dialog cancels without merging", async () => {
+    const calls = merging();
+    render(Page);
+    const branches = await screen.findByRole("region", { name: "Branches" });
+    await fireEvent.contextMenu(await within(branches).findByRole("button", { name: /other/ }), { clientX: 5, clientY: 5 });
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Merge other into main…" }));
+    await screen.findByRole("dialog");
+
+    await fireEvent.keyDown(window, { key: "Escape" });
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(calls.some((c) => c.cmd === "merge")).toBe(false);
+  });
+
+  it("a merge already in progress at open shows the conflict view; Ctrl+Z after a pick re-reads it", async () => {
+    let state: MergeState = {
+      theirs: null,
+      message: "Merge",
+      conflicts: [{ path: "a.txt", kind: "code", resolved: true }],
+    };
+    const calls = app({
+      launch_path: () => "C:/work/repo",
+      merge_state: () => state,
+      undo: () => {
+        state = { ...state, conflicts: [{ path: "a.txt", kind: "code", resolved: false }] };
+        return { opened: OPENED, action: "Resolve a.txt (use both)" };
+      },
+      conflict_text: () => TEXT,
+    });
+    render(Page);
+    const banner = await screen.findByRole("region", { name: "Merge in progress" });
+    expect(banner).toHaveTextContent("Merging another branch into main");
+    expect(await screen.findByRole("region", { name: "Merge summary" })).toBeInTheDocument();
+
+    await fireEvent.keyDown(window, { key: "z", ctrlKey: true });
+
+    expect(await screen.findByRole("region", { name: "Merge a.txt" })).toBeInTheDocument();
+    expect(banner).toHaveTextContent("1 of 1 file left");
+    expect(calls.filter((c) => c.cmd === "merge_state").length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe("start page: rebase", () => {
+  const OPENED = { id: 1, root: "C:/work/repo", rows: 1, graphVersion: 1 };
+  const TEXT = {
+    finalNewline: true,
+    chunks: [{ kind: "conflict" as const, yours: ["M"], base: ["2"], theirs: ["F"] }],
+  };
+
+  /** `feature` rebased onto `main` stops at step 1 of 2 on a.txt. */
+  function rebasing(extra: Handlers = {}) {
+    let state: RebaseState | null = null;
+    const calls = app({
+      launch_path: () => "C:/work/repo",
+      repo_status: () => ({ ...STATUS, head: { kind: "branch", name: "feature" } }),
+      branches: () => ({
+        local: [
+          { name: "feature", current: true, upstream: null, ahead: 0, behind: 0 },
+          { name: "main", current: false, upstream: null, ahead: 0, behind: 0 },
+        ],
+        remotes: [],
+        fetched: null,
+      }),
+      rebase_state: () => state,
+      predict_rebase: () => ({
+        commits: 2,
+        behind: 1,
+        conflict: { step: 1, shortId: "f1f1f1f", subject: "f1", paths: ["a.txt"] },
+      }),
+      rebase: () => {
+        state = {
+          branch: "feature",
+          onto: "main",
+          step: 1,
+          total: 2,
+          subject: "f1",
+          conflicts: [{ path: "a.txt", kind: "code", resolved: false }],
+          editing: false,
+        };
+        return OPENED;
+      },
+      conflict_text: () => TEXT,
+      resolve_with: () => {
+        state = { ...state!, conflicts: [{ path: "a.txt", kind: "code", resolved: true }] };
+        return OPENED;
+      },
+      rebase_step: () => {
+        state = null;
+        return OPENED;
+      },
+      ...extra,
+    });
+    return calls;
+  }
+
+  async function startRebase() {
+    render(Page);
+    const branches = await screen.findByRole("region", { name: "Branches" });
+    await fireEvent.contextMenu(await within(branches).findByRole("button", { name: /main/ }), { clientX: 5, clientY: 5 });
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Rebase feature onto main…" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByText(/Replays 2 commits of feature on top of 1 new commit from main/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Step 1 \(f1f1f1f "f1"\) will conflict/)).toBeInTheDocument();
+    await fireEvent.click(within(dialog).getByRole("button", { name: /Rebase/ }));
+    return screen.findByRole("region", { name: "Rebase in progress" });
+  }
+
+  it("predicts, stops on the conflict, resolves, and continues to the end", async () => {
+    const calls = rebasing();
+    const banner = await startRebase();
+
+    expect(banner).toHaveTextContent("Rebasing feature onto main · step 1 of 2 · 1 of 1 file left");
+    expect(within(banner).getByRole("button", { name: "Continue" })).toBeDisabled();
+    expect(await screen.findByText("Yours · main (rebased so far)")).toBeInTheDocument();
+    expect(screen.getByText('Theirs · "f1"')).toBeInTheDocument();
+
+    await fireEvent.keyDown(window, { key: "ArrowRight", altKey: true });
+    await fireEvent.keyDown(window, { key: "Enter", ctrlKey: true });
+    expect(await screen.findByRole("region", { name: "Step resolved" })).toHaveTextContent("Step 1 of 2 resolved");
+    expect(banner).toHaveTextContent("resolved");
+
+    await fireEvent.click(screen.getByRole("button", { name: "Continue rebase" }));
+
+    await vi.waitFor(() => expect(calls.find((c) => c.cmd === "rebase_step")?.args).toEqual({ id: 1, step: "continue" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Rebase finished");
+    expect(screen.queryByRole("region", { name: "Rebase in progress" })).not.toBeInTheDocument();
+  });
+
+  it("Abort goes through rebase_step and says Ctrl+Z brings it back", async () => {
+    const calls = rebasing();
+    const banner = await startRebase();
+
+    await fireEvent.click(within(banner).getByRole("button", { name: "Abort, back to before" }));
+
+    await vi.waitFor(() => expect(calls.find((c) => c.cmd === "rebase_step")?.args).toEqual({ id: 1, step: "abort" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Rebase aborted · Ctrl+Z brings it back");
+  });
+
+  it("a clean rebase says so", async () => {
+    rebasing({ predict_rebase: () => ({ commits: 2, behind: 1, conflict: null }), rebase: () => OPENED });
+    render(Page);
+    const branches = await screen.findByRole("region", { name: "Branches" });
+    await fireEvent.contextMenu(await within(branches).findByRole("button", { name: /main/ }), { clientX: 5, clientY: 5 });
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Rebase feature onto main…" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByText(/No conflicts expected/)).toBeInTheDocument();
+    await fireEvent.click(within(dialog).getByRole("button", { name: /Rebase/ }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent("Rebased feature onto main · Ctrl+Z undoes it");
+  });
+
+  it("a branch already on top has nothing to do", async () => {
+    rebasing({ predict_rebase: () => ({ commits: 2, behind: 0, conflict: null }) });
+    render(Page);
+    const branches = await screen.findByRole("region", { name: "Branches" });
+    await fireEvent.contextMenu(await within(branches).findByRole("button", { name: /main/ }), { clientX: 5, clientY: 5 });
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Rebase feature onto main…" }));
+    const dialog = await screen.findByRole("dialog");
+
+    expect(await within(dialog).findByText(/already contains everything on main/)).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: /Rebase/ })).toBeDisabled();
+  });
+});
+
+describe("start page: history edits", () => {
+  const OPENED = { id: 1, root: "C:/work/repo", rows: 3, graphVersion: 0 };
+  const TIP: Row = { ...ROW, id: "c".repeat(40), shortId: "ccccccc", subject: "Add c rgiht" };
+  const OLDER: Row = { ...ROW, id: "b".repeat(40), shortId: "bbbbbbb", subject: "Add b", labels: [] };
+  const BASE: Row = { ...ROW, id: "a".repeat(40), shortId: "aaaaaaa", subject: "base", labels: [] };
+  const PLAN = {
+    branch: "main",
+    base: BASE.id,
+    baseShort: "aaaaaaa",
+    baseSubject: "base",
+    commits: [
+      { id: TIP.id, shortId: "ccccccc", subject: TIP.subject, message: TIP.subject, author: "Ada", time: 0, action: "pick" as const },
+      { id: OLDER.id, shortId: "bbbbbbb", subject: "Add b", message: "Add b", author: "Ada", time: 0, action: "pick" as const },
+    ],
+    dependents: [],
+    pushed: null,
+  };
+
+  function history(extra: Handlers = {}) {
+    return app({
+      launch_path: () => "C:/work/repo",
+      open_repo: () => OPENED,
+      repo_status: () => ({ ...STATUS, entries: [] }),
+      graph_rows: () => [TIP, OLDER, BASE],
+      history_plan: () => PLAN,
+      plan_preview: ({ steps }) => ({
+        prediction: {
+          steps: steps.map((s, i) => ({ id: s.id, step: steps.length - i, outcome: { kind: "clean" as const } })),
+          before: 2,
+          after: 2,
+          changed: 0,
+        },
+        rows: 5,
+      }),
+      preview_rows: ({ start, count }) =>
+        [
+          { ...TIP, id: "", shortId: "", labels: [], subject: "Add c right", after: "reworded" },
+          { ...OLDER, id: "", shortId: "", subject: "Add b", after: "" },
+          { ...TIP, faded: true },
+          { ...OLDER, faded: true },
+          BASE,
+        ].slice(start, start + count),
+      commit_detail: ({ commit }) => ({
+        id: commit,
+        shortId: commit.slice(0, 7),
+        subject: commit === TIP.id ? TIP.subject : "Add b",
+        body: commit === TIP.id ? "Why: typo" : "",
+        author: { name: "Ada", email: "a", time: 0 },
+        committer: { name: "Ada", email: "a", time: 0 },
+        parents: [],
+        files: [],
+      }),
+      run_plan: () => OPENED,
+      reword_head: () => OPENED,
+      quick_edit: () => OPENED,
+      ...extra,
+    });
+  }
+
+  const commits = () => screen.getByRole("listbox", { name: "Commits" });
+
+  async function selectRow(subject: string) {
+    await fireEvent.click(await within(await screen.findByRole("listbox", { name: "Commits" })).findByText(subject));
+  }
+
+  it("Shift+E opens the plan: banner, preview in the graph, Start runs it, then the Done panel", async () => {
+    const calls = history();
+    render(Page);
+    await selectRow("Add b");
+    await fireEvent.keyDown(commits(), { key: "E", shiftKey: true });
+
+    expect(await screen.findByRole("region", { name: "Planning" })).toHaveTextContent("Planning a history edit of main · nothing changes until Start");
+    expect(calls.find((c) => c.cmd === "history_plan")?.args).toEqual({ id: 1, from: OLDER.id });
+    const plan = screen.getByRole("listbox", { name: "Plan" });
+    await fireEvent.keyDown(plan, { key: "r" });
+    await fireEvent.input(screen.getByRole("textbox", { name: "Message of ccccccc" }), { target: { value: "Add c right" } });
+
+    expect(await within(commits()).findByText("reworded")).toBeInTheDocument();
+    expect(within(commits()).getByText("Add c right").closest("li")).toHaveClass("ghost");
+
+    await fireEvent.click(screen.getByRole("button", { name: /Start rebase/ }));
+
+    await vi.waitFor(() =>
+      expect(calls.find((c) => c.cmd === "run_plan")?.args).toEqual({
+        id: 1,
+        onto: BASE.id,
+        base: BASE.id,
+        steps: [
+          { id: TIP.id, action: "reword", message: "Add c right" },
+          { id: OLDER.id, action: "pick", message: null },
+        ],
+        updateRefs: false,
+      }),
+    );
+    const done = await screen.findByRole("region", { name: "History edit done" });
+    expect(done).toHaveTextContent("Rebased main · 2 commits → 2");
+    expect(done).toHaveTextContent("✓ Final files identical to before");
+    expect(done).toHaveTextContent('Reworded ccccccc → "Add c right"');
+    expect(screen.queryByRole("region", { name: "Planning" })).not.toBeInTheDocument();
+  });
+
+  it("while planning, Ctrl+Z does nothing and Esc cancels back to the real graph", async () => {
+    const calls = history({ undo: () => ({ opened: OPENED, action: "x" }) });
+    render(Page);
+    await selectRow("Add b");
+    await fireEvent.keyDown(commits(), { key: "E", shiftKey: true });
+    const plan = await screen.findByRole("listbox", { name: "Plan" });
+
+    await fireEvent.keyDown(window, { key: "z", ctrlKey: true });
+    await fireEvent.keyDown(plan, { key: "Escape" });
+
+    expect(screen.queryByRole("region", { name: "Planning" })).not.toBeInTheDocument();
+    expect(calls.some((c) => c.cmd === "undo")).toBe(false);
+    expect(await within(commits()).findByText("Add c rgiht")).toBeInTheDocument();
+  });
+
+  it("R on the tip renames inline and keeps the body", async () => {
+    const calls = history();
+    render(Page);
+    await selectRow("Add c rgiht");
+    await fireEvent.keyDown(commits(), { key: "r" });
+
+    const input = await screen.findByRole("textbox", { name: "New commit subject" });
+    await fireEvent.input(input, { target: { value: "Add c right" } });
+    await fireEvent.keyDown(input, { key: "Enter" });
+
+    await vi.waitFor(() => expect(calls.find((c) => c.cmd === "reword_head")?.args).toEqual({ id: 1, message: "Add c right\n\nWhy: typo" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Reworded · Ctrl+Z undoes it");
+  });
+
+  it("R on an older commit opens the plan with that row set to Reword", async () => {
+    history();
+    render(Page);
+    await selectRow("Add b");
+    await fireEvent.keyDown(commits(), { key: "r" });
+
+    expect(await screen.findByRole("textbox", { name: "Message of bbbbbbb" })).toHaveValue("Add b");
+  });
+
+  it("F and D apply at once and say Ctrl+Z undoes them; refusals show git's reason", async () => {
+    const calls = history();
+    render(Page);
+    await selectRow("Add b");
+    await fireEvent.keyDown(commits(), { key: "d" });
+
+    await vi.waitFor(() => expect(calls.find((c) => c.cmd === "quick_edit")?.args).toEqual({ id: 1, commit: OLDER.id, action: "drop" }));
+    expect(await screen.findByRole("status")).toHaveTextContent('Dropped "Add b" · Ctrl+Z undoes it');
+  });
+
+  it("the row menu offers the same edits", async () => {
+    const calls = history({
+      quick_edit: () => {
+        throw "history with merge commits can't be edited yet";
+      },
+    });
+    render(Page);
+    await fireEvent.contextMenu(await screen.findByText("Add b"), { clientX: 5, clientY: 5 });
+    await fireEvent.click(screen.getByRole("menuitem", { name: /Fixup into parent/ }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("history with merge commits can't be edited yet");
+    expect(calls.find((c) => c.cmd === "quick_edit")?.args).toEqual({ id: 1, commit: OLDER.id, action: "fixup" });
+  });
+
+  it("an Edit stop keeps the graph and working copy, with Continue in the banner", async () => {
+    const calls = history({
+      rebase_state: () => ({ branch: "main", onto: "aaaaaaa", step: 1, total: 2, subject: "Add b", conflicts: [], editing: true }),
+      rebase_step: () => OPENED,
+    });
+    render(Page);
+
+    const banner = await screen.findByRole("region", { name: "Rebase in progress" });
+    expect(banner).toHaveTextContent("Stopped at step 1 of 2 to edit Add b");
+    expect(screen.getByRole("listbox", { name: "Commits" })).toBeInTheDocument();
+    await fireEvent.click(within(banner).getByRole("button", { name: "Continue" }));
+    await vi.waitFor(() => expect(calls.find((c) => c.cmd === "rebase_step")?.args).toEqual({ id: 1, step: "continue" }));
   });
 });

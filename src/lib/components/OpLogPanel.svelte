@@ -47,7 +47,7 @@
 </script>
 
 <section class="oplog" aria-label="Op log">
-  <h2>Op log <span class="ct">· every action, discards included</span><span class="key">Ctrl+3</span></h2>
+  <h2 class="ph">Op log <span class="ct">· every action, discards included</span><span class="r">Ctrl+3</span></h2>
 
   {#if error}
     <p role="alert">{error}</p>
@@ -92,39 +92,35 @@
 </section>
 
 <style>
-  h2 {
-    font-size: 0.85rem;
-    margin: 0 0 0.5rem;
+  .oplog {
     display: flex;
-    gap: 0.3rem;
+    flex-direction: column;
+    min-height: 0;
   }
-  .ct {
-    color: #888;
-    font-weight: normal;
-  }
-  .key {
-    margin-left: auto;
-    color: #aaa;
-    font-weight: normal;
-    font-size: 0.75rem;
+  h2 {
+    margin: 0;
   }
   ul {
     list-style: none;
     margin: 0;
-    padding: 0;
+    padding: 2px 0;
   }
   li {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
     height: 24px;
+    padding-right: 6px;
+  }
+  li:hover {
+    background: var(--hover);
   }
   li.selected {
-    background: #e3ecfd;
+    background: var(--sel);
   }
   li.undone .t,
   li.undone .tm {
-    color: #aaa;
+    color: var(--muted);
     text-decoration: line-through;
   }
   .row {
@@ -132,49 +128,48 @@
     display: grid;
     grid-template-columns: 40px minmax(0, 1fr);
     gap: 6px;
-    padding: 0 6px;
-    cursor: pointer;
+    padding: 0 10px;
+    cursor: default;
     white-space: nowrap;
-    font-size: 0.85rem;
   }
   .row:focus-visible {
-    outline: 2px solid #4c8bf5;
+    outline: 2px solid var(--l0);
+    outline-offset: -2px;
   }
   .tm {
-    color: #888;
-    font-family: ui-monospace, monospace;
-    font-size: 0.75rem;
+    color: var(--muted);
+    font: 10.5px/24px var(--mono);
   }
   .t {
     overflow: hidden;
     text-overflow: ellipsis;
+    line-height: 24px;
   }
   .lk {
     all: unset;
-    color: #3b6fd8;
-    font-size: 0.75rem;
+    color: var(--l0);
+    font-size: 11px;
     padding: 0 6px;
-    cursor: pointer;
-  }
-  .lk:disabled {
-    color: #aaa;
     cursor: default;
   }
+  .lk:hover:not(:disabled) {
+    text-decoration: underline;
+  }
+  .lk:disabled {
+    color: var(--muted);
+  }
   .state {
-    color: #aaa;
-    font-size: 0.75rem;
+    color: var(--muted);
+    font-size: 11px;
     padding: 0 6px;
   }
   .card {
-    margin-top: 0.75rem;
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    padding: 0.5rem;
-    font-size: 0.85rem;
+    display: grid;
+    gap: 6px;
+    padding: 8px 10px;
   }
-  .ab {
-    color: #666;
-    margin: 0.3rem 0;
+  .card .ab {
+    margin: 0;
   }
   .buttons {
     display: flex;
@@ -182,7 +177,8 @@
     flex-wrap: wrap;
   }
   .note {
-    color: #888;
-    font-size: 0.85rem;
+    color: var(--muted);
+    padding: 10px;
+    margin: 0;
   }
 </style>

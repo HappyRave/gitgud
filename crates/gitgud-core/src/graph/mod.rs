@@ -1,8 +1,8 @@
 mod layout;
 mod topology;
 
-pub use layout::{Layout, MAX_LANES, Part, RowLayout, Segment};
-pub use topology::{RefLabel, Topology};
+pub use layout::{Layout, MAX_LANES, Part, RowLayout, Segment, Stroke};
+pub use topology::{Ghost, RefLabel, Topology};
 
 use serde::Serialize;
 
@@ -27,6 +27,10 @@ pub struct Row {
     pub time: i64,
     pub labels: Vec<RefLabel>,
     pub wip: bool,
+    /// On a plan preview's planned commit: what the plan does to it.
+    pub after: Option<String>,
+    /// On a plan preview: a commit the plan replaces.
+    pub faded: bool,
     pub layout: RowLayout,
 }
 
@@ -37,6 +41,33 @@ impl Graph {
     /// [`Error::Read`] when the history can't be read.
     pub fn build(repo: &Repo, wip: bool) -> Result<Self, Error> {
         let topology = Topology::walk(repo, wip)?;
+        let layout = Layout::build(&topology);
+        Ok(Self { topology, layout })
+    }
+
+    /// This graph with a history plan drawn in: `ghosts` (newest first) chained
+    /// on top of commit `base`, above whichever of `base` and `tip` comes first,
+    /// and the commits in `replaced` faded.
+    ///
+    /// # Errors
+    /// [`Error::Refused`] when `tip` or `base` isn't in the graph.
+    pub fn preview(
+        &self,
+        tip: gix::ObjectId,
+        base: gix::ObjectId,
+        ghosts: Vec<Ghost>,
+        replaced: &[gix::ObjectId],
+    ) -> Result<Self, Error> {
+        let missing = |id: gix::ObjectId| Error::Refused(format!("{id} isn't in the graph"));
+        let tip_row = self.topology.row_of(tip).ok_or_else(|| missing(tip))?;
+        let base_row = self.topology.row_of(base).ok_or_else(|| missing(base))?;
+        let faded: Vec<usize> = replaced
+            .iter()
+            .filter_map(|id| self.topology.row_of(*id))
+            .collect();
+        let topology =
+            self.topology
+                .with_ghosts(tip_row.min(base_row), ghosts, Some(base_row), &faded);
         let layout = Layout::build(&topology);
         Ok(Self { topology, layout })
     }
@@ -56,6 +87,43 @@ impl Graph {
 
     pub fn is_empty(&self) -> bool {
         self.topology.is_empty()
+    }
+
+    /// Rows whose subject, author or ref labels contain `query` (case-insensitive),
+    /// or whose id starts with it, in graph order. The working-copy row never matches.
+    ///
+    /// # Errors
+    /// [`Error::Read`] when a commit can't be read.
+    pub fn find(&self, repo: &Repo, query: &str) -> Result<Vec<usize>, Error> {
+        let needle = query.trim().to_lowercase();
+        if needle.is_empty() {
+            return Ok(Vec::new());
+        }
+        let repo = repo.gix();
+        let mut hits = Vec::new();
+        for row in 0..self.len() {
+            if self.topology.is_wip(row) || self.topology.ghost(row).is_some() {
+                continue;
+            }
+            let id = self.topology.id(row);
+            let label_hit = self.topology.labels(row).iter().any(|l| match l {
+                RefLabel::Branch { name, .. }
+                | RefLabel::Remote { name }
+                | RefLabel::Tag { name } => name.to_lowercase().contains(&needle),
+                RefLabel::Head => false,
+            });
+            if label_hit || id.to_string().starts_with(&needle) {
+                hits.push(row);
+                continue;
+            }
+            let commit = repo.find_commit(id).map_err(read_err)?;
+            let subject = commit.message().map_err(read_err)?.summary().to_string();
+            let author = commit.author().map_err(read_err)?.name.to_string();
+            if subject.to_lowercase().contains(&needle) || author.to_lowercase().contains(&needle) {
+                hits.push(row);
+            }
+        }
+        Ok(hits)
     }
 
     /// Rows `start..start + count` with their commit metadata, clamped to the graph.
@@ -78,6 +146,22 @@ impl Graph {
                         time: 0,
                         labels: Vec::new(),
                         wip: true,
+                        after: None,
+                        faded: false,
+                        layout,
+                    });
+                }
+                if let Some(ghost) = self.topology.ghost(row) {
+                    return Ok(Row {
+                        id: String::new(),
+                        short_id: String::new(),
+                        subject: ghost.subject.clone(),
+                        author: String::new(),
+                        time: 0,
+                        labels: Vec::new(),
+                        wip: false,
+                        after: Some(ghost.tag.clone()),
+                        faded: false,
                         layout,
                     });
                 }
@@ -93,6 +177,8 @@ impl Graph {
                     time: author.time().map_err(read_err)?.seconds,
                     labels: self.topology.labels(row).to_vec(),
                     wip: false,
+                    after: None,
+                    faded: self.topology.stroke(row) == Stroke::Faded,
                     layout,
                 })
             })

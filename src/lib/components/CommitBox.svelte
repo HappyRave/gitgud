@@ -1,18 +1,32 @@
 <script lang="ts">
   let {
     staged,
+    branch = "",
     busy = false,
     oncommit,
   }: {
     /** Number of staged entries. */
     staged: number;
+    /** Where the commit lands, for the hint line. */
+    branch?: string;
     busy?: boolean;
     /** Resolves when the commit landed; rejects to keep the message. */
     oncommit: (message: string) => Promise<void>;
   } = $props();
 
   let message = $state("");
+  let box = $state<HTMLTextAreaElement | null>(null);
+
+  /** Puts the cursor in the message (C in the working copy). */
+  export function focus() {
+    box?.focus();
+  }
   const ready = $derived(staged > 0 && message.trim() !== "" && !busy);
+  const hint = $derived(
+    staged === 0
+      ? "Stage files to commit them"
+      : `${staged} file${staged === 1 ? "" : "s"} staged${branch ? ` · on ${branch}` : ""}`,
+  );
 
   async function submit() {
     if (!ready) {
@@ -30,6 +44,8 @@
     if (event.key === "Enter" && event.ctrlKey) {
       event.preventDefault();
       submit();
+    } else if (event.key === "Escape") {
+      box?.blur();
     }
   }
 </script>
@@ -41,26 +57,35 @@
     submit();
   }}
 >
-  <textarea bind:value={message} onkeydown={onKey} placeholder="Commit message" aria-label="Commit message" rows="3"
+  <textarea bind:this={box} bind:value={message} onkeydown={onKey} placeholder="Summary · what changed and why" aria-label="Commit message" rows="3"
   ></textarea>
-  <button type="submit" disabled={!ready}>
-    {staged > 0 ? `Commit ${staged} file${staged === 1 ? "" : "s"}` : "Commit"}
-  </button>
+  <div class="bt">
+    <span class="ab">{hint}</span>
+    <span class="sp"></span>
+    <button type="submit" class="pri" disabled={!ready} title="Ctrl+Enter">
+      {staged > 0 ? `Commit ${staged} file${staged === 1 ? "" : "s"}` : "Commit"}
+    </button>
+  </div>
 </form>
 
 <style>
   form {
-    display: flex;
-    flex-direction: column;
-    gap: 0.4rem;
-    margin-top: 1rem;
+    display: grid;
+    gap: 6px;
+    padding: 8px 10px;
+    border-top: 1px solid var(--line);
+    background: var(--panel);
   }
   textarea {
-    font: inherit;
-    font-size: 0.85rem;
     resize: vertical;
+    min-height: 52px;
   }
-  button {
-    align-self: flex-end;
+  .bt {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .sp {
+    flex: 1;
   }
 </style>

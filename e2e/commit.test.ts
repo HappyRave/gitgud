@@ -64,7 +64,7 @@ test("a pre-commit hook rejection shows git's message and keeps the commit messa
 
   const alert = page.getByRole("alert");
   await alert.waitFor({ timeout: 10_000 });
-  assert.equal(await alert.innerText(), "lint: no trailing spaces");
+  assert.equal(await alert.locator(".msg").innerText(), "lint: no trailing spaces");
   assert.equal(await box.inputValue(), "will be rejected");
   assert.equal(repo.git("rev-list", "--count", "HEAD").trim(), "1");
 });

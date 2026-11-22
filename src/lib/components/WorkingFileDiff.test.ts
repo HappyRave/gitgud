@@ -51,7 +51,7 @@ describe("WorkingFileDiff", () => {
     const { onhunk } = setup({ side: "staged" });
     await screen.findByText("version 0");
 
-    expect(screen.getAllByRole("button").map((b) => b.textContent)).toEqual(["Unstage hunk"]);
+    expect(screen.getAllByRole("button", { name: /hunk/ }).map((b) => b.textContent)).toEqual(["Unstage hunkU"]);
     await fireEvent.click(screen.getByRole("button", { name: /^Unstage hunk/ }));
     expect(onhunk).toHaveBeenCalledWith("unstage", expect.objectContaining({ oldStart: 1 }));
   });
@@ -60,7 +60,20 @@ describe("WorkingFileDiff", () => {
     setup({ perHunk: false });
     await screen.findByText("version 0");
 
-    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /hunk/ })).not.toBeInTheDocument();
+  });
+
+  it("the layout button switches to side by side and back", async () => {
+    setup();
+    await screen.findByText("version 0");
+    expect(document.querySelector("tr.pair")).toBeNull();
+
+    await fireEvent.click(screen.getByRole("button", { name: "unified · Ctrl+D" }));
+    expect(document.querySelector("tr.pair")).not.toBeNull();
+    expect(localStorage.getItem("gitgud.diff.split")).toBe("1");
+
+    await fireEvent.click(screen.getByRole("button", { name: "split · Ctrl+D" }));
+    expect(document.querySelector("tr.pair")).toBeNull();
   });
 
   it("reloads when the status revision moves", async () => {
@@ -81,5 +94,17 @@ describe("WorkingFileDiff", () => {
     render(WorkingFileDiff, { repoId: 3, path: "f.txt", side: "unstaged", revision: 0, perHunk: true, onhunk: () => {} });
 
     expect(await screen.findByRole("alert")).toHaveTextContent("conflicted");
+  });
+
+  it("shows a binary image as an image diff of the side's two versions", async () => {
+    mockCommands({ worktree_file_diff: () => ({ path: "Art/t.png", binary: true, hunks: [] }) });
+    const view = render(WorkingFileDiff, { repoId: 3, path: "Art/t.png", side: "staged", revision: 4, perHunk: false, onhunk: () => {} });
+
+    expect(await screen.findByAltText("HEAD")).toHaveAttribute("src", expect.stringContaining("path=Art%2Ft.png&at=head&v=4"));
+    expect(screen.getByAltText("Staged")).toHaveAttribute("src", expect.stringContaining("at=index"));
+
+    await view.rerender({ repoId: 3, path: "Art/t.png", side: "unstaged", revision: 4, perHunk: false, onhunk: () => {} });
+    expect(await screen.findByAltText("On disk")).toHaveAttribute("src", expect.stringContaining("at=worktree"));
+    expect(screen.getByAltText("Index")).toHaveAttribute("src", expect.stringContaining("at=index"));
   });
 });

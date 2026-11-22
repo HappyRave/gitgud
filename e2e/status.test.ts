@@ -44,5 +44,5 @@ test("explains a folder that is not a repository", async (t) => {
 
   const alert = app.page.getByRole("alert");
   await alert.waitFor({ timeout: 10_000 });
-  assert.match(await alert.innerText(), /is not inside a git repository$/);
+  assert.match(await alert.locator(".msg").innerText(), /is not inside a git repository$/);
 });

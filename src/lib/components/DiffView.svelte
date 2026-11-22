@@ -1,16 +1,35 @@
 <script lang="ts">
   import type { FileDiff, Hunk } from "$lib/api";
+  import { splitRows } from "$lib/diff/split";
+  import ImageDiff, { type ImageSide } from "./ImageDiff.svelte";
 
   let {
     diff,
     hunkActions = [],
     busy = false,
+    focused = null,
+    images = null,
+    split = false,
   }: {
+    /** Side by side instead of unified (Ctrl+D). */
+    split?: boolean;
+    /** For a binary image: its two versions, shown as an image diff. */
+    images?: { before: ImageSide; after: ImageSide } | null;
     diff: FileDiff;
     /** Buttons on each hunk's header row, e.g. "Stage hunk", "Discard hunk". */
-    hunkActions?: { label: string; run: (hunk: Hunk) => void }[];
+    hunkActions?: { label: string; key?: string; run: (hunk: Hunk) => void }[];
     busy?: boolean;
+    /** The hunk the keyboard acts on (Alt+↑↓), highlighted and kept in view. */
+    focused?: number | null;
   } = $props();
+
+  let table = $state<HTMLElement | null>(null);
+
+  $effect(() => {
+    if (focused !== null) {
+      table?.querySelectorAll("tbody")[focused]?.scrollIntoView?.({ block: "nearest" });
+    }
+  });
 
   const SIGN = { context: " ", added: "+", removed: "-" } as const;
 
@@ -21,31 +40,44 @@
 </script>
 
 <section class="diff" aria-label="Diff of {diff.path}">
-  {#if diff.binary}
+  {#if diff.binary && images}
+    <ImageDiff before={images.before} after={images.after} />
+  {:else if diff.binary}
     <p class="note">Binary file, no text diff.</p>
   {:else if diff.hunks.length === 0}
     <p class="note">No content changes.</p>
   {:else}
-    <table>
+    <table bind:this={table}>
       {#each diff.hunks as hunk, h (h)}
-        <tbody>
+        <tbody class:focused={focused === h}>
           <tr class="hunk">
-            <td colspan="3">
+            <td colspan={split ? 4 : 3}>
               {header(hunk)}
               {#each hunkActions as action (action.label)}
                 <button disabled={busy} aria-label="{action.label} {header(hunk)}" onclick={() => action.run(hunk)}
-                  >{action.label}</button
+                  >{action.label}{#if action.key && focused === h}<span class="k" aria-hidden="true">{action.key}</span>{/if}</button
                 >
               {/each}
             </td>
           </tr>
-          {#each hunk.lines as line, i (i)}
-            <tr class={line.kind}>
-              <td class="num">{line.old ?? ""}</td>
-              <td class="num">{line.new ?? ""}</td>
-              <td class="text"><span class="sign">{SIGN[line.kind]}</span>{line.text}</td>
-            </tr>
-          {/each}
+          {#if split}
+            {#each splitRows(hunk) as row, i (i)}
+              <tr class="pair">
+                <td class="num">{row.left?.old ?? ""}</td>
+                <td class="text half {row.left ? row.left.kind : 'none'}">{row.left?.text ?? ""}</td>
+                <td class="num">{row.right?.new ?? ""}</td>
+                <td class="text half {row.right ? row.right.kind : 'none'}">{row.right?.text ?? ""}</td>
+              </tr>
+            {/each}
+          {:else}
+            {#each hunk.lines as line, i (i)}
+              <tr class={line.kind}>
+                <td class="num">{line.old ?? ""}</td>
+                <td class="num">{line.new ?? ""}</td>
+                <td class="text"><span class="sign">{SIGN[line.kind]}</span>{line.text}</td>
+              </tr>
+            {/each}
+          {/if}
         </tbody>
       {/each}
     </table>
@@ -55,49 +87,73 @@
 <style>
   .diff {
     overflow: auto;
-    font-family: ui-monospace, monospace;
-    font-size: 0.8rem;
+    font: 12px/18px var(--mono);
   }
   table {
     border-collapse: collapse;
     width: 100%;
   }
   td {
-    padding: 0 0.4rem;
+    padding: 0 6px;
     white-space: pre;
-    line-height: 18px;
   }
   .num {
-    color: #999;
+    color: var(--muted);
+    opacity: 0.75;
     text-align: right;
     user-select: none;
     width: 1%;
   }
   .hunk td {
-    color: #6a6a9a;
-    background: #f3f3fb;
+    height: 28px;
+    color: var(--muted);
+    background: var(--hover);
+    border-block: 1px solid var(--line);
+    padding: 0 10px;
+  }
+  .focused .hunk td {
+    box-shadow: inset 3px 0 0 var(--l0);
+    color: var(--fg);
   }
   .hunk button {
     float: right;
-    margin-left: 0.3rem;
-    font: inherit;
-    font-family: system-ui, sans-serif;
-    font-size: 0.75rem;
-    padding: 0 0.4rem;
+    margin-left: 6px;
+    height: 20px;
+    padding: 0 7px;
+    font-size: 11px;
   }
   .added {
-    background: #e6f6e8;
+    background: var(--add);
+  }
+  .half {
+    width: 50%;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .half + .num {
+    border-left: 1px solid var(--line);
+  }
+  .half.none {
+    background: repeating-linear-gradient(-45deg, transparent 0 4px, var(--hover) 4px 8px);
+  }
+  .added .sign {
+    color: var(--add-ink);
   }
   .removed {
-    background: #fbe9e9;
+    background: var(--del);
+  }
+  .removed .sign {
+    color: var(--bad-ink);
   }
   .sign {
     user-select: none;
-    color: #888;
-    margin-right: 0.3rem;
+    color: var(--muted);
+    margin-right: 6px;
   }
   .note {
-    color: #888;
-    font-family: system-ui, sans-serif;
+    color: var(--muted);
+    font-family: var(--body);
+    padding: 10px;
+    margin: 0;
   }
 </style>

@@ -1,0 +1,289 @@
+import { mockIPC } from "@tauri-apps/api/mocks";
+import type { Commands, Conflict, HistoryPlan, MergeState, Opened, OpEntry, PlanCommit, RebaseState, Row, RowLayout, Status } from "$lib/api";
+
+/**
+ * Dev-only fake backend so the UI can be looked at in a plain browser:
+ * `pnpm dev`, then open `/?mock` (working copy) or `/?mock=merge` (a conflicted merge).
+ * Shift+E on a commit opens the feature/stack history plan; any other base predicts a conflict.
+ */
+export function installMock(scenario: string) {
+  const now = Math.floor(Date.now() / 1000);
+  let graphVersion = 0;
+  const opened = (): Opened => ({ id: 1, root: "C:/Users/Max/Documents/Projects/boat", rows: ROWS.length, graphVersion });
+
+  const lane = (node: number, segments: RowLayout["segments"] = []): RowLayout => ({ node, segments, overflow: false });
+  const through = (...lanes: number[]) => lanes.map((l) => ({ from: l, to: l, part: "through" as const }));
+  const ROWS: Row[] = [
+    { id: "w", shortId: "", subject: "Uncommitted changes", author: "", time: now, labels: [], wip: true, layout: lane(0, [{ from: 0, to: 0, part: "bottom" }]) },
+    row("95e25c8", "Raise ClearShot camera rig", "Max", now - 120, [{ kind: "branch", name: "master", current: true }], lane(0, [{ from: 0, to: 0, part: "top" }, { from: 0, to: 0, part: "bottom" }])),
+    row("3493748", "Move blimp camera right", "Max", now - 2460, [{ kind: "branch", name: "feature/stack", current: false }], lane(1, [...through(0), { from: 1, to: 1, part: "bottom" }])),
+    row("6bb2f7d", "fixup! WIP engine thrust tweak", "Max", now - 2470, [], lane(1, [...through(0), { from: 1, to: 1, part: "top" }, { from: 1, to: 1, part: "bottom" }])),
+    row("a1b2c3d", "Tune foam shader falloff", "Lea", now - 7200, [{ kind: "remote", name: "origin/master" }], lane(0, [...through(1), { from: 0, to: 0, part: "top" }, { from: 0, to: 0, part: "bottom" }])),
+    row("4592a21", "WIP engine thrust tweak", "Max", now - 9000, [], lane(1, [...through(0), { from: 1, to: 1, part: "top" }, { from: 1, to: 0, part: "bottom" }])),
+    row("6acf5f7", "Remove EmojiOne assets (#209)", "upstream", now - 30 * 86400, [{ kind: "tag", name: "v0.9" }], lane(0, [{ from: 0, to: 0, part: "top" }, { from: 1, to: 0, part: "top" }, { from: 0, to: 0, part: "bottom" }])),
+    ...Array.from({ length: 40 }, (_, i) =>
+      row(`c${String(i).padStart(6, "0")}`, `Older work ${40 - i}`, i % 3 ? "Sam" : "Lea", now - (40 + i) * 86400, [], lane(0, [{ from: 0, to: 0, part: "top" }, { from: 0, to: 0, part: "bottom" }])),
+    ),
+  ];
+  function row(id: string, subject: string, author: string, time: number, labels: Row["labels"], layout: RowLayout): Row {
+    return { id: id.padEnd(40, "0"), shortId: id, subject, author, time, labels, wip: false, layout };
+  }
+
+  let status: Status = {
+    root: opened().root,
+    head: { kind: "branch", name: "master" },
+    entries: [
+      { path: "Assets/Scripts/Boat/Engine.cs", kind: "tracked", index: "modified", worktree: "modified" },
+      { path: "Assets/Art/Trees/Maps/TreeBillBoards_albedo.png", kind: "tracked", index: null, worktree: "modified" },
+      { path: "Assets/Scripts/Boat/Buoyancy.cs", kind: "tracked", index: null, worktree: "deleted" },
+      { path: "notes.txt", kind: "untracked", index: null, worktree: null },
+    ],
+  };
+  let merge: MergeState | null =
+    scenario === "merge"
+      ? {
+          theirs: "conflict/theirs",
+          message: "Merge branch 'conflict/theirs' into conflict/ours",
+          conflicts: [
+            { path: "Assets/Prefabs/ReplayCameras.prefab", kind: "unityYaml", resolved: false },
+            { path: "Assets/Scripts/Boat/Engine.cs", kind: "code", resolved: false },
+            { path: "Assets/Art/Trees/Maps/TreeBillBoards_albedo.png", kind: "binary", resolved: false },
+          ],
+        }
+      : null;
+  if (merge) {
+    status = { ...status, head: { kind: "branch", name: "conflict/ours" } };
+  }
+  const log: OpEntry[] = [
+    { id: 3, time: now - 300, action: "Stage Assets/Scripts/Boat/Engine.cs", undone: false, paths: [] },
+    { id: 2, time: now - 900, action: "Discard Assets/Scripts/Boat/Old.cs", undone: false, paths: ["Assets/Scripts/Boat/Old.cs"] },
+    { id: 1, time: now - 1800, action: "Commit \"Raise ClearShot camera rig\"", undone: false, paths: [] },
+  ];
+  let rebaseState: RebaseState | null = null;
+
+  const planCommit = (r: Row, action: PlanCommit["action"] = "pick"): PlanCommit => ({
+    id: r.id,
+    shortId: r.shortId,
+    subject: r.subject,
+    message: r.subject,
+    author: r.author,
+    time: r.time,
+    action,
+  });
+  const PLAN: HistoryPlan = {
+    branch: "feature/stack",
+    base: ROWS[6].id,
+    baseShort: ROWS[6].shortId,
+    baseSubject: ROWS[6].subject,
+    commits: [planCommit(ROWS[2]), planCommit(ROWS[3], "fixup"), planCommit(ROWS[5])],
+    dependents: [],
+    pushed: "origin/feature/stack",
+  };
+  /** The plan's after rows, newest first, drawn dashed above the faded commits. */
+  let ghosts: { subject: string; tag: string }[] = [];
+  const dashed = (segments: RowLayout["segments"]) => segments.map((s) => ({ ...s, stroke: "dashed" as const }));
+  const previewRows = (): Row[] => [
+    ROWS[0],
+    ROWS[1],
+    ...ghosts.map((g, i) => ({
+      ...ROWS[2],
+      id: "",
+      shortId: "",
+      author: "",
+      labels: [],
+      subject: g.subject,
+      after: g.tag,
+      layout: lane(1, [...through(0), ...dashed([...(i ? [{ from: 1, to: 1, part: "top" as const }] : []), { from: 1, to: 1, part: "bottom" }])]),
+    })),
+    ...[2, 3, 4, 5].map((i) => (i === 4 ? { ...ROWS[i], layout: lane(0, [...dashed(through(1)), ...through(2), { from: 0, to: 0, part: "top" }, { from: 0, to: 0, part: "bottom" }]) } : { ...ROWS[i], faded: true, layout: lane(2, [...through(0), ...dashed(through(1)), ...(i > 2 ? [{ from: 2, to: 2, part: "top" as const, stroke: "faded" as const }] : []), { from: 2, to: 2, part: "bottom", stroke: "faded" }]) })),
+    { ...ROWS[6], layout: lane(0, [{ from: 0, to: 0, part: "top" }, ...dashed([{ from: 1, to: 0, part: "top" }]), { from: 2, to: 0, part: "top", stroke: "faded" }, { from: 0, to: 0, part: "bottom" }]) },
+    ...ROWS.slice(7),
+  ];
+  const resolve = (path: string) => {
+    const mark = (c: Conflict) => (c.path === path ? { ...c, resolved: true } : c);
+    if (merge) {
+      merge = { ...merge, conflicts: merge.conflicts.map(mark) };
+    }
+    if (rebaseState) {
+      rebaseState = { ...rebaseState, conflicts: rebaseState.conflicts.map(mark) };
+    }
+    return opened();
+  };
+
+  const handlers: {
+    [K in keyof Commands]?: (args: Commands[K]["args"]) => Commands[K]["result"] | Promise<Commands[K]["result"]>;
+  } = {
+    git_info: () => ({ path: "C:/Program Files/Git/cmd/git.exe", version: "2.56.1" }),
+    launch_path: () => opened().root,
+    open_repo: () => opened(),
+    close_repo: () => null,
+    refresh_repo: () => opened(),
+    repo_status: () => status,
+    merge_state: () => merge,
+    rebase_state: () => rebaseState,
+    predict_rebase: () => ({
+      commits: 3,
+      behind: 1,
+      conflict: { step: 1, shortId: "4592a21", subject: "WIP engine thrust tweak", paths: ["Assets/Scripts/Boat/Engine.cs"] },
+    }),
+    rebase: () => {
+      rebaseState = {
+        branch: "feature/stack",
+        onto: "master",
+        step: 1,
+        total: 3,
+        subject: "WIP engine thrust tweak",
+        conflicts: [{ path: "Assets/Scripts/Boat/Engine.cs", kind: "code", resolved: false }],
+        editing: false,
+      };
+      return opened();
+    },
+    rebase_step: () => {
+      rebaseState = null;
+      return opened();
+    },
+    history_plan: () => PLAN,
+    plan_preview: ({ onto, steps }) => {
+      const kept = steps.filter((s) => s.action !== "drop" && s.action !== "squash" && s.action !== "fixup");
+      ghosts = kept.map((s) => {
+        const c = PLAN.commits.find((p) => p.id === s.id)!;
+        const tags = [s.action === "reword" && s.message ? "reworded" : "", onto !== PLAN.base && c.shortId === "4592a21" ? "⚠ conflict" : ""];
+        return { subject: (s.message ?? c.subject).split("\n")[0], tag: tags.filter(Boolean).join(", ") };
+      });
+      let n = 0;
+      return {
+        prediction: {
+          steps: steps.map((s) => {
+            if (s.action === "drop") {
+              return { id: s.id, step: null, outcome: { kind: "dropped" as const } };
+            }
+            n++;
+            const conflict = onto !== PLAN.base && s.id.startsWith("4592a21");
+            return { id: s.id, step: steps.filter((t) => t.action !== "drop").length - n + 1, outcome: conflict ? { kind: "conflict" as const, paths: ["Assets/Scripts/Boat/Engine.cs"], tree: "t" } : { kind: "clean" as const } };
+          }),
+          before: steps.length,
+          after: kept.length,
+          changed: onto !== PLAN.base ? null : steps.some((s) => s.action === "drop") ? 2 : 0,
+        },
+        rows: previewRows().length,
+      };
+    },
+    preview_rows: ({ start, count }) => previewRows().slice(start, start + count),
+    predicted_file: () => "public float thrust;\n<<<<<<< master\n    var thrust = torque.Lookup(rpm);\n=======\n    var thrust = power.Evaluate(rpm) * horsePower;\n>>>>>>> 4592a21 (WIP engine thrust tweak)\n}\n",
+    run_plan: () => opened(),
+    reword_head: () => opened(),
+    quick_edit: () => opened(),
+    op_log: () => log,
+    graph_rows: ({ start, count }) => ROWS.slice(start, start + count),
+    graph_find: ({ query }) =>
+      ROWS.flatMap((r, i) => (!r.wip && `${r.subject} ${r.author}`.toLowerCase().includes(query.toLowerCase()) ? [i] : [])),
+    branches: () => ({
+      local: [
+        { name: merge ? "conflict/ours" : "master", current: true, upstream: "origin/master", ahead: 1, behind: 0 },
+        { name: "conflict/theirs", current: false, upstream: null, ahead: 0, behind: 0 },
+        { name: "feature/stack", current: false, upstream: "origin/feature/stack", ahead: 3, behind: 0 },
+        { name: "hotfix/buoyancy", current: false, upstream: null, ahead: 0, behind: 0 },
+      ],
+      remotes: [{ name: "origin", branches: ["origin/master", "origin/feature/stack"] }],
+      fetched: now - 720,
+    }),
+    worktree_file_diff: ({ path }) => ({
+      path,
+      binary: path.endsWith(".png"),
+      hunks: [
+        {
+          oldStart: 3,
+          oldLines: 4,
+          newStart: 3,
+          newLines: 5,
+          lines: [
+            { kind: "context", old: 3, new: 3, text: "using Unity.Collections;" },
+            { kind: "context", old: 4, new: 4, text: "using Unity.Mathematics;" },
+            { kind: "removed", old: 5, new: null, text: "using WaterSystem.Legacy;" },
+            { kind: "added", old: null, new: 5, text: "using WaterSystem;" },
+            { kind: "added", old: null, new: 6, text: "// engine uses power curve" },
+            { kind: "context", old: 6, new: 7, text: "" },
+          ],
+        },
+      ],
+    }),
+    commit_detail: ({ commit }) => ({
+      id: commit,
+      shortId: commit.slice(0, 7),
+      subject: ROWS.find((r) => r.id === commit)?.subject ?? "",
+      body: "Moves the rig up so the camera clears the pier.",
+      author: { name: "Max", email: "max@example.invalid", time: now - 120 },
+      committer: { name: "Max", email: "max@example.invalid", time: now - 120 },
+      parents: ["a1b2c3d".padEnd(40, "0")],
+      files: [
+        { path: "Assets/Prefabs/ReplayCameras.prefab", change: "modified" },
+        { path: "Assets/Scripts/Camera/ClearShot.cs", change: "added" },
+      ],
+    }),
+    commit_file_diff: ({ path }) => ({
+      path,
+      binary: false,
+      hunks: [{ oldStart: 117, oldLines: 2, newStart: 117, newLines: 2, lines: [
+        { kind: "context", old: 117, new: 117, text: "  m_GameObject: {fileID: 2671655050577180351}" },
+        { kind: "removed", old: 118, new: null, text: "  m_LocalPosition: {x: 4.409273, y: 38.868496, z: 72.38463}" },
+        { kind: "added", old: null, new: 118, text: "  m_LocalPosition: {x: 5.0, y: 38.868496, z: 72.38463}" },
+      ] }],
+    }),
+    predict_merge: ({ branch }) => (branch.includes("theirs") ? ["Assets/Scripts/Boat/Engine.cs", "Assets/Prefabs/ReplayCameras.prefab"] : []),
+    merge: () => opened(),
+    conflict_text: ({ path }) => ({
+      finalNewline: true,
+      chunks: path.endsWith(".prefab")
+        ? [
+            { kind: "same", lines: ["--- !u!4 &571479311832868573", "Transform:", "  m_GameObject: {fileID: 2671655050577180351}"] },
+            { kind: "conflict", yours: ["  m_LocalPosition: {x: 1.0, y: 38.868496, z: 72.38463}"], base: ["  m_LocalPosition: {x: 4.409273, y: 38.868496, z: 72.38463}"], theirs: ["  m_LocalPosition: {x: 2.0, y: 38.868496, z: 72.38463}"] },
+            { kind: "same", lines: ["  m_LocalScale: {x: 1, y: 1, z: 1}"] },
+          ]
+        : [
+            { kind: "same", lines: ["using UnityEngine;", "using Unity.Collections;", "using Unity.Mathematics;", "using WaterSystem;"] },
+            { kind: "conflict", yours: ["// ours: engine uses power curve"], base: [], theirs: ["// theirs: engine uses torque table"] },
+            { kind: "same", lines: ["", "namespace BoatAttack", "{", "    public class Engine : MonoBehaviour", "    {", "        public float horsePower = 18f;", "        public AnimationCurve torqueCurve;", "        public float steeringTorque = 5f;", "        public float idleRpm = 900f;", "        public float maxRpm = 6200f;", "        private Rigidbody rb;"] },
+            { kind: "conflict", yours: ["        var thrust = power.Evaluate(rpm) * horsePower;"], base: ["        var thrust = horsePower;"], theirs: ["        var thrust = torque.Lookup(rpm) * gearRatio;", "        thrust *= efficiency;"] },
+            { kind: "same", lines: ["        rb.AddForce(transform.forward * thrust);", "    }", "}"] },
+          ],
+    }),
+    conflict_sides: () => ({ yours: { size: 2_034_112, lfs: true }, theirs: { size: 2_076_180, lfs: true } }),
+    resolve_with: ({ path }) => resolve(path),
+    resolve_side: ({ path }) => resolve(path),
+    merge_commit: () => {
+      merge = null;
+      graphVersion++;
+      return opened();
+    },
+    merge_abort: () => {
+      merge = null;
+      return opened();
+    },
+    stage: () => opened(),
+    unstage: () => opened(),
+    discard: () => opened(),
+    stage_hunk: () => opened(),
+    unstage_hunk: () => opened(),
+    discard_hunk: () => opened(),
+    commit: () => opened(),
+    checkout: () => opened(),
+    undo: () => ({ opened: opened(), action: log[0].action }),
+    redo: () => ({ opened: opened(), action: log[0].action }),
+    restore_to: () => ({ opened: opened(), action: log[1].action }),
+    restore_files: () => opened(),
+    fetch: () => new Promise<Opened>((r) => setTimeout(() => r(opened()), 1500)),
+    cancel_fetch: () => true,
+    "plugin:window|set_title": () => null,
+  };
+
+  mockIPC(
+    (cmd, args) => {
+      const handler = handlers[cmd as keyof Commands] as ((a: unknown) => unknown) | undefined;
+      if (!handler) {
+        throw new Error(`mock: no handler for ${cmd}`);
+      }
+      return handler(args);
+    },
+    { shouldMockEvents: true },
+  );
+}

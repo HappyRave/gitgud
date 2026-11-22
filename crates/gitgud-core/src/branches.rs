@@ -11,6 +11,8 @@ pub struct Branches {
     /// Sorted by name; folder grouping (`feature/…`) is the view's job.
     pub local: Vec<Branch>,
     pub remotes: Vec<Remote>,
+    /// When the repo last fetched (`FETCH_HEAD`'s mtime), seconds since the Unix epoch.
+    pub fetched: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -103,7 +105,16 @@ impl Repo {
         for remote in &mut remotes {
             remote.branches.sort();
         }
-        Ok(Branches { local, remotes })
+        let fetched = std::fs::metadata(repo.common_dir().join("FETCH_HEAD"))
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .and_then(|d| i64::try_from(d.as_secs()).ok());
+        Ok(Branches {
+            local,
+            remotes,
+            fetched,
+        })
     }
 
     /// Paths whose content differs between HEAD and branch `name`: what a

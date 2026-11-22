@@ -4,6 +4,7 @@ use gix::ObjectId;
 use gix::traverse::commit::topo;
 use serde::Serialize;
 
+use super::Stroke;
 use crate::repo::{Error, Repo, read_err};
 
 /// A ref pointing at a commit, as drawn on its graph row.
@@ -35,6 +36,18 @@ pub struct Topology {
     wip: bool,
     asked_wip: bool,
     refs: RefSnapshot,
+    /// Rows drawn other than solid: a history plan's preview.
+    strokes: HashMap<u32, Stroke>,
+    /// Planned commits of a preview, which exist in no repository.
+    ghosts: HashMap<u32, Ghost>,
+}
+
+/// A commit a history plan would create, drawn as a dashed "after" row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ghost {
+    pub subject: String,
+    /// What the plan does to it: "reworded", "+ fixup folded in"...
+    pub tag: String,
 }
 
 /// Every drawn ref and where it points, sorted: equal snapshots mean equal history.
@@ -105,6 +118,8 @@ impl Topology {
             wip: wip_parent.is_some(),
             asked_wip: wip,
             refs: snapshot(&labels_by_id),
+            strokes: HashMap::new(),
+            ghosts: HashMap::new(),
         };
         if let Some(head) = wip_parent {
             topology.parent_start.push(0);
@@ -157,6 +172,96 @@ impl Topology {
         self.labels.get(&to_u32(row)).map_or(&[], Vec::as_slice)
     }
 
+    pub fn stroke(&self, row: usize) -> Stroke {
+        self.strokes.get(&to_u32(row)).copied().unwrap_or_default()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_stroke(&mut self, row: usize, stroke: Stroke) {
+        self.strokes.insert(to_u32(row), stroke);
+    }
+
+    /// The planned commit drawn on `row`, if it is one.
+    pub fn ghost(&self, row: usize) -> Option<&Ghost> {
+        self.ghosts.get(&to_u32(row))
+    }
+
+    /// The row of commit `id`, if it is in the graph.
+    pub fn row_of(&self, id: ObjectId) -> Option<usize> {
+        let first = usize::from(self.wip);
+        self.ids[first..]
+            .iter()
+            .position(|i| *i == id)
+            .map(|r| r + first)
+    }
+
+    /// A copy with `ghosts` (newest first) inserted as a chain before row `at`,
+    /// the oldest on top of row `base` (or a root when `None`), and the rows of
+    /// `faded` drawn faded: the preview of a history plan.
+    ///
+    /// # Panics
+    /// When `base` is above `at`, or `at` is above the working-copy row.
+    pub fn with_ghosts(
+        &self,
+        at: usize,
+        ghosts: Vec<Ghost>,
+        base: Option<usize>,
+        faded: &[usize],
+    ) -> Self {
+        assert!(at >= usize::from(self.wip) && at <= self.len());
+        assert!(
+            base.is_none_or(|b| b >= at),
+            "ghosts must sit above their base"
+        );
+        let k = ghosts.len();
+        let moved = |r: usize| if r < at { r } else { r + k };
+        let mut t = Self {
+            ids: Vec::with_capacity(self.len() + k),
+            parent_start: Vec::with_capacity(self.len() + k + 1),
+            parents: Vec::with_capacity(self.parents.len() + k),
+            labels: self
+                .labels
+                .iter()
+                .map(|(r, l)| (to_u32(moved(*r as usize)), l.clone()))
+                .collect(),
+            wip: self.wip,
+            asked_wip: self.asked_wip,
+            refs: self.refs.clone(),
+            strokes: HashMap::new(),
+            ghosts: HashMap::new(),
+        };
+        let null = ObjectId::null(self.ids.first().map_or(gix::hash::Kind::Sha1, |i| i.kind()));
+        let push_old = |t: &mut Self, row: usize| {
+            t.parent_start.push(to_u32(t.parents.len()));
+            t.parents
+                .extend(self.parents(row).iter().map(|&p| to_u32(moved(p as usize))));
+            t.ids.push(self.ids[row]);
+        };
+        for row in 0..at {
+            push_old(&mut t, row);
+        }
+        for (i, ghost) in ghosts.into_iter().enumerate() {
+            let row = at + i;
+            t.parent_start.push(to_u32(t.parents.len()));
+            if i + 1 < k {
+                t.parents.push(to_u32(row + 1));
+            } else if let Some(b) = base {
+                t.parents.push(to_u32(moved(b)));
+            }
+            t.ids.push(null);
+            t.ghosts.insert(to_u32(row), ghost);
+            t.strokes.insert(to_u32(row), Stroke::Dashed);
+        }
+        for row in at..self.len() {
+            push_old(&mut t, row);
+        }
+        t.parent_start.push(to_u32(t.parents.len()));
+        for &row in faded {
+            t.strokes.insert(to_u32(moved(row)), Stroke::Faded);
+        }
+        t
+    }
+
     /// A topology from explicit parent rows, for layout tests.
     #[cfg(any(test, feature = "test-util"))]
     pub fn from_parents(parents: &[&[u32]]) -> Self {
@@ -168,6 +273,8 @@ impl Topology {
             wip: false,
             asked_wip: false,
             refs: Vec::new(),
+            strokes: HashMap::new(),
+            ghosts: HashMap::new(),
         };
         for (row, ps) in parents.iter().enumerate() {
             assert!(

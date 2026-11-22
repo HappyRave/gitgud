@@ -101,6 +101,42 @@ fn wip_row_sits_on_top_of_head() {
 }
 
 #[test]
+fn find_matches_subject_author_id_prefix_and_labels() {
+    let repo = history();
+    repo.write("dirty.txt", "x");
+    let r = repo::open(repo.path()).unwrap();
+    let graph = Graph::build(&r, true).unwrap();
+    let all = graph.rows(&r, 0, graph.len()).unwrap();
+    let subjects = |hits: Vec<usize>| -> Vec<String> {
+        hits.into_iter().map(|i| all[i].subject.clone()).collect()
+    };
+
+    let mut work = graph.find(&r, "WORK").unwrap();
+    assert!(work.is_sorted(), "graph order");
+    work.sort_by_key(|&i| all[i].subject.clone());
+    assert_eq!(subjects(work), ["feature work", "main work"]);
+    assert_eq!(subjects(graph.find(&r, "v1").unwrap()), ["Merge feature"]);
+    let feature_tip = all
+        .iter()
+        .position(|row| row.subject == "feature work")
+        .unwrap();
+    assert!(graph.find(&r, "feature").unwrap().contains(&feature_tip));
+    let id = &all[feature_tip].id;
+    assert_eq!(
+        graph.find(&r, &id[..8]).unwrap(),
+        [feature_tip],
+        "an id prefix"
+    );
+    assert_eq!(
+        graph.find(&r, "gitgud tests").unwrap().len(),
+        4,
+        "the author, never the WIP row"
+    );
+    assert!(graph.find(&r, "  ").unwrap().is_empty());
+    assert!(graph.find(&r, "nothing like this").unwrap().is_empty());
+}
+
+#[test]
 fn windows_match_the_full_list() {
     let repo = history();
     let r = repo::open(repo.path()).unwrap();
