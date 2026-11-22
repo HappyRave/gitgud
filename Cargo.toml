@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/gitgud-core", "src-tauri"]
+members = ["crates/gitgud-core", "crates/gitgud-cli", "src-tauri"]
 resolver = "3"
 
 [profile.release]

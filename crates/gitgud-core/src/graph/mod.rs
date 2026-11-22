@@ -34,6 +34,9 @@ pub struct Row {
     /// Stash index (`stash@{n}`) when this row represents a stash.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stash: Option<usize>,
+    /// Agent proposal ID when this row represents an active proposal.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proposal: Option<String>,
     pub layout: RowLayout,
 }
 
@@ -113,7 +116,8 @@ impl Graph {
                 RefLabel::Branch { name, .. }
                 | RefLabel::Remote { name }
                 | RefLabel::Tag { name }
-                | RefLabel::Stash { name } => name.to_lowercase().contains(&needle),
+                | RefLabel::Stash { name }
+                | RefLabel::Proposal { name } => name.to_lowercase().contains(&needle),
                 RefLabel::Head => false,
             });
             if label_hit || id.to_string().starts_with(&needle) {
@@ -153,6 +157,7 @@ impl Graph {
                         after: None,
                         faded: false,
                         stash: None,
+                        proposal: None,
                         layout,
                     });
                 }
@@ -168,6 +173,7 @@ impl Graph {
                         after: Some(ghost.tag.clone()),
                         faded: false,
                         stash: None,
+                        proposal: None,
                         layout,
                     });
                 }
@@ -186,6 +192,7 @@ impl Graph {
                     after: None,
                     faded: self.topology.stroke(row) == Stroke::Faded,
                     stash: self.topology.stash(row),
+                    proposal: self.topology.proposal(row).map(str::to_owned),
                     layout,
                 })
             })

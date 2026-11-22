@@ -4,7 +4,7 @@ export interface ShortcutItem {
 }
 
 export interface ShortcutGroup {
-  category: "Navigation" | "Working copy" | "Branches & remotes" | "History & diff" | "Application";
+  category: "Navigation" | "Working copy" | "Branches & remotes" | "History & diff" | "Proposal" | "Application";
   items: ShortcutItem[];
 }
 
@@ -53,6 +53,16 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
       { keys: "Shift+E", label: "Interactive rebase plan from commit" },
       { keys: "1 / 2", label: "Resolve conflict with Yours / Theirs" },
       { keys: "Ctrl+C", label: "Copy selected commit hash" },
+    ],
+  },
+  {
+    category: "Proposal",
+    items: [
+      { keys: "↑ / ↓", label: "Previous / next proposed file" },
+      { keys: "Space", label: "Include or exclude proposed file" },
+      { keys: "Ctrl+Enter", label: "Approve and commit proposal" },
+      { keys: "Ctrl+Shift+R", label: "Request changes on proposal" },
+      { keys: "Ctrl+Shift+X", label: "Reject proposal" },
     ],
   },
   {

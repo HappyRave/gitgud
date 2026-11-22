@@ -7,6 +7,7 @@
     type Branches,
     type LfsInfo,
     type LfsLock,
+    type ProposalSummary,
     type StashEntry,
     type TagInfo,
   } from "$lib/api";
@@ -45,6 +46,9 @@
     ondeletetag,
     ondeleteremotetag,
     onselecttag,
+    proposals = [],
+    selectedProposal = null,
+    onselectproposal,
   }: {
     /** "Rebase current onto" from a branch's context menu. */
     onrebase: (branch: string) => void;
@@ -83,6 +87,9 @@
     ondeletetag?: (name: string) => void;
     ondeleteremotetag?: (remote: string, name: string) => void;
     onselecttag?: (target: string) => void;
+    proposals?: ProposalSummary[];
+    selectedProposal?: string | null;
+    onselectproposal?: (id: string) => void;
   } = $props();
 
   let error = $state<string | null>(null);
@@ -268,6 +275,34 @@
 <nav class="side" aria-label="Sidebar">
   {#if error}
     <p role="alert">{error}</p>
+  {/if}
+
+  {#if proposals.length > 0}
+    <section aria-label="Inbox">
+      <h3>Inbox <span class="ct">{proposals.length}</span></h3>
+      <ul>
+        {#each proposals as proposal (proposal.id)}
+          {@const subject = proposal.message.split(/\r?\n/, 1)[0] ?? proposal.message}
+          <li>
+            <button
+              class="it"
+              class:sel={proposal.id === selectedProposal}
+              aria-current={proposal.id === selectedProposal ? "true" : undefined}
+              title="{subject} · {proposal.agent}"
+              onclick={() => onselectproposal?.(proposal.id)}
+            >
+              <span class="ic">✦</span>
+              <span class="nm">{subject}</span>
+              {#if proposal.riskFlags.length > 0}
+                <span class="r warn-ct">⚠{proposal.riskFlags.length}</span>
+              {:else}
+                <span class="r">{proposal.agent}</span>
+              {/if}
+            </button>
+          </li>
+        {/each}
+      </ul>
+    </section>
   {/if}
 
   <section aria-label="Branches">
@@ -527,6 +562,9 @@
     margin-left: auto;
     color: var(--muted);
     font: 10.5px var(--mono);
+  }
+  .warn-ct {
+    color: var(--warn-ink);
   }
   .leaf {
     color: var(--muted);

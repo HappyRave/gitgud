@@ -85,6 +85,7 @@
     type PlanAction,
     type PlanPrediction,
     type Progress,
+    type ProposalSummary,
     type PullStrategy,
     type RebaseState,
     type RebaseStep,
@@ -107,6 +108,10 @@
     opLogPrune,
     opLogStats,
     outsideReflog,
+    proposalApprove,
+    proposalReject,
+    proposalRequestChanges,
+    proposalsList,
     pushTag,
     resolveUnityConflict,
     tags,
@@ -135,6 +140,7 @@
   import OpLogPanel from "$lib/components/OpLogPanel.svelte";
   import PlanDone, { type PlanResult } from "$lib/components/PlanDone.svelte";
   import PlanEditor from "$lib/components/PlanEditor.svelte";
+  import ProposalView from "$lib/components/ProposalView.svelte";
   import PullStrategyDialog from "$lib/components/PullStrategyDialog.svelte";
   import PushDialog from "$lib/components/PushDialog.svelte";
   import RebaseBanner from "$lib/components/RebaseBanner.svelte";
@@ -192,11 +198,13 @@
   /** The commit shown in the side pane; `null` shows the working copy. */
   let selectedCommit = $state<string | null>(null);
   let selectedStash = $state<number | null>(null);
+  let selectedProposal = $state<string | null>(null);
   let selectedRow = $state<number | null>(null);
 
   function closeDetail() {
     selectedCommit = null;
     selectedStash = null;
+    selectedProposal = null;
     selectedRow = null;
     fileInspect = null;
   }
@@ -257,6 +265,13 @@
   let lfs = $state<LfsInfo | null>(null);
   let locks = $state<LfsLock[]>([]);
   let tagList = $state<TagInfo[]>([]);
+  let proposalList = $state<ProposalSummary[]>([]);
+  const activeProposals = $derived(
+    proposalList.filter((p) => p.status === "pending" || p.status === "changesRequested"),
+  );
+  const currentProposal = $derived(
+    selectedProposal ? (proposalList.find((p) => p.id === selectedProposal) ?? null) : null,
+  );
   let tagAsk = $state<{ target: string | null; targetLabel: string | null } | null>(null);
   let fileInspect = $state<{ path: string; mode: "history" | "blame"; rev: string | null } | null>(null);
   let opStats = $state<OpLogStats | null>(null);
@@ -327,6 +342,8 @@
   $effect(() => {
     if (!opened) {
       tagList = [];
+      proposalList = [];
+      selectedProposal = null;
       fileInspect = null;
       opStats = null;
       reflogEntries = [];
@@ -339,6 +356,13 @@
       .then((list) => {
         if (!stale && opened?.id === id && revision === rev) {
           tagList = list;
+        }
+      })
+      .catch(() => {});
+    proposalsList(id)
+      .then((list) => {
+        if (!stale && opened?.id === id && revision === rev) {
+          proposalList = list;
         }
       })
       .catch(() => {});
@@ -1111,13 +1135,48 @@
   function inspectCommit(commitId: string) {
     fileInspect = null;
     selectedStash = null;
+    selectedProposal = null;
     inspector = "working";
     selectedCommit = commitId;
   }
 
   function openFileInspect(path: string, mode: "history" | "blame", rev: string | null = null) {
     selectedStash = null;
+    selectedProposal = null;
     fileInspect = { path, mode, rev };
+  }
+
+  async function approveProposal(proposalId: string, message: string, selectedPaths: string[]) {
+    const ok = await write(
+      (id) => proposalApprove(id, proposalId, selectedPaths, message),
+      "Proposal approved and committed · Ctrl+Z undoes it",
+    );
+    if (ok) {
+      selectedProposal = null;
+    }
+  }
+
+  function requestProposalChanges(proposalId: string, comment: string) {
+    return enqueue(async () => {
+      if (!opened) {
+        return;
+      }
+      error = null;
+      try {
+        const updated = await proposalRequestChanges(opened.id, proposalId, comment);
+        proposalList = proposalList.map((p) => (p.id === updated.id ? updated : p));
+        notice = "Requested changes on proposal";
+      } catch (err) {
+        error = String(err);
+      }
+    });
+  }
+
+  async function rejectProposal(proposalId: string) {
+    const ok = await write((id) => proposalReject(id, proposalId), "Proposal rejected");
+    if (ok) {
+      selectedProposal = null;
+    }
   }
 
   async function onDeleteBranch(branch: string, remote?: string) {
@@ -1250,7 +1309,11 @@
       cyclePanes(event.shiftKey ? -1 : 1);
       return;
     }
-    if (event.key === "Escape" && (selectedCommit || selectedStash !== null || fileInspect) && !inTextField(event.target)) {
+    if (
+      event.key === "Escape" &&
+      (selectedCommit || selectedStash !== null || selectedProposal || fileInspect) &&
+      !inTextField(event.target)
+    ) {
       closeDetail();
       return;
     }
@@ -1491,7 +1554,9 @@
           bind:data={branchData}
           merging={!!conflicted}
           {selectedStash}
-          oplogOpen={inspector === "oplog" && !selectedCommit && selectedStash === null && !fileInspect}
+          proposals={activeProposals}
+          {selectedProposal}
+          oplogOpen={inspector === "oplog" && !selectedCommit && selectedStash === null && !selectedProposal && !fileInspect}
           lfsInfo={lfs}
           {locks}
           tags={tagList}
@@ -1514,8 +1579,17 @@
             write((id) => setUpstream(id, branch, upstream), upstream ? `Tracking ${upstream}` : `Cleared upstream for ${branch}`)}
           oncheckoutremote={(remoteBranch) => (branchAsk = { mode: "checkoutRemote", remoteBranch })}
           onopenpr={openPrForBranch}
+          onselectproposal={(id) => {
+            fileInspect = null;
+            selectedCommit = null;
+            selectedStash = null;
+            planDone = null;
+            inspector = "working";
+            selectedProposal = id;
+          }}
           onstashselect={(idx) => {
             selectedStash = idx;
+            selectedProposal = null;
             selectedCommit = null;
             planDone = null;
           }}
@@ -1619,11 +1693,17 @@
               onselect={(row) => {
                 if (!planning) {
                   fileInspect = null;
-                  if (row && row.stash != null) {
+                  if (row && row.proposal) {
+                    selectedProposal = row.proposal;
+                    selectedStash = null;
+                    selectedCommit = null;
+                  } else if (row && row.stash != null) {
                     selectedStash = row.stash;
+                    selectedProposal = null;
                     selectedCommit = null;
                   } else {
                     selectedStash = null;
+                    selectedProposal = null;
                     selectedCommit = row && !row.wip ? row.id : null;
                   }
                   planDone = null;
@@ -1652,6 +1732,16 @@
                 oncancel={closePlan}
               />
             {/key}
+          {:else if currentProposal}
+            <ProposalView
+              repoId={opened.id}
+              proposal={currentProposal}
+              {busy}
+              onapprove={(message, paths) => approveProposal(currentProposal.id, message, paths)}
+              onrequestchanges={(comment) => requestProposalChanges(currentProposal.id, comment)}
+              onreject={() => rejectProposal(currentProposal.id)}
+              onclose={closeDetail}
+            />
           {:else if selectedStash !== null}
             {@const idx = selectedStash}
             <StashDetail

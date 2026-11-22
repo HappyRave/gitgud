@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, within } from "@testing-library/svelte";
 import { emit } from "@tauri-apps/api/event";
 import { describe, expect, it, vi } from "vitest";
-import type { Commands, MergeState, RebaseState, Row, SequencerState, Status } from "$lib/api";
+import type { Commands, MergeState, ProposalSummary, RebaseState, Row, SequencerState, Status } from "$lib/api";
 import { mockCommands } from "$lib/test/ipc";
 import Page from "./+page.svelte";
 
@@ -150,6 +150,26 @@ function app(extra: Handlers = {}) {
       forceTextOk: false,
       serializationMode: null,
     }),
+    proposals_list: () => [],
+    proposal_file_diff: ({ path }) => ({ path, binary: false, hunks: [] }),
+    proposal_approve: () => ({ id: 1, root: "C:/work/repo", rows: 1, graphVersion: 0 }),
+    proposal_request_changes: ({ proposalId, comment, path }) => ({
+      id: proposalId,
+      commitId: "d".repeat(40),
+      shortCommit: "ddddddd",
+      baseId: "a".repeat(40),
+      message: "Proposal",
+      why: "",
+      agent: "claude-code",
+      status: "changesRequested",
+      createdAt: 1_700_000_000,
+      updatedAt: 1_700_000_000,
+      files: [],
+      riskFlags: [],
+      comments: [{ id: "c-1", author: "Max", text: comment, path: path ?? null, time: 1_700_000_000 }],
+      headMoved: false,
+    }),
+    proposal_reject: () => ({ id: 1, root: "C:/work/repo", rows: 1, graphVersion: 0 }),
     ...extra,
   };
   return mockCommands(handlers);
@@ -2569,5 +2589,92 @@ describe("Unity, LFS locks, Smart Merge verify, and open-editor guard", () => {
       picks: [{ fileId: "12", property: "speed", value: "15" }],
     });
     expect(await screen.findByText(/Post-merge check passed/)).toBeInTheDocument();
+  });
+
+  it("reviews an agent proposal from the sidebar inbox: requests changes, edits message, and approves", async () => {
+    let proposal: ProposalSummary = {
+      id: "p-1",
+      commitId: "d".repeat(40),
+      shortCommit: "ddddddd",
+      baseId: "a".repeat(40),
+      message: "Add steering damper",
+      why: "Prevents high-speed wobble",
+      agent: "claude-code",
+      status: "pending",
+      createdAt: 1_700_000_000,
+      updatedAt: 1_700_000_000,
+      files: ["Assets/Scripts/Engine.cs"],
+      riskFlags: [
+        {
+          kind: "missingMeta",
+          path: "Assets/Scripts/Engine.cs",
+          detail: "Missing companion .meta file",
+        },
+      ],
+      comments: [],
+      headMoved: false,
+    };
+    const calls = app({
+      launch_path: () => "C:/work/repo",
+      proposals_list: () => [proposal],
+      proposal_file_diff: ({ path }) => ({
+        path,
+        binary: false,
+        hunks: [
+          {
+            oldStart: 1,
+            oldLines: 1,
+            newStart: 1,
+            newLines: 1,
+            lines: [{ kind: "added", old: null, new: 1, text: "float damping = 1.4f;" }],
+          },
+        ],
+      }),
+      proposal_request_changes: ({ comment }) => {
+        proposal = {
+          ...proposal,
+          status: "changesRequested",
+          comments: [{ id: "c-1", author: "Max", text: comment, path: null, time: 1_700_000_100 }],
+        };
+        return proposal;
+      },
+      proposal_approve: () => {
+        proposal = { ...proposal, status: "approved" };
+        return { id: 1, root: "C:/work/repo", rows: 1, graphVersion: 1 };
+      },
+    });
+    render(Page);
+
+    const inbox = await screen.findByRole("region", { name: "Inbox" });
+    await fireEvent.click(within(inbox).getByRole("button", { name: /Add steering damper/ }));
+
+    expect(await screen.findByText(/Prevents high-speed wobble/)).toBeInTheDocument();
+    expect(screen.getByText(/Missing companion \.meta file/)).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "Diff of Assets/Scripts/Engine.cs" })).toHaveTextContent(
+      "float damping = 1.4f;",
+    );
+
+    const feedback = screen.getByLabelText("Change request feedback");
+    await fireEvent.input(feedback, { target: { value: "Also tweak rudder curve" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Request changes" }));
+
+    expect(calls.find((c) => c.cmd === "proposal_request_changes")?.args).toEqual({
+      id: 1,
+      proposalId: "p-1",
+      comment: "Also tweak rudder curve",
+      path: null,
+    });
+    expect(await screen.findByText("Also tweak rudder curve")).toBeInTheDocument();
+
+    const msgInput = screen.getByLabelText("Proposal commit message");
+    await fireEvent.input(msgInput, { target: { value: "Tune steering damper" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Approve & commit" }));
+
+    expect(calls.find((c) => c.cmd === "proposal_approve")?.args).toEqual({
+      id: 1,
+      proposalId: "p-1",
+      message: "Tune steering damper",
+      selectedPaths: ["Assets/Scripts/Engine.cs"],
+    });
   });
 });

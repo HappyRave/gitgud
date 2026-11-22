@@ -8,6 +8,7 @@ describe("keymap", () => {
       "Working copy",
       "Branches & remotes",
       "History & diff",
+      "Proposal",
       "Application",
     ]);
     for (const group of SHORTCUT_GROUPS) {

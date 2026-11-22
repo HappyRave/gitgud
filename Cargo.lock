@@ -1374,6 +1374,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "gitgud-cli"
+version = "0.1.0"
+dependencies = [
+ "gitgud-core",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "gitgud-core"
 version = "0.1.0"
 dependencies = [

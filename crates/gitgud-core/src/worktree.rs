@@ -309,6 +309,41 @@ impl Repo {
         }
     }
 
+    /// Returns every hunk (preserving exact line endings) along with its unified patch for `path` on `side`.
+    pub(crate) fn side_hunks_with_patches(
+        &self,
+        path: &str,
+        side: Side,
+    ) -> Result<Vec<(Hunk, String)>, Error> {
+        let v = self.versions(path, side)?;
+        let old = v.old.unwrap_or_default();
+        let new = v.new.unwrap_or_default();
+        if is_binary(&old) || is_binary(&new) {
+            return Ok(Vec::new());
+        }
+        let (old_s, new_s) = (String::from_utf8_lossy(&old), String::from_utf8_lossy(&new));
+        let is_new = old.is_empty();
+        Ok(hunks_keeping_eol(&old_s, &new_s)
+            .into_iter()
+            .map(|h| {
+                let raw = patch(path, &h);
+                let final_patch = if is_new {
+                    let mut lines = raw.split_inclusive('\n');
+                    let _ = lines.next();
+                    let _ = lines.next();
+                    format!(
+                        "--- /dev/null\n+++ {}\n{}",
+                        quote(&format!("b/{path}")),
+                        lines.collect::<String>()
+                    )
+                } else {
+                    raw
+                };
+                (h, final_patch)
+            })
+            .collect())
+    }
+
     /// The work tree file converted to its git form, `None` when it's gone.
     fn worktree_as_git(
         &self,
@@ -340,7 +375,7 @@ impl Repo {
 }
 
 /// A one-hunk patch git can apply; lines keep their exact endings.
-fn patch(path: &str, hunk: &Hunk) -> String {
+pub(crate) fn patch(path: &str, hunk: &Hunk) -> String {
     let range = |start: u32, len: u32| format!("{start},{len}");
     let mut out = format!(
         "--- {}\n+++ {}\n@@ -{} +{} @@\n",

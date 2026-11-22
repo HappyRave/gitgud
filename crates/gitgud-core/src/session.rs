@@ -17,6 +17,7 @@ use crate::lfs::{self, LfsInfo, LfsLock};
 use crate::merge::{MergeOutcome, MergeState, Side};
 use crate::oplog::{OpEntry, OpLog, OpLogStats, ReflogEntry, label_amend, label_commit};
 use crate::ops::{CommitOptions, ResetMode};
+use crate::proposals::{self, ProposalSummary};
 use crate::rebase::{RebaseOutcome, RebaseState, RebaseStep};
 use crate::remote::{PullOutcome, PullStrategy};
 use crate::repo::{self, Error, Repo};
@@ -1550,6 +1551,86 @@ impl Session {
         self.exclusive(id, |open, _| {
             unity_yaml::apply_unity_repo_setup(&open.repo, write_gitignore, write_gitattributes)
         })
+    }
+
+    /// Lists all agent proposals in repo `id`, newest first.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`] or [`Error::Read`].
+    pub fn proposals_list(&self, id: u32) -> Result<Vec<ProposalSummary>, Error> {
+        let open = self.get(id)?;
+        proposals::list_proposals(&open.repo)
+    }
+
+    /// Reads the diff for one file inside an agent proposal commit.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`], [`Error::Refused`], or [`Error::Read`].
+    pub fn proposal_file_diff(
+        &self,
+        id: u32,
+        proposal_id: &str,
+        path: &str,
+    ) -> Result<crate::diff::FileDiff, Error> {
+        let open = self.get(id)?;
+        proposals::proposal_file_diff(&open.repo, proposal_id, path)
+    }
+
+    /// Approves an agent proposal (applying & committing onto current HEAD via `git commit`, undoable via Ctrl+Z).
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`], [`Error::Refused`], or [`Error::Command`].
+    pub fn proposal_approve(
+        &self,
+        id: u32,
+        proposal_id: &str,
+        message: Option<&str>,
+        selected_paths: &[String],
+    ) -> Result<Opened, Error> {
+        let prop = {
+            let open = self.get(id)?;
+            proposals::get_proposal(&open.repo, proposal_id)?
+        };
+        let paths: Vec<String> = if selected_paths.is_empty() {
+            prop.files.clone()
+        } else {
+            selected_paths.to_vec()
+        };
+        let label = format!("Approve proposal {}", prop.short_commit);
+        self.write_destructive(id, &label, &paths, |repo, git| {
+            proposals::approve_proposal(repo, git, proposal_id, message, selected_paths).map(drop)
+        })
+    }
+
+    /// Requests changes on a proposal with a review comment and returns the updated summary.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`] or [`Error::Refused`].
+    pub fn proposal_request_changes(
+        &self,
+        id: u32,
+        proposal_id: &str,
+        comment: &str,
+        path: Option<&str>,
+    ) -> Result<ProposalSummary, Error> {
+        let open = self.get(id)?;
+        proposals::request_changes(&open.repo, proposal_id, comment, path)
+    }
+
+    /// Rejects an agent proposal, removes its hidden ref, and refreshes the graph.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`], [`Error::Refused`], or [`Error::Command`].
+    pub fn proposal_reject(
+        &self,
+        id: u32,
+        proposal_id: &str,
+        reason: Option<&str>,
+    ) -> Result<Opened, Error> {
+        self.exclusive(id, |open, git| {
+            proposals::reject_proposal(&open.repo, git, proposal_id, reason).map(drop)
+        })?;
+        self.refresh(id)
     }
 
     /// Runs `f` as the only write on repo `id`, with its watcher paused.

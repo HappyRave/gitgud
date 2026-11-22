@@ -71,7 +71,7 @@ export interface DrawRow {
   index: number;
   layout: RowLayout;
   wip: boolean;
-  /** A planned commit of a history-plan preview: hollow dashed dot. */
+  /** A planned commit of a history-plan preview or active proposal: hollow dashed dot. */
   ghost?: boolean;
   /** A commit the plan replaces. */
   faded?: boolean;

@@ -30,9 +30,9 @@ R on an older commit opens the plan, F / D apply at once, all undoable); Ctrl+F 
 working-copy keys of spec §5 plus Ctrl+2 / F6 / Ctrl+C / Ctrl+Shift+L / Ctrl+Shift+P / Ctrl+B; the ultrawide inspector
 split (≥ 2400 px); the strip's upstream / last-fetch line. Styling follows the lab
 mocks (tokens in `src/app.css`, light and dark); the lane colours are the mock's, never given a
-design round. Landed in M1–M6: command palette (`Ctrl+K`), shortcut sheet (`?`), line staging, syntax+intraline diff, plain-English error banner, settings modal, Unity Smart Merge / `.meta` guard / LFS locks / TGA+PSD previews, tags, file history & blame, op-log pruning + outside reflog recovery, commit-graph optimization, Unity YAML structural prefab/scene diff, R4-A property table resolver, post-merge integrity check, and Unity repo setup. Not yet: history
+design round. Landed in M1–M6: command palette (`Ctrl+K`), shortcut sheet (`?`), line staging, syntax+intraline diff, plain-English error banner, settings modal, Unity Smart Merge / `.meta` guard / LFS locks / TGA+PSD previews, tags, file history & blame, op-log pruning + outside reflog recovery, commit-graph optimization, Unity YAML structural prefab/scene diff, R4-A property table resolver, post-merge integrity check, Unity repo setup, and agent proposals (CLI / MCP / review inbox / ghost graph rows). Not yet: history
 edits over merge commits or the root commit (refused for now, Max 2026-11-22), stacks and PR
-links per stack level, the faded "still on origin" commits after Done, proposals.
+links per stack level, the faded "still on origin" commits after Done.
 Update this file as pieces land.
 
 The approved product spec is `docs/spec.md` (2026-11-21); design verdicts are in `docs/lab/decisions.md`.
@@ -52,6 +52,7 @@ The approved product spec is `docs/spec.md` (2026-11-21); design verdicts are in
 ```
 Cargo.toml              workspace root
 crates/gitgud-core/     all git logic, plain Rust, no Tauri dependency
+crates/gitgud-cli/      CLI + stdio MCP server binary (`gitgud`) for coding agents
 src-tauri/              thin Tauri layer: #[tauri::command]s that call gitgud-core
 src/                    SvelteKit app; lib/api.ts wraps invoke() for every command;
                         lib/dev/mock.ts is a fake backend for `pnpm dev` + `/?mock` (or `?mock=merge`)
@@ -149,6 +150,14 @@ replaying at most 255 rows (spike 4.3).
   `--follow` file commit history and porcelain blame annotations (`FileHistoryBlame.svelte`), op log
   storage stats & 30d/2000-entry pruning plus `git reflog` recovery (`OpLogPanel.svelte`), and
   optional `git commit-graph write --reachable --changed-paths` optimization.
+- **Agent Proposals & CLI/MCP** (`proposals.rs`, `crates/gitgud-cli`, `ProposalView.svelte`): agents
+  inspect `status` (incl. untracked files without `git add -N` and stable hunk IDs), `diff`, `log`,
+  `show`, `locks`, and submit isolated proposals built via temporary `GIT_INDEX_FILE` under
+  `refs/gitgud/proposals/<id>` + `.git/gitgud/proposals/<id>.json` without touching the user's index
+  or branches. Never exposes commit/checkout/merge/rebase/push over CLI/MCP. Non-blocking Unity risk
+  flags (`.meta` pairs, unlocked LFS files, deleted files), sidebar Inbox (`Sidebar.svelte`), dashed
+  ghost rows (`Graph.svelte` / `topology.rs`), 3-way replay onto moved `HEAD`, and undoable `approve` /
+  `request_changes` / `reject` in `ProposalView.svelte`.
 
 ## Commands
 

@@ -18,6 +18,7 @@ use gitgud_core::library::{
 use gitgud_core::merge::{ConflictSides, ConflictText, MergeState, Side as MergeSide};
 use gitgud_core::oplog::{OpEntry, OpLogStats, ReflogEntry};
 use gitgud_core::ops::{CommitOptions, ResetMode};
+use gitgud_core::proposals::ProposalSummary;
 use gitgud_core::rebase::{RebasePlan, RebaseState, RebaseStep};
 use gitgud_core::remote::{PullStrategy, PushInfo};
 use gitgud_core::repo::{self, Error, Status};
@@ -1351,6 +1352,56 @@ async fn unity_apply_repo_setup(
 }
 
 #[tauri::command]
+async fn proposals_list(
+    session: State<'_, Session>,
+    id: u32,
+) -> Result<Vec<ProposalSummary>, Error> {
+    session.proposals_list(id)
+}
+
+#[tauri::command]
+async fn proposal_file_diff(
+    session: State<'_, Session>,
+    id: u32,
+    proposal_id: String,
+    path: String,
+) -> Result<FileDiff, Error> {
+    session.proposal_file_diff(id, &proposal_id, &path)
+}
+
+#[tauri::command]
+async fn proposal_approve(
+    session: State<'_, Session>,
+    id: u32,
+    proposal_id: String,
+    message: Option<String>,
+    selected_paths: Vec<String>,
+) -> Result<Opened, Error> {
+    session.proposal_approve(id, &proposal_id, message.as_deref(), &selected_paths)
+}
+
+#[tauri::command]
+async fn proposal_request_changes(
+    session: State<'_, Session>,
+    id: u32,
+    proposal_id: String,
+    comment: String,
+    path: Option<String>,
+) -> Result<ProposalSummary, Error> {
+    session.proposal_request_changes(id, &proposal_id, &comment, path.as_deref())
+}
+
+#[tauri::command]
+async fn proposal_reject(
+    session: State<'_, Session>,
+    id: u32,
+    proposal_id: String,
+    reason: Option<String>,
+) -> Result<Opened, Error> {
+    session.proposal_reject(id, &proposal_id, reason.as_deref())
+}
+
+#[tauri::command]
 async fn background_refresh(
     session: State<'_, Session>,
     id: u32,
@@ -1504,7 +1555,12 @@ fn app_with_library<R: Runtime>(builder: Builder<R>, library: Option<LibraryStor
             resolve_unity_conflict,
             unity_post_merge_check,
             unity_repo_setup_status,
-            unity_apply_repo_setup
+            unity_apply_repo_setup,
+            proposals_list,
+            proposal_file_diff,
+            proposal_approve,
+            proposal_request_changes,
+            proposal_reject
         ])
 }
 
@@ -2926,5 +2982,92 @@ mod tests {
             )
             .unwrap();
         assert_eq!(issues.as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn proposals_review_approve_request_changes_and_reject_through_ipc() {
+        let ipc = Ipc::new();
+        let repo = TestRepo::init();
+        repo.write("hello.txt", "v1\n").commit_all("initial");
+        repo.write("hello.txt", "v2\n");
+
+        let opened = repo::open(repo.path()).unwrap();
+        let git = gitgud_core::cli::GitCli::new(&git::locate().unwrap());
+        let p1 = gitgud_core::proposals::create_proposal(
+            &opened,
+            &git,
+            &gitgud_core::proposals::CreateProposalInput {
+                message: "feat: agent proposal 1".into(),
+                why: Some("improves greeting".into()),
+                agent: Some("claude".into()),
+                paths: vec!["hello.txt".into()],
+                hunk_ids: vec![],
+            },
+        )
+        .unwrap();
+
+        let id = open(&ipc, &repo)["id"].clone();
+
+        let listed = ipc.call("proposals_list", json!({ "id": id })).unwrap();
+        assert_eq!(listed.as_array().unwrap().len(), 1);
+        assert_eq!(listed[0]["id"], p1.id);
+
+        let pdiff = ipc
+            .call(
+                "proposal_file_diff",
+                json!({ "id": id, "proposalId": p1.id, "path": "hello.txt" }),
+            )
+            .unwrap();
+        assert!(!pdiff["hunks"].as_array().unwrap().is_empty());
+
+        let updated = ipc
+            .call(
+                "proposal_request_changes",
+                json!({ "id": id, "proposalId": p1.id, "comment": "add docstring" }),
+            )
+            .unwrap();
+        assert_eq!(updated["status"], "changesRequested");
+
+        ipc.call(
+            "proposal_approve",
+            json!({
+                "id": id,
+                "proposalId": p1.id,
+                "message": "feat: approved greeting",
+                "selectedPaths": ["hello.txt"]
+            }),
+        )
+        .unwrap();
+        assert_eq!(
+            repo.git(&["log", "-1", "--format=%s"]).trim(),
+            "feat: approved greeting"
+        );
+
+        repo.write("extra.txt", "discard me\n");
+        let p2 = gitgud_core::proposals::create_proposal(
+            &opened,
+            &git,
+            &gitgud_core::proposals::CreateProposalInput {
+                message: "feat: rejectable".into(),
+                why: None,
+                agent: Some("codex".into()),
+                paths: vec!["extra.txt".into()],
+                hunk_ids: vec![],
+            },
+        )
+        .unwrap();
+        ipc.call(
+            "proposal_reject",
+            json!({ "id": id, "proposalId": p2.id, "reason": "not needed" }),
+        )
+        .unwrap();
+        let after = ipc.call("proposals_list", json!({ "id": id })).unwrap();
+        assert!(
+            after
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|x| x["id"] == p2.id && x["status"] == "rejected")
+        );
     }
 }

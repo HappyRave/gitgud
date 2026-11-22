@@ -14,6 +14,7 @@ pub mod library;
 pub mod merge;
 pub mod oplog;
 pub mod ops;
+pub mod proposals;
 pub mod rebase;
 pub mod remote;
 pub mod remote_url;

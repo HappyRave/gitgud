@@ -38,7 +38,8 @@ export type RefLabel =
   | { kind: "branch"; name: string; current: boolean }
   | { kind: "remote"; name: string }
   | { kind: "tag"; name: string }
-  | { kind: "stash"; name: string };
+  | { kind: "stash"; name: string }
+  | { kind: "proposal"; name: string };
 
 export interface Segment {
   from: number;
@@ -69,6 +70,8 @@ export interface Row {
   faded?: boolean;
   /** Stash index (`stash@{n}`) when this row is a stash. */
   stash?: number;
+  /** Proposal id when this row is an active agent proposal ghost commit. */
+  proposal?: string | null;
   layout: RowLayout;
 }
 
@@ -662,6 +665,39 @@ export interface ToolDiagnostics {
   lfsVersion: string | null;
 }
 
+export type ProposalStatus = "pending" | "changesRequested" | "approved" | "rejected" | "withdrawn";
+
+export interface RiskFlag {
+  kind: string;
+  path: string;
+  detail: string;
+}
+
+export interface ProposalComment {
+  id: string;
+  author: string;
+  text: string;
+  path: string | null;
+  time: number;
+}
+
+export interface ProposalSummary {
+  id: string;
+  commitId: string;
+  shortCommit: string;
+  baseId: string;
+  message: string;
+  why: string;
+  agent: string;
+  status: ProposalStatus;
+  createdAt: number;
+  updatedAt: number;
+  files: string[];
+  riskFlags: RiskFlag[];
+  comments: ProposalComment[];
+  headMoved: boolean;
+}
+
 /** Every command the frontend invokes: its arguments and its Ok value. Errors arrive as strings. */
 export interface Commands {
   git_info: { args: Record<string, never>; result: GitInfo };
@@ -769,6 +805,17 @@ export interface Commands {
     args: { id: number; writeGitignore: boolean; writeGitattributes: boolean };
     result: UnityRepoSetupStatus;
   };
+  proposals_list: { args: { id: number }; result: ProposalSummary[] };
+  proposal_file_diff: { args: { id: number; proposalId: string; path: string }; result: FileDiff };
+  proposal_approve: {
+    args: { id: number; proposalId: string; message?: string | null; selectedPaths: string[] };
+    result: Opened;
+  };
+  proposal_request_changes: {
+    args: { id: number; proposalId: string; comment: string; path?: string | null };
+    result: ProposalSummary;
+  };
+  proposal_reject: { args: { id: number; proposalId: string; reason?: string | null }; result: Opened };
   pr_url: { args: { id: number; branch: string }; result: string | null };
   open_external_url: { args: { url: string }; result: null };
   predict_merge: { args: { id: number; branch: string }; result: string[] };
@@ -1030,6 +1077,23 @@ export const unityPostMergeCheck = (id: number, paths: string[]) => call("unity_
 export const unityRepoSetupStatus = (id: number) => call("unity_repo_setup_status", { id });
 export const unityApplyRepoSetup = (id: number, writeGitignore: boolean, writeGitattributes: boolean) =>
   call("unity_apply_repo_setup", { id, writeGitignore, writeGitattributes });
+export const proposalsList = (id: number) => call("proposals_list", { id });
+export const proposalFileDiff = (id: number, proposalId: string, path: string) =>
+  call("proposal_file_diff", { id, proposalId, path });
+export const proposalApprove = (
+  id: number,
+  proposalId: string,
+  selectedPaths: string[],
+  message: string | null = null,
+) => call("proposal_approve", { id, proposalId, message, selectedPaths });
+export const proposalRequestChanges = (
+  id: number,
+  proposalId: string,
+  comment: string,
+  path: string | null = null,
+) => call("proposal_request_changes", { id, proposalId, comment, path });
+export const proposalReject = (id: number, proposalId: string, reason: string | null = null) =>
+  call("proposal_reject", { id, proposalId, reason });
 
 export const onCloneProgress = (handler: (progress: CloneProgress) => void) =>
   listen<CloneProgress>("clone-progress", (e) => handler(e.payload));

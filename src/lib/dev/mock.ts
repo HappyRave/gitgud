@@ -8,6 +8,7 @@ import type {
   Opened,
   OpEntry,
   PlanCommit,
+  ProposalSummary,
   RebaseState,
   Row,
   RowLayout,
@@ -32,6 +33,30 @@ export function installMock(scenario: string) {
       annotated: true,
       message: "Milestone 4 release candidate",
       time: now - 3600 * 24,
+    },
+  ];
+  let mockProposals: ProposalSummary[] = [
+    {
+      id: "p-1",
+      commitId: "p100000000000000000000000000000000000000",
+      shortCommit: "p100000",
+      baseId: "95e25c8000000000000000000000000000000000",
+      message: "Tune boat steering damping",
+      why: "Reduces oscillation at high speed",
+      agent: "claude-code",
+      status: "pending",
+      createdAt: now - 180,
+      updatedAt: now - 180,
+      files: ["Assets/Scripts/Boat/Engine.cs"],
+      riskFlags: [
+        {
+          kind: "missingMeta",
+          path: "Assets/Scripts/Boat/Engine.cs",
+          detail: "Missing companion .meta file",
+        },
+      ],
+      comments: [],
+      headMoved: false,
     },
   ];
   let mockLib: LibrarySnapshot = {
@@ -77,6 +102,17 @@ export function installMock(scenario: string) {
   const through = (...lanes: number[]) => lanes.map((l) => ({ from: l, to: l, part: "through" as const }));
   const ROWS: Row[] = [
     { id: "w", shortId: "", subject: "Uncommitted changes", author: "", time: now, labels: [], wip: true, layout: lane(0, [{ from: 0, to: 0, part: "bottom" }]) },
+    {
+      id: "p100000000000000000000000000000000000000",
+      shortId: "p100000",
+      subject: "Tune boat steering damping",
+      author: "claude-code",
+      time: now - 180,
+      labels: [{ kind: "proposal", name: "proposal/claude-code" }],
+      wip: false,
+      proposal: "p-1",
+      layout: lane(1, [...through(0), { from: 1, to: 0, part: "bottom", stroke: "dashed" }]),
+    },
     row("95e25c8", "Raise ClearShot camera rig", "Max", now - 120, [{ kind: "branch", name: "master", current: true }], lane(0, [{ from: 0, to: 0, part: "top" }, { from: 0, to: 0, part: "bottom" }])),
     row("3493748", "Move blimp camera right", "Max", now - 2460, [{ kind: "branch", name: "feature/stack", current: false }], lane(1, [...through(0), { from: 1, to: 1, part: "bottom" }])),
     row("6bb2f7d", "fixup! WIP engine thrust tweak", "Max", now - 2470, [], lane(1, [...through(0), { from: 1, to: 1, part: "top" }, { from: 1, to: 1, part: "bottom" }])),
@@ -638,6 +674,58 @@ export function installMock(scenario: string) {
       forceTextOk: true,
       serializationMode: 2,
     }),
+    proposals_list: () => mockProposals.map((p) => ({ ...p, comments: [...p.comments] })),
+    proposal_file_diff: ({ path }) => ({
+      path,
+      binary: false,
+      hunks: [
+        {
+          oldStart: 12,
+          oldLines: 4,
+          newStart: 12,
+          newLines: 5,
+          lines: [
+            { kind: "context", old: 12, new: 12, text: "    float rudder = Input.GetAxis(\"Horizontal\");" },
+            { kind: "removed", old: 13, new: null, text: "    float damping = 0.8f;" },
+            { kind: "added", old: null, new: 13, text: "    float damping = 1.4f;" },
+            { kind: "added", old: null, new: 14, text: "    rudder *= Mathf.Clamp01(1f - speed * 0.02f);" },
+            { kind: "context", old: 14, new: 15, text: "    ApplySteer(rudder, damping);" },
+          ],
+        },
+      ],
+    }),
+    proposal_approve: ({ proposalId }) => {
+      mockProposals = mockProposals.map((p) => (p.id === proposalId ? { ...p, status: "approved", updatedAt: now } : p));
+      graphVersion += 1;
+      return opened();
+    },
+    proposal_request_changes: ({ proposalId, comment, path }) => {
+      let updated: ProposalSummary | null = null;
+      mockProposals = mockProposals.map((p) => {
+        if (p.id !== proposalId) {
+          return p;
+        }
+        updated = {
+          ...p,
+          status: "changesRequested",
+          updatedAt: now,
+          comments: [
+            ...p.comments,
+            { id: `c-${p.comments.length + 1}`, author: "Max", text: comment, path: path ?? null, time: now },
+          ],
+        };
+        return updated;
+      });
+      if (!updated) {
+        throw `Unknown proposal ${proposalId}`;
+      }
+      return updated;
+    },
+    proposal_reject: ({ proposalId }) => {
+      mockProposals = mockProposals.map((p) => (p.id === proposalId ? { ...p, status: "rejected", updatedAt: now } : p));
+      graphVersion += 1;
+      return opened();
+    },
     pr_url: ({ branch }) => `https://github.com/Max/boat/pull/new/${branch}`,
     open_external_url: () => null,
     library_load: () => mockLib,

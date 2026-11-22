@@ -101,7 +101,7 @@
         index,
         layout: row.layout,
         wip: row.wip,
-        ghost: row.after != null,
+        ghost: row.after != null || row.proposal != null,
         faded: row.faded,
         stash: row.stash != null,
       })),
@@ -175,8 +175,9 @@
     }
   }
 
-  /** A row edits can act on: a real commit (not WIP, ghost, or stash). */
-  const editable = (row: Row | undefined): row is Row => !!row && !row.wip && row.after == null && row.stash == null;
+  /** A row edits can act on: a real commit (not WIP, ghost, proposal, or stash). */
+  const editable = (row: Row | undefined): row is Row =>
+    !!row && !row.wip && row.after == null && row.stash == null && row.proposal == null;
 
   function onContextMenu(event: MouseEvent) {
     const li = (event.target as HTMLElement).closest<HTMLElement>("li[data-index]");
@@ -280,7 +281,7 @@
           role="option"
           data-index={index}
           class:wip={row.wip}
-          class:ghost={row.after != null}
+          class:ghost={row.after != null || row.proposal != null}
           class:faded={row.faded}
           class:selected={selected === index}
           class:hit={hits?.has(index)}
@@ -459,5 +460,9 @@
   .label.stash {
     border-style: dashed;
     color: var(--l3);
+  }
+  .label.proposal {
+    border-style: dashed;
+    color: var(--l0);
   }
 </style>
