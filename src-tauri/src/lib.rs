@@ -2,6 +2,7 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use gitgud_core::blame::{BlameLine, FileCommit};
 use gitgud_core::branches::Branches;
 use gitgud_core::clone::{CloneProgress, clone_repo as core_clone_repo};
 use gitgud_core::config::{self, IdentityConfig, ToolDiagnostics};
@@ -15,7 +16,7 @@ use gitgud_core::library::{
     ScanResult, display_path, scan_folder as core_scan_folder,
 };
 use gitgud_core::merge::{ConflictSides, ConflictText, MergeState, Side as MergeSide};
-use gitgud_core::oplog::OpEntry;
+use gitgud_core::oplog::{OpEntry, OpLogStats, ReflogEntry};
 use gitgud_core::ops::{CommitOptions, ResetMode};
 use gitgud_core::rebase::{RebasePlan, RebaseState, RebaseStep};
 use gitgud_core::remote::{PullStrategy, PushInfo};
@@ -23,6 +24,7 @@ use gitgud_core::repo::{self, Error, Status};
 use gitgud_core::sequencer::{SequencerState, SequencerStep};
 use gitgud_core::session::{Opened, PlanPreview, PullResult, Reverted, Session};
 use gitgud_core::stash::StashEntry;
+use gitgud_core::tags::TagInfo;
 use gitgud_core::task::{Cancel, Progress};
 use gitgud_core::unity::{MetaIssue, UnityInfo};
 use gitgud_core::worktree::{HunkHeader, LineSelect, Side};
@@ -1190,6 +1192,96 @@ async fn lfs_locks_in_push(
 }
 
 #[tauri::command]
+async fn tags(session: State<'_, Session>, id: u32) -> Result<Vec<TagInfo>, Error> {
+    session.tags(id)
+}
+
+#[tauri::command]
+async fn create_tag(
+    session: State<'_, Session>,
+    id: u32,
+    name: String,
+    target: Option<String>,
+    message: Option<String>,
+) -> Result<Opened, Error> {
+    session.create_tag(id, &name, target.as_deref(), message.as_deref())
+}
+
+#[tauri::command]
+async fn delete_tag(session: State<'_, Session>, id: u32, name: String) -> Result<Opened, Error> {
+    session.delete_tag(id, &name)
+}
+
+#[tauri::command]
+async fn push_tag(
+    session: State<'_, Session>,
+    id: u32,
+    remote: String,
+    name: String,
+) -> Result<(), Error> {
+    session.push_tag(id, &remote, &name)
+}
+
+#[tauri::command]
+async fn delete_remote_tag(
+    session: State<'_, Session>,
+    id: u32,
+    remote: String,
+    name: String,
+) -> Result<(), Error> {
+    session.delete_remote_tag(id, &remote, &name)
+}
+
+#[tauri::command]
+async fn file_history(
+    session: State<'_, Session>,
+    id: u32,
+    path: String,
+    limit: Option<usize>,
+) -> Result<Vec<FileCommit>, Error> {
+    session.file_history(id, &path, limit)
+}
+
+#[tauri::command]
+async fn blame_file(
+    session: State<'_, Session>,
+    id: u32,
+    path: String,
+    rev: Option<String>,
+) -> Result<Vec<BlameLine>, Error> {
+    session.blame_file(id, &path, rev.as_deref())
+}
+
+#[tauri::command]
+async fn op_log_stats(session: State<'_, Session>, id: u32) -> Result<OpLogStats, Error> {
+    session.op_log_stats(id)
+}
+
+#[tauri::command]
+async fn op_log_prune(session: State<'_, Session>, id: u32) -> Result<OpLogStats, Error> {
+    session.op_log_prune(id)
+}
+
+#[tauri::command]
+async fn outside_reflog(
+    session: State<'_, Session>,
+    id: u32,
+    limit: Option<usize>,
+) -> Result<Vec<ReflogEntry>, Error> {
+    session.outside_reflog(id, limit)
+}
+
+#[tauri::command]
+async fn has_commit_graph(session: State<'_, Session>, id: u32) -> Result<bool, Error> {
+    session.has_commit_graph(id)
+}
+
+#[tauri::command]
+async fn write_commit_graph(session: State<'_, Session>, id: u32) -> Result<(), Error> {
+    session.write_commit_graph(id)
+}
+
+#[tauri::command]
 async fn background_refresh(
     session: State<'_, Session>,
     id: u32,
@@ -1324,7 +1416,19 @@ fn app_with_library<R: Runtime>(builder: Builder<R>, library: Option<LibraryStor
             lfs_lock,
             lfs_unlock,
             lfs_locks_in_push,
-            background_refresh
+            background_refresh,
+            tags,
+            create_tag,
+            delete_tag,
+            push_tag,
+            delete_remote_tag,
+            file_history,
+            blame_file,
+            op_log_stats,
+            op_log_prune,
+            outside_reflog,
+            has_commit_graph,
+            write_commit_graph
         ])
 }
 
@@ -2555,5 +2659,68 @@ mod tests {
         assert_eq!(r.status(), tauri::http::StatusCode::OK);
         assert_eq!(r.headers()[tauri::http::header::CONTENT_TYPE], "image/png");
         assert!(r.body().starts_with(b"\x89PNG\r\n\x1a\n"));
+    }
+
+    #[test]
+    fn tags_blame_reflog_and_commit_graph_through_ipc() {
+        let ipc = Ipc::new();
+        let repo = TestRepo::init();
+        repo.write("notes.txt", "alpha\nbeta\ngamma\n")
+            .commit_all("add notes");
+
+        let id = open(&ipc, &repo)["id"].clone();
+
+        ipc.call(
+            "create_tag",
+            json!({ "id": id, "name": "v0.1.0", "message": "release 0.1" }),
+        )
+        .unwrap();
+        let listed = ipc.call("tags", json!({ "id": id })).unwrap();
+        let arr = listed.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["name"], "v0.1.0");
+        assert_eq!(arr[0]["annotated"], true);
+        assert_eq!(arr[0]["message"], "release 0.1");
+
+        let hist = ipc
+            .call("file_history", json!({ "id": id, "path": "notes.txt" }))
+            .unwrap();
+        assert_eq!(hist.as_array().unwrap().len(), 1);
+        assert_eq!(hist[0]["subject"], "add notes");
+
+        let blame = ipc
+            .call("blame_file", json!({ "id": id, "path": "notes.txt" }))
+            .unwrap();
+        assert_eq!(blame.as_array().unwrap().len(), 3);
+        assert_eq!(blame[1]["text"], "beta");
+
+        let reflog = ipc.call("outside_reflog", json!({ "id": id })).unwrap();
+        assert!(!reflog.as_array().unwrap().is_empty());
+
+        let stats = ipc.call("op_log_stats", json!({ "id": id })).unwrap();
+        assert_eq!(stats["entryCount"], 0);
+        let pruned = ipc.call("op_log_prune", json!({ "id": id })).unwrap();
+        assert_eq!(pruned["entryCount"], 0);
+
+        assert_eq!(
+            ipc.call("has_commit_graph", json!({ "id": id })).unwrap(),
+            false
+        );
+        ipc.call("write_commit_graph", json!({ "id": id })).unwrap();
+        assert_eq!(
+            ipc.call("has_commit_graph", json!({ "id": id })).unwrap(),
+            true
+        );
+
+        ipc.call("delete_tag", json!({ "id": id, "name": "v0.1.0" }))
+            .unwrap();
+        assert_eq!(
+            ipc.call("tags", json!({ "id": id }))
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .len(),
+            0
+        );
     }
 }

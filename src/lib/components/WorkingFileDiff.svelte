@@ -14,6 +14,8 @@
     busy = false,
     onhunk,
     onlines,
+    onhistory,
+    onblame,
   }: {
     repoId: number;
     path: string;
@@ -25,6 +27,8 @@
     busy?: boolean;
     onhunk: (action: "stage" | "unstage" | "discard", hunk: Hunk) => void;
     onlines?: (action: "stage" | "unstage" | "discard", select: LineSelect) => void;
+    onhistory?: (path: string) => void;
+    onblame?: (path: string) => void;
   } = $props();
 
   let container = $state<HTMLElement | null>(null);
@@ -138,6 +142,12 @@
     <span class="name">{path}</span> <span class="side">{side === "staged" ? "staged" : "unstaged"}</span>
     <span class="keys">
       {#if perHunk && (diff?.hunks.length ?? 0) > 1}Alt+↑↓ hunks ·{/if}
+      {#if onhistory}
+        <button type="button" class="bare mode" title="File history" onclick={() => onhistory(path)}>History</button> ·
+      {/if}
+      {#if onblame}
+        <button type="button" class="bare mode" title="Annotate (git blame)" onclick={() => onblame(path)}>Blame</button> ·
+      {/if}
       <button
         type="button"
         class="bare mode"

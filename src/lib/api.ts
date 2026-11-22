@@ -224,6 +224,49 @@ export interface LfsLock {
   ours: boolean;
 }
 
+export interface TagInfo {
+  name: string;
+  target: string;
+  shortTarget: string;
+  annotated: boolean;
+  message: string | null;
+  time: number;
+}
+
+export interface FileCommit {
+  id: string;
+  shortId: string;
+  subject: string;
+  author: string;
+  time: number;
+  change: string;
+}
+
+export interface BlameLine {
+  lineNo: number;
+  commit: string;
+  shortCommit: string;
+  author: string;
+  time: number;
+  summary: string;
+  text: string;
+}
+
+export interface OpLogStats {
+  entryCount: number;
+  totalBytes: number;
+  prunableCount: number;
+  reclaimableBytes: number;
+}
+
+export interface ReflogEntry {
+  id: string;
+  shortId: string;
+  selector: string;
+  action: string;
+  time: number;
+}
+
 export interface MergeState {
   /** The branch being merged in, when gitgud started the merge. */
   theirs: string | null;
@@ -627,6 +670,18 @@ export interface Commands {
   lfs_unlock: { args: { id: number; path: string; force?: boolean }; result: null };
   lfs_locks_in_push: { args: { id: number; remote: string; remoteBranch: string; branch: string }; result: LfsLock[] };
   background_refresh: { args: { id: number; minAgeSecs?: number }; result: boolean };
+  tags: { args: { id: number }; result: TagInfo[] };
+  create_tag: { args: { id: number; name: string; target?: string | null; message?: string | null }; result: Opened };
+  delete_tag: { args: { id: number; name: string }; result: Opened };
+  push_tag: { args: { id: number; remote: string; name: string }; result: null };
+  delete_remote_tag: { args: { id: number; remote: string; name: string }; result: null };
+  file_history: { args: { id: number; path: string; limit?: number }; result: FileCommit[] };
+  blame_file: { args: { id: number; path: string; rev?: string | null }; result: BlameLine[] };
+  op_log_stats: { args: { id: number }; result: OpLogStats };
+  op_log_prune: { args: { id: number }; result: OpLogStats };
+  outside_reflog: { args: { id: number; limit?: number }; result: ReflogEntry[] };
+  has_commit_graph: { args: { id: number }; result: boolean };
+  write_commit_graph: { args: { id: number }; result: null };
   pr_url: { args: { id: number; branch: string }; result: string | null };
   open_external_url: { args: { url: string }; result: null };
   predict_merge: { args: { id: number; branch: string }; result: string[] };
@@ -863,6 +918,21 @@ export const lfsUnlock = (id: number, path: string, force = false) => call("lfs_
 export const lfsLocksInPush = (id: number, remote: string, remoteBranch: string, branch: string) =>
   call("lfs_locks_in_push", { id, remote, remoteBranch, branch });
 export const backgroundRefresh = (id: number, minAgeSecs = 600) => call("background_refresh", { id, minAgeSecs });
+export const tags = (id: number) => call("tags", { id });
+export const createTag = (id: number, name: string, target: string | null = null, message: string | null = null) =>
+  call("create_tag", { id, name, target, message });
+export const deleteTag = (id: number, name: string) => call("delete_tag", { id, name });
+export const pushTag = (id: number, remote: string, name: string) => call("push_tag", { id, remote, name });
+export const deleteRemoteTag = (id: number, remote: string, name: string) =>
+  call("delete_remote_tag", { id, remote, name });
+export const fileHistory = (id: number, path: string, limit = 200) => call("file_history", { id, path, limit });
+export const blameFile = (id: number, path: string, rev: string | null = null) =>
+  call("blame_file", { id, path, rev });
+export const opLogStats = (id: number) => call("op_log_stats", { id });
+export const opLogPrune = (id: number) => call("op_log_prune", { id });
+export const outsideReflog = (id: number, limit = 100) => call("outside_reflog", { id, limit });
+export const hasCommitGraph = (id: number) => call("has_commit_graph", { id });
+export const writeCommitGraph = (id: number) => call("write_commit_graph", { id });
 
 export const onCloneProgress = (handler: (progress: CloneProgress) => void) =>
   listen<CloneProgress>("clone-progress", (e) => handler(e.payload));

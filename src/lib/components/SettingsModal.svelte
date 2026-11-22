@@ -1,6 +1,13 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { configGetIdentity, configSetIdentity, toolDiagnostics, type ToolDiagnostics } from "$lib/api";
+  import {
+    configGetIdentity,
+    configSetIdentity,
+    hasCommitGraph,
+    toolDiagnostics,
+    writeCommitGraph,
+    type ToolDiagnostics,
+  } from "$lib/api";
   import {
     prefs,
     setDensity,
@@ -29,6 +36,24 @@
   let savedMsg = $state<string | null>(null);
   let error = $state<string | null>(null);
   let diag = $state<ToolDiagnostics | null>(null);
+  let commitGraph = $state<boolean | null>(null);
+  let optimizingGraph = $state(false);
+
+  async function optimizeGraph() {
+    if (activeRepoId == null || optimizingGraph) {
+      return;
+    }
+    optimizingGraph = true;
+    error = null;
+    try {
+      await writeCommitGraph(activeRepoId);
+      commitGraph = true;
+    } catch (err) {
+      error = String(err);
+    } finally {
+      optimizingGraph = false;
+    }
+  }
 
   async function loadIdentity(nextScope: "global" | "local") {
     scope = nextScope;
@@ -64,6 +89,12 @@
       (d) => (diag = d),
       (err) => (error = String(err)),
     );
+    if (activeRepoId != null) {
+      hasCommitGraph(activeRepoId).then(
+        (built) => (commitGraph = built),
+        () => (commitGraph = null),
+      );
+    }
   });
 </script>
 
@@ -165,6 +196,15 @@
           <dd class="mono">{diag.gitPath}</dd>
           <dt>Git LFS</dt>
           <dd>{diag.lfsVersion ?? "Not installed"}</dd>
+          {#if activeRepoId != null}
+            <dt>Commit graph</dt>
+            <dd class="gcache">
+              <span>{commitGraph === null ? "Unknown" : commitGraph ? "Built" : "Not built"}</span>
+              <button type="button" disabled={optimizingGraph} onclick={optimizeGraph}>
+                {optimizingGraph ? "Building…" : commitGraph ? "Rebuild graph cache" : "Optimize graph cache"}
+              </button>
+            </dd>
+          {/if}
         </dl>
       {:else}
         <p class="ab">Checking installed tools…</p>
@@ -312,6 +352,11 @@
   .mono {
     font-family: var(--mono);
     font-size: 11px;
+  }
+  .gcache {
+    display: flex;
+    align-items: center;
+    gap: 10px;
   }
   .x {
     padding: 2px 6px;

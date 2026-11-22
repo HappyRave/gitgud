@@ -50,6 +50,27 @@ pub struct OpEntry {
     pub paths: Vec<String>,
 }
 
+/// Disk footprint and prunable count of a repository's op log.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpLogStats {
+    pub entry_count: usize,
+    pub total_bytes: u64,
+    pub prunable_count: usize,
+    pub reclaimable_bytes: u64,
+}
+
+/// An operation recorded in git's reflog outside gitgud.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReflogEntry {
+    pub id: String,
+    pub short_id: String,
+    pub selector: String,
+    pub action: String,
+    pub time: i64,
+}
+
 impl From<&Entry> for OpEntry {
     fn from(e: &Entry) -> Self {
         Self {
@@ -639,6 +660,76 @@ impl OpLog {
         done.map_err(read_err)
     }
 
+    /// Lists recent entries in `.git/gitgud/oplog` and computes storage + prune preview.
+    ///
+    /// # Errors
+    /// [`Error::Read`] when reading log files fails.
+    pub fn stats(&self) -> Result<OpLogStats, Error> {
+        let entries = self.load()?;
+        Ok(self.compute_stats(&entries, KEEP_ENTRIES, KEEP_SECONDS))
+    }
+
+    /// Prunes entries exceeding both `keep_min` and `max_age_secs` (defaults: 2000, 30 days)
+    /// and returns updated storage stats.
+    ///
+    /// # Errors
+    /// [`Error::Read`] on disk error.
+    pub fn prune_now(&self, keep_min: usize, max_age_secs: i64) -> Result<OpLogStats, Error> {
+        let mut entries = self.load()?;
+        let cutoff = now() - max_age_secs;
+        let mut changed = false;
+        while entries.len() > keep_min && entries[0].time < cutoff {
+            let old = entries.remove(0);
+            self.remove_files(&old.before);
+            self.remove_files(&old.after);
+            changed = true;
+        }
+        if changed {
+            fs::create_dir_all(&self.dir).map_err(read_err)?;
+            self.save(&entries)?;
+        }
+        Ok(self.compute_stats(&entries, keep_min, max_age_secs))
+    }
+
+    fn compute_stats(&self, entries: &[Entry], keep_min: usize, max_age_secs: i64) -> OpLogStats {
+        let mut total_bytes = 0u64;
+        if let Ok(read) = fs::read_dir(&self.dir) {
+            for e in read.flatten() {
+                if let Ok(m) = e.metadata()
+                    && m.is_file()
+                {
+                    total_bytes += m.len();
+                }
+            }
+        }
+        let cutoff = now() - max_age_secs;
+        let mut prunable_count = 0usize;
+        let mut reclaimable_bytes = 0u64;
+        for (idx, e) in entries.iter().enumerate() {
+            if entries.len() - idx > keep_min && e.time < cutoff {
+                prunable_count += 1;
+                reclaimable_bytes +=
+                    self.state_file_size(&e.before) + self.state_file_size(&e.after);
+            } else {
+                break;
+            }
+        }
+        OpLogStats {
+            entry_count: entries.len(),
+            total_bytes,
+            prunable_count,
+            reclaimable_bytes,
+        }
+    }
+
+    fn state_file_size(&self, state: &State) -> u64 {
+        state
+            .index
+            .as_ref()
+            .and_then(|name| fs::metadata(self.dir.join(name)).ok())
+            .map_or(0, |m| m.len())
+    }
+
     fn prune(&self, entries: &mut Vec<Entry>) {
         let cutoff = now() - KEEP_SECONDS;
         while entries.len() > KEEP_ENTRIES && entries[0].time < cutoff {
@@ -687,6 +778,51 @@ pub fn label_amend(message: &str) -> String {
     label_with_subject("Amend", message)
 }
 
+impl Repo {
+    /// Recent git reflog moves made outside gitgud (terminal, IDE, coding agents).
+    ///
+    /// # Errors
+    /// [`Error::Command`] when `git reflog` fails.
+    pub fn outside_reflog(&self, git: &GitCli, limit: usize) -> Result<Vec<ReflogEntry>, Error> {
+        let repo = self.gix();
+        if repo.head().map_err(read_err)?.is_unborn() {
+            return Ok(Vec::new());
+        }
+        let n = limit.clamp(1, 200).to_string();
+        let out = git.run(
+            self.root(),
+            &[
+                "reflog",
+                "--date=unix",
+                "--format=%H%x1f%h%x1f%gd%x1f%gs%x1f%ct",
+                "-n",
+                &n,
+            ],
+            None,
+        )?;
+        Ok(out
+            .lines()
+            .filter_map(|line| {
+                let cols: Vec<&str> = line.split('\x1f').collect();
+                if cols.len() < 5 {
+                    return None;
+                }
+                if cols[3].contains("gitgud") {
+                    return None;
+                }
+                Some(ReflogEntry {
+                    id: cols[0].to_owned(),
+                    short_id: cols[1].to_owned(),
+                    selector: cols[2].to_owned(),
+                    action: cols[3].to_owned(),
+                    time: cols[4].trim().parse().unwrap_or(0),
+                })
+            })
+            .collect())
+    }
+}
+
+/// Splits `--amend` / commit messages cleanly into a label.
 fn label_with_subject(verb: &str, message: &str) -> String {
     let subject = message.lines().next().unwrap_or("").trim();
     let short: String = subject.chars().take(60).collect();

@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
+use crate::blame::{BlameLine, FileCommit};
 use crate::cli::GitCli;
 use crate::config;
 use crate::git;
@@ -13,12 +14,13 @@ use crate::graph::{Graph, Row};
 use crate::history::{Action, HistoryPlan, PlanPrediction, Step};
 use crate::lfs::{self, LfsInfo, LfsLock};
 use crate::merge::{MergeOutcome, MergeState, Side};
-use crate::oplog::{OpEntry, OpLog, label_amend, label_commit};
+use crate::oplog::{OpEntry, OpLog, OpLogStats, ReflogEntry, label_amend, label_commit};
 use crate::ops::{CommitOptions, ResetMode};
 use crate::rebase::{RebaseOutcome, RebaseState, RebaseStep};
 use crate::remote::{PullOutcome, PullStrategy};
 use crate::repo::{self, Error, Repo};
 use crate::sequencer::{SequencerKind, SequencerState, SequencerStep};
+use crate::tags::TagInfo;
 use crate::task::{Cancel, Progress};
 use crate::unity::{self, MetaIssue, UnityInfo};
 use crate::watch::RepoWatcher;
@@ -1297,6 +1299,133 @@ impl Session {
         } else {
             Ok(false)
         }
+    }
+
+    /// Lists tags in repo `id`, newest first.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`] or [`Error::Read`].
+    pub fn tags(&self, id: u32) -> Result<Vec<TagInfo>, Error> {
+        let open = self.get(id)?;
+        open.repo.tags()
+    }
+
+    /// Creates a lightweight or annotated tag in repo `id` and refreshes the open view.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`], [`Error::Refused`], or [`Error::Command`].
+    pub fn create_tag(
+        &self,
+        id: u32,
+        name: &str,
+        target: Option<&str>,
+        message: Option<&str>,
+    ) -> Result<Opened, Error> {
+        self.exclusive(id, |open, git| {
+            open.repo.create_tag(git, name, target, message)
+        })?;
+        self.refresh(id)
+    }
+
+    /// Deletes local tag `name` in repo `id` and refreshes the open view.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`] or [`Error::Command`].
+    pub fn delete_tag(&self, id: u32, name: &str) -> Result<Opened, Error> {
+        self.exclusive(id, |open, git| open.repo.delete_tag(git, name))?;
+        self.refresh(id)
+    }
+
+    /// Pushes tag `name` to `remote`.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`] or [`Error::Command`].
+    pub fn push_tag(&self, id: u32, remote: &str, name: &str) -> Result<(), Error> {
+        let open = self.get(id)?;
+        open.repo.push_tag(self.git()?, remote, name)
+    }
+
+    /// Deletes tag `name` from `remote`.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`] or [`Error::Command`].
+    pub fn delete_remote_tag(&self, id: u32, remote: &str, name: &str) -> Result<(), Error> {
+        let open = self.get(id)?;
+        open.repo.delete_remote_tag(self.git()?, remote, name)
+    }
+
+    /// Lists recent commits touching `path` (following renames).
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`] or [`Error::Command`].
+    pub fn file_history(
+        &self,
+        id: u32,
+        path: &str,
+        limit: Option<usize>,
+    ) -> Result<Vec<FileCommit>, Error> {
+        let open = self.get(id)?;
+        open.repo
+            .file_history(self.git()?, path, limit.unwrap_or(200))
+    }
+
+    /// Returns line-by-line blame annotations for `path` at `rev` (or worktree HEAD).
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`] or [`Error::Command`].
+    pub fn blame_file(
+        &self,
+        id: u32,
+        path: &str,
+        rev: Option<&str>,
+    ) -> Result<Vec<BlameLine>, Error> {
+        let open = self.get(id)?;
+        open.repo.blame_file(self.git()?, path, rev)
+    }
+
+    /// Returns op log entry counts, byte footprint, and prunable summary for repo `id`.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`] or [`Error::Read`].
+    pub fn op_log_stats(&self, id: u32) -> Result<OpLogStats, Error> {
+        let open = self.get(id)?;
+        OpLog::for_repo(&open.repo).stats()
+    }
+
+    /// Prunes op log entries older than 30 days beyond the most recent 2,000 entries.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`] or [`Error::Read`].
+    pub fn op_log_prune(&self, id: u32) -> Result<OpLogStats, Error> {
+        self.exclusive(id, |open, _| {
+            OpLog::for_repo(&open.repo).prune_now(2000, 30 * 24 * 60 * 60)
+        })
+    }
+
+    /// Lists recent git reflog entries on HEAD (commits made inside or outside gitgud).
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`] or [`Error::Command`].
+    pub fn outside_reflog(&self, id: u32, limit: Option<usize>) -> Result<Vec<ReflogEntry>, Error> {
+        let open = self.get(id)?;
+        open.repo.outside_reflog(self.git()?, limit.unwrap_or(100))
+    }
+
+    /// Returns whether `.git/objects/info/commit-graph` (or chain) exists.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`].
+    pub fn has_commit_graph(&self, id: u32) -> Result<bool, Error> {
+        let open = self.get(id)?;
+        Ok(open.repo.has_commit_graph())
+    }
+
+    /// Writes `git commit-graph write --reachable --changed-paths` for faster graph loads.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`] or [`Error::Command`].
+    pub fn write_commit_graph(&self, id: u32) -> Result<(), Error> {
+        self.exclusive(id, |open, git| open.repo.write_commit_graph(git))
     }
 
     /// Runs `f` as the only write on repo `id`, with its watcher paused.

@@ -12,6 +12,7 @@ import type {
   Row,
   RowLayout,
   Status,
+  TagInfo,
 } from "$lib/api";
 
 /**
@@ -22,6 +23,17 @@ import type {
 export function installMock(scenario: string) {
   const now = Math.floor(Date.now() / 1000);
   let graphVersion = 0;
+  let commitGraphBuilt = false;
+  let mockTags: TagInfo[] = [
+    {
+      name: "v0.4.2",
+      target: "c000000000000000000000000000000000000000",
+      shortTarget: "c000000",
+      annotated: true,
+      message: "Milestone 4 release candidate",
+      time: now - 3600 * 24,
+    },
+  ];
   let mockLib: LibrarySnapshot = {
     version: 1,
     folders: [
@@ -419,6 +431,103 @@ export function installMock(scenario: string) {
       { id: "101", path: "Assets/Art/Terrain.psd", owner: "Max", lockedAt: "2026-11-22T12:00:00Z", ours: true },
     ],
     background_refresh: () => false,
+    tags: () => [...mockTags],
+    create_tag: ({ name, target, message }) => {
+      const hex = (target ?? "c000000000000000000000000000000000000000").padEnd(40, "0");
+      mockTags = [
+        {
+          name,
+          target: hex,
+          shortTarget: hex.slice(0, 7),
+          annotated: Boolean(message?.trim()),
+          message: message?.trim() || null,
+          time: Math.floor(Date.now() / 1000),
+        },
+        ...mockTags.filter((t) => t.name !== name),
+      ];
+      graphVersion += 1;
+      return opened();
+    },
+    delete_tag: ({ name }) => {
+      mockTags = mockTags.filter((t) => t.name !== name);
+      graphVersion += 1;
+      return opened();
+    },
+    push_tag: () => null,
+    delete_remote_tag: () => null,
+    file_history: ({ path }) => [
+      {
+        id: "c000000000000000000000000000000000000000",
+        shortId: "c000000",
+        subject: `Refine ${path}`,
+        author: "Max",
+        time: now - 3600 * 4,
+        change: "modified",
+      },
+      {
+        id: "b000000000000000000000000000000000000000",
+        shortId: "b000000",
+        subject: `Add ${path}`,
+        author: "Max",
+        time: now - 3600 * 48,
+        change: "added",
+      },
+    ],
+    blame_file: ({ path }) => [
+      {
+        lineNo: 1,
+        commit: "b000000000000000000000000000000000000000",
+        shortCommit: "b000000",
+        author: "Max",
+        time: now - 3600 * 48,
+        summary: `Add ${path}`,
+        text: "using UnityEngine;",
+      },
+      {
+        lineNo: 2,
+        commit: "b000000000000000000000000000000000000000",
+        shortCommit: "b000000",
+        author: "Max",
+        time: now - 3600 * 48,
+        summary: `Add ${path}`,
+        text: "",
+      },
+      {
+        lineNo: 3,
+        commit: "c000000000000000000000000000000000000000",
+        shortCommit: "c000000",
+        author: "Max",
+        time: now - 3600 * 4,
+        summary: `Refine ${path}`,
+        text: "public sealed class BoatController : MonoBehaviour {}",
+      },
+    ],
+    op_log_stats: () => ({
+      entryCount: log.length,
+      totalBytes: log.length * 512,
+      prunableCount: 0,
+      reclaimableBytes: 0,
+    }),
+    op_log_prune: () => ({
+      entryCount: log.length,
+      totalBytes: log.length * 512,
+      prunableCount: 0,
+      reclaimableBytes: 0,
+    }),
+    outside_reflog: () => [
+      {
+        id: "c000000000000000000000000000000000000000",
+        shortId: "c000000",
+        selector: "HEAD@{0}",
+        action: "commit: Polish physics dampening",
+        time: now - 1800,
+      },
+    ],
+    has_commit_graph: () => commitGraphBuilt,
+    write_commit_graph: () => {
+      commitGraphBuilt = true;
+      return null;
+    },
     pr_url: ({ branch }) => `https://github.com/Max/boat/pull/new/${branch}`,
     open_external_url: () => null,
     library_load: () => mockLib,

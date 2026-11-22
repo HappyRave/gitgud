@@ -4,7 +4,19 @@
   import { prefs, toggleIgnoreWhitespace } from "$lib/prefs.svelte";
   import DiffView from "./DiffView.svelte";
 
-  let { repoId, commit, onclose }: { repoId: number; commit: string; onclose: () => void } = $props();
+  let {
+    repoId,
+    commit,
+    onhistory,
+    onblame,
+    onclose,
+  }: {
+    repoId: number;
+    commit: string;
+    onhistory?: (path: string) => void;
+    onblame?: (path: string, rev: string) => void;
+    onclose: () => void;
+  } = $props();
 
   const LETTER: Record<Change, string> = { added: "A", modified: "M", deleted: "D", typeChange: "T" };
 
@@ -62,6 +74,17 @@
   <div class="ph">
     Commit <span class="ct">· {detail?.shortId ?? commit.slice(0, 7)}</span>
     <span class="r">
+      {#if file && onhistory}
+        <button type="button" class="close" title="File history" onclick={() => file && onhistory(file)}>History</button>
+      {/if}
+      {#if file && onblame}
+        <button
+          type="button"
+          class="close"
+          title="Annotate file at this commit"
+          onclick={() => file && onblame(file, detail?.id ?? commit)}>Blame</button
+        >
+      {/if}
       <button
         type="button"
         class="close"

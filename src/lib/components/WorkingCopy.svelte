@@ -24,6 +24,8 @@
     ondiscard,
     onhunk,
     onlines,
+    onhistory,
+    onblame,
     onlock,
     onunlock,
     oncommit,
@@ -48,6 +50,8 @@
     ondiscard: (paths: string[]) => void;
     onhunk: (path: string, action: "stage" | "unstage" | "discard", hunk: Hunk) => void;
     onlines?: (path: string, action: "stage" | "unstage" | "discard", select: LineSelect) => void;
+    onhistory?: (path: string) => void;
+    onblame?: (path: string) => void;
     onlock?: (path: string) => void;
     onunlock?: (path: string, force: boolean) => void;
     oncommit: (message: string, options?: CommitOptions) => Promise<void>;
@@ -160,6 +164,8 @@
         {busy}
         onhunk={(action, hunk) => onhunk(file.path, action, hunk)}
         onlines={onlines ? (action, select) => onlines(file.path, action, select) : undefined}
+        {onhistory}
+        {onblame}
       />
     </div>
   {:else if status.entries.length}

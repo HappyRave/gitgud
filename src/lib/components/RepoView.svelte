@@ -81,28 +81,40 @@
     type MetaIssue,
     type Opened,
     type OpEntry,
+    type OpLogStats,
     type PlanAction,
     type PlanPrediction,
     type Progress,
     type PullStrategy,
     type RebaseState,
     type RebaseStep,
+    type ReflogEntry,
     type ResetMode,
     type Row,
     type SequencerState,
     type SequencerStep,
     type Side,
     type Status,
+    type TagInfo,
     type TaskOp,
     type UnityInfo,
   } from "$lib/api";
   import {
+    createTag,
+    deleteRemoteTag,
+    deleteTag,
+    opLogPrune,
+    opLogStats,
+    outsideReflog,
+    pushTag,
+    tags,
     unityCheckOpenAssets,
     unityConfigureSmartMerge,
     unityConfirmVerify,
     unityInfo,
     unityMetaIssues,
     unityRemergeConflicts,
+    writeCommitGraph,
   } from "$lib/api";
   import BranchDialog from "$lib/components/BranchDialog.svelte";
   import type { PaletteRepoActions } from "$lib/components/CommandPalette.svelte";
@@ -113,6 +125,7 @@
   import DeleteBranchDialog from "$lib/components/DeleteBranchDialog.svelte";
   import Dialog from "$lib/components/Dialog.svelte";
   import ErrorBanner from "$lib/components/ErrorBanner.svelte";
+  import FileHistoryBlame from "$lib/components/FileHistoryBlame.svelte";
   import FindBar from "$lib/components/FindBar.svelte";
   import Graph from "$lib/components/Graph.svelte";
   import MergeBanner from "$lib/components/MergeBanner.svelte";
@@ -125,6 +138,7 @@
   import RebaseBanner from "$lib/components/RebaseBanner.svelte";
   import RebaseDialog from "$lib/components/RebaseDialog.svelte";
   import ResetDialog from "$lib/components/ResetDialog.svelte";
+  import TagDialog from "$lib/components/TagDialog.svelte";
   import SequencerBanner from "$lib/components/SequencerBanner.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import StashDetail from "$lib/components/StashDetail.svelte";
@@ -182,6 +196,7 @@
     selectedCommit = null;
     selectedStash = null;
     selectedRow = null;
+    fileInspect = null;
   }
 
   /** The working-copy file whose diff is shown. */
@@ -239,6 +254,11 @@
   let metaIssues = $state<MetaIssue[]>([]);
   let lfs = $state<LfsInfo | null>(null);
   let locks = $state<LfsLock[]>([]);
+  let tagList = $state<TagInfo[]>([]);
+  let tagAsk = $state<{ target: string | null; targetLabel: string | null } | null>(null);
+  let fileInspect = $state<{ path: string; mode: "history" | "blame"; rev: string | null } | null>(null);
+  let opStats = $state<OpLogStats | null>(null);
+  let reflogEntries = $state<ReflogEntry[]>([]);
   const dialogOpen = $derived(
     !!mergeAsk ||
       !!rebaseAsk ||
@@ -249,6 +269,7 @@
       !!deleteAsk ||
       !!resetAsk ||
       !!sequencerAsk ||
+      !!tagAsk ||
       !!openAssetsAsk ||
       stashAsk,
   );
@@ -300,6 +321,55 @@
       })
       .catch(() => {});
   }
+
+  $effect(() => {
+    if (!opened) {
+      tagList = [];
+      fileInspect = null;
+      opStats = null;
+      reflogEntries = [];
+      return;
+    }
+    const id = opened.id;
+    const rev = revision;
+    let stale = false;
+    tags(id)
+      .then((list) => {
+        if (!stale && opened?.id === id && revision === rev) {
+          tagList = list;
+        }
+      })
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+  });
+
+  $effect(() => {
+    if (!opened || inspector !== "oplog") {
+      return;
+    }
+    const id = opened.id;
+    const rev = revision;
+    let stale = false;
+    opLogStats(id)
+      .then((s) => {
+        if (!stale && opened?.id === id && revision === rev) {
+          opStats = s;
+        }
+      })
+      .catch(() => {});
+    outsideReflog(id, 50)
+      .then((r) => {
+        if (!stale && opened?.id === id && revision === rev) {
+          reflogEntries = r;
+        }
+      })
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+  });
 
   $effect(() => {
     if (!opened) {
@@ -571,6 +641,12 @@
           inspector = inspector === "oplog" ? "working" : "oplog";
           closeDetail();
         },
+        oncreatetag: () =>
+          (tagAsk = {
+            target: selectedCommit,
+            targetLabel: selectedCommit ? selectedCommit.slice(0, 7) : null,
+          }),
+        onoptimizegraph: optimizeCommitGraph,
       },
     };
   }
@@ -901,6 +977,11 @@
       run: () => (branchAsk = { mode: "create", at: row.id, atLabel: `${row.shortId} "${row.subject}"` }),
     },
     {
+      label: "New tag here…",
+      disabled: busy,
+      run: () => (tagAsk = { target: row.id, targetLabel: `${row.shortId} "${row.subject}"` }),
+    },
+    {
       label: "Cherry-pick…",
       disabled: busy || !!conflicted,
       run: () => (sequencerAsk = { kind: "cherryPick", id: row.id, shortId: row.shortId, subject: row.subject }),
@@ -946,6 +1027,92 @@
     } else if (ask.mode === "checkoutRemote" && ask.remoteBranch) {
       await write((id) => checkoutRemote(id, ask.remoteBranch!, name), `Checked out ${name} · Ctrl+Z undoes it`);
     }
+  }
+
+  async function submitTag(name: string, message: string | null) {
+    const ask = tagAsk;
+    tagAsk = null;
+    if (!ask) {
+      return;
+    }
+    await write((id) => createTag(id, name, ask.target, message), `Created tag ${name}`);
+  }
+
+  function onDeleteTag(name: string) {
+    return write((id) => deleteTag(id, name), `Deleted tag ${name}`);
+  }
+
+  function onPushTag(remote: string, name: string) {
+    return enqueue(async () => {
+      if (!opened) {
+        return;
+      }
+      error = null;
+      try {
+        await pushTag(opened.id, remote, name);
+        notice = `Pushed tag ${name} to ${remote}`;
+      } catch (err) {
+        error = String(err);
+      }
+    });
+  }
+
+  function onDeleteRemoteTag(remote: string, name: string) {
+    return enqueue(async () => {
+      if (!opened) {
+        return;
+      }
+      error = null;
+      try {
+        await deleteRemoteTag(opened.id, remote, name);
+        notice = `Deleted tag ${name} on ${remote}`;
+      } catch (err) {
+        error = String(err);
+      }
+    });
+  }
+
+  function pruneOpLog() {
+    return enqueue(async () => {
+      if (!opened) {
+        return;
+      }
+      error = null;
+      try {
+        opStats = await opLogPrune(opened.id);
+        revision += 1;
+        notice = "Pruned old op-log entries";
+      } catch (err) {
+        error = String(err);
+      }
+    });
+  }
+
+  function optimizeCommitGraph() {
+    return enqueue(async () => {
+      if (!opened) {
+        return;
+      }
+      error = null;
+      try {
+        await writeCommitGraph(opened.id);
+        notice = "Commit-graph cache updated";
+      } catch (err) {
+        error = String(err);
+      }
+    });
+  }
+
+  function inspectCommit(commitId: string) {
+    fileInspect = null;
+    selectedStash = null;
+    inspector = "working";
+    selectedCommit = commitId;
+  }
+
+  function openFileInspect(path: string, mode: "history" | "blame", rev: string | null = null) {
+    selectedStash = null;
+    fileInspect = { path, mode, rev };
   }
 
   async function onDeleteBranch(branch: string, remote?: string) {
@@ -1078,7 +1245,7 @@
       cyclePanes(event.shiftKey ? -1 : 1);
       return;
     }
-    if (event.key === "Escape" && (selectedCommit || selectedStash !== null) && !inTextField(event.target)) {
+    if (event.key === "Escape" && (selectedCommit || selectedStash !== null || fileInspect) && !inTextField(event.target)) {
       closeDetail();
       return;
     }
@@ -1319,9 +1486,19 @@
           bind:data={branchData}
           merging={!!conflicted}
           {selectedStash}
-          oplogOpen={inspector === "oplog" && !selectedCommit && selectedStash === null}
+          oplogOpen={inspector === "oplog" && !selectedCommit && selectedStash === null && !fileInspect}
           lfsInfo={lfs}
           {locks}
+          tags={tagList}
+          oncreatetag={() =>
+            (tagAsk = {
+              target: selectedCommit,
+              targetLabel: selectedCommit ? selectedCommit.slice(0, 7) : null,
+            })}
+          onpushtag={onPushTag}
+          ondeletetag={onDeleteTag}
+          ondeleteremotetag={onDeleteRemoteTag}
+          onselecttag={inspectCommit}
           oncheckout={guardedCheckout}
           onmerge={(branch) => (mergeAsk = branch)}
           onrebase={(branch) => (rebaseAsk = branch)}
@@ -1353,9 +1530,13 @@
           {repoId}
           {revision}
           {busy}
+          stats={opStats}
+          reflog={reflogEntries}
           onundo={() => revert("undo")}
           onrestoreto={restoreToEntry}
           onrestorefiles={(entry) => write((id) => restoreFiles(id, entry.id))}
+          onprune={pruneOpLog}
+          onrestorereflog={(entry) => inspectCommit(entry.id)}
         />
       {/snippet}
       {#if conflicted}
@@ -1431,6 +1612,7 @@
               bind:selected={selectedRow}
               onselect={(row) => {
                 if (!planning) {
+                  fileInspect = null;
                   if (row && row.stash != null) {
                     selectedStash = row.stash;
                     selectedCommit = null;
@@ -1481,8 +1663,23 @@
                 })}
               onclose={closeDetail}
             />
+          {:else if fileInspect}
+            <FileHistoryBlame
+              repoId={opened.id}
+              path={fileInspect.path}
+              initialMode={fileInspect.mode}
+              rev={fileInspect.rev}
+              onselectcommit={inspectCommit}
+              onclose={() => (fileInspect = null)}
+            />
           {:else if selectedCommit}
-            <CommitDetail repoId={opened.id} commit={selectedCommit} onclose={closeDetail} />
+            <CommitDetail
+              repoId={opened.id}
+              commit={selectedCommit}
+              onhistory={(p) => openFileInspect(p, "history", null)}
+              onblame={(p, rev) => openFileInspect(p, "blame", rev)}
+              onclose={closeDetail}
+            />
           {:else if planDone}
             {@const repoId = opened.id}
             <PlanDone
@@ -1520,6 +1717,8 @@
               onunlock={onUnlockFile}
               oncommit={onCommit}
               onstash={() => (stashAsk = true)}
+              onhistory={(p) => openFileInspect(p, "history", null)}
+              onblame={(p) => openFileInspect(p, "blame", null)}
             />
           {/if}
         </aside>
@@ -1624,6 +1823,14 @@
           write((id) => stashSave(id, message, includeUntracked), "Stashed changes · Ctrl+Z undoes it");
         }}
         oncancel={() => (stashAsk = false)}
+      />
+    {/if}
+    {#if tagAsk}
+      <TagDialog
+        targetLabel={tagAsk.targetLabel}
+        {busy}
+        onsubmit={submitTag}
+        oncancel={() => (tagAsk = null)}
       />
     {/if}
     {#if openAssetsAsk}
@@ -1819,7 +2026,8 @@
     overflow: hidden;
   }
   .inspector > :global(.detail),
-  .inspector > :global(.oplog) {
+  .inspector > :global(.oplog),
+  .inspector > :global(.fhb) {
     flex: 1;
     overflow-y: auto;
   }

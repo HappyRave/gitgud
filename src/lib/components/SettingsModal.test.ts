@@ -11,6 +11,8 @@ describe("SettingsModal", () => {
         id != null ? { userName: "Local Max", userEmail: "local@example.com" } : { userName: "Global Max", userEmail: "global@example.com" },
       config_set_identity: () => null,
       tool_diagnostics: () => ({ gitPath: "C:/Git/git.exe", gitVersion: "2.56.1", lfsVersion: "git-lfs/3.6.0" }),
+      has_commit_graph: () => false,
+      write_commit_graph: () => null,
     });
 
     render(SettingsModal, { activeRepoId: 7, activeRepoName: "boat", onclose: vi.fn() });
@@ -34,5 +36,10 @@ describe("SettingsModal", () => {
     expect(prefs.theme).toBe("dark");
     await fireEvent.change(screen.getByLabelText("Density"), { target: { value: "compact" } });
     expect(prefs.density).toBe("compact");
+
+    expect(await screen.findByText("Not built")).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Optimize graph cache" }));
+    expect(await screen.findByText("Built")).toBeInTheDocument();
+    expect(calls.some((c) => c.cmd === "write_commit_graph")).toBe(true);
   });
 });

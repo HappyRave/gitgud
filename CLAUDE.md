@@ -30,9 +30,9 @@ R on an older commit opens the plan, F / D apply at once, all undoable); Ctrl+F 
 working-copy keys of spec §5 plus Ctrl+2 / F6 / Ctrl+C / Ctrl+Shift+L / Ctrl+Shift+P / Ctrl+B; the ultrawide inspector
 split (≥ 2400 px); the strip's upstream / last-fetch line. Styling follows the lab
 mocks (tokens in `src/app.css`, light and dark); the lane colours are the mock's, never given a
-design round. Not yet: command palette (`Ctrl+K`) / shortcut sheet (`?`) / line staging / syntax+intraline diff / plain-English error banner / settings modal, history
+design round. Landed in M1–M5: command palette (`Ctrl+K`), shortcut sheet (`?`), line staging, syntax+intraline diff, plain-English error banner, settings modal, Unity Smart Merge / `.meta` guard / LFS locks / TGA+PSD previews, tags, file history & blame, op-log pruning + outside reflog recovery, and commit-graph optimization. Not yet: history
 edits over merge commits or the root commit (refused for now, Max 2026-11-22), stacks and PR
-links per stack level, the faded "still on origin" commits after Done, Unity Smart Merge / `.meta` guard / LFS locks, proposals.
+links per stack level, the faded "still on origin" commits after Done, Unity YAML structural diff / property table, proposals.
 Update this file as pieces land.
 
 The approved product spec is `docs/spec.md` (2026-11-21); design verdicts are in `docs/lab/decisions.md`.
@@ -138,8 +138,13 @@ replaying at most 255 rows (spike 4.3).
   original line text. The frontend adds syntax tokenizing (`highlight.ts`), word/token intra-line spans
   (`intraline.ts`), responsive auto-split at ≥ 1400 px, line selection, `Ctrl+K` command palette
   (`CommandPalette.svelte`), `?` shortcut sheet (`keymap.ts`, `ShortcutSheet.svelte`), `Ctrl+,`
-  settings (`SettingsModal.svelte` for identity/theme/density/diff), and plain-English git error
-  explanations (`errors.ts`, `ErrorBanner.svelte`).
+  settings (`SettingsModal.svelte` for identity/theme/density/diff/commit-graph cache), and
+  plain-English git error explanations (`errors.ts`, `ErrorBanner.svelte`).
+- **Tags, File History & Blame, Reflog & Commit-Graph** (`tags.rs`, `blame.rs`, `oplog.rs`,
+  `ops.rs`): lightweight/annotated tags with create/delete/push (`TagDialog.svelte`, `Sidebar.svelte`),
+  `--follow` file commit history and porcelain blame annotations (`FileHistoryBlame.svelte`), op log
+  storage stats & 30d/2000-entry pruning plus `git reflog` recovery (`OpLogPanel.svelte`), and
+  optional `git commit-graph write --reachable --changed-paths` optimization.
 
 ## Commands
 

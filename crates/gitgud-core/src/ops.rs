@@ -125,6 +125,29 @@ impl Repo {
         Ok(paths)
     }
 
+    /// Returns true if a git commit-graph file is present.
+    #[must_use]
+    pub fn has_commit_graph(&self) -> bool {
+        let objects_info = self.gix().common_dir().join("objects/info");
+        objects_info.join("commit-graph").is_file()
+            || objects_info
+                .join("commit-graphs/commit-graph-chain")
+                .is_file()
+    }
+
+    /// Writes a reachable changed-paths commit-graph (`git commit-graph write`).
+    ///
+    /// # Errors
+    /// [`Error::Command`] on failure.
+    pub fn write_commit_graph(&self, git: &GitCli) -> Result<(), Error> {
+        git.run(
+            self.root(),
+            &["commit-graph", "write", "--reachable", "--changed-paths"],
+            None,
+        )
+        .map(drop)
+    }
+
     fn with_paths(&self, git: &GitCli, args: &[&str], paths: &[String]) -> Result<(), Error> {
         if paths.is_empty() {
             return Ok(());

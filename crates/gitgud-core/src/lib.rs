@@ -1,3 +1,4 @@
+pub mod blame;
 pub mod branches;
 pub mod cli;
 pub mod clone;
@@ -21,6 +22,7 @@ pub mod sequencer;
 pub mod session;
 pub mod snapshot;
 pub mod stash;
+pub mod tags;
 pub mod task;
 #[cfg(any(test, feature = "test-util"))]
 pub mod testing;

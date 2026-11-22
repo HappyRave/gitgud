@@ -34,6 +34,8 @@
     ondeletebranch: (branch: string) => void;
     onfind: () => void;
     onoplog: () => void;
+    oncreatetag?: () => void;
+    onoptimizegraph?: () => void;
   }
 
   type BranchOp = "checkout" | "merge" | "rebase" | "delete";
@@ -85,9 +87,13 @@
         { id: "merge", label: "Merge branch into HEAD…", group: repo.repoName, branchOp: "merge" },
         { id: "rebase", label: "Rebase current branch onto…", group: repo.repoName, branchOp: "rebase" },
         { id: "new-branch", label: "Create new branch…", group: repo.repoName, hint: "Ctrl+B", run: repo.onnewbranch },
+        ...(repo.oncreatetag ? [{ id: "new-tag", label: "Create tag…", group: repo.repoName, run: repo.oncreatetag }] : []),
         { id: "delete-branch", label: "Delete branch…", group: repo.repoName, branchOp: "delete" },
         { id: "find", label: "Find in commit graph", group: repo.repoName, hint: "Ctrl+F", run: repo.onfind },
         { id: "oplog", label: "Toggle operation history (Op log)", group: repo.repoName, hint: "Ctrl+3", run: repo.onoplog },
+        ...(repo.onoptimizegraph
+          ? [{ id: "optimize-graph", label: "Optimize commit-graph cache", group: repo.repoName, run: repo.onoptimizegraph }]
+          : []),
         { id: "undo", label: "Undo last repository action", group: repo.repoName, hint: "Ctrl+Z", disabled: !repo.canUndo, run: repo.onundo },
         { id: "redo", label: "Redo last undone action", group: repo.repoName, hint: "Ctrl+Y", disabled: !repo.canRedo, run: repo.onredo },
       );

@@ -8,6 +8,7 @@
     type LfsInfo,
     type LfsLock,
     type StashEntry,
+    type TagInfo,
   } from "$lib/api";
   import { aheadBehind, branchTree, visibleRows } from "$lib/sidebar/tree";
   import ContextMenu, { type MenuItem } from "./ContextMenu.svelte";
@@ -38,6 +39,12 @@
     onstashdrop,
     onrefreshlocks,
     onunlock,
+    tags = [],
+    oncreatetag,
+    onpushtag,
+    ondeletetag,
+    ondeleteremotetag,
+    onselecttag,
   }: {
     /** "Rebase current onto" from a branch's context menu. */
     onrebase: (branch: string) => void;
@@ -70,6 +77,12 @@
     onstashdrop?: (index: number) => void;
     onrefreshlocks?: () => void;
     onunlock?: (path: string, force: boolean) => void;
+    tags?: TagInfo[];
+    oncreatetag?: () => void;
+    onpushtag?: (remote: string, name: string) => void;
+    ondeletetag?: (name: string) => void;
+    ondeleteremotetag?: (remote: string, name: string) => void;
+    onselecttag?: (target: string) => void;
   } = $props();
 
   let error = $state<string | null>(null);
@@ -161,6 +174,38 @@
     }
     if (onstashdrop) {
       items.push({ label: "Drop stash", disabled: busy, run: () => onstashdrop(entry.index) });
+    }
+    if (items.length > 0) {
+      menu = { ...menuPosition(event), items };
+    }
+  }
+
+  function openTagMenu(event: MouseEvent, tag: TagInfo) {
+    event.preventDefault();
+    const items: MenuItem[] = [];
+    if (onselecttag) {
+      items.push({ label: `Jump to ${tag.shortTarget}`, run: () => onselecttag(tag.target) });
+    }
+    if (onpushtag) {
+      for (const remote of data?.remotes ?? []) {
+        items.push({
+          label: `Push tag to ${remote.name}`,
+          disabled: busy,
+          run: () => onpushtag(remote.name, tag.name),
+        });
+      }
+    }
+    if (ondeletetag) {
+      items.push({ label: `Delete tag ${tag.name}`, disabled: busy, run: () => ondeletetag(tag.name) });
+    }
+    if (ondeleteremotetag) {
+      for (const remote of data?.remotes ?? []) {
+        items.push({
+          label: `Delete tag ${tag.name} on ${remote.name}…`,
+          disabled: busy,
+          run: () => ondeleteremotetag(remote.name, tag.name),
+        });
+      }
     }
     if (items.length > 0) {
       menu = { ...menuPosition(event), items };
@@ -282,6 +327,42 @@
       {/each}
     </ul>
   </section>
+
+  {#if tags.length > 0 || oncreatetag}
+    <section aria-label="Tags">
+      <h3>
+        Tags <span class="ct">{tags.length || ""}</span>
+        {#if oncreatetag}
+          <button
+            type="button"
+            class="bare add"
+            title="New tag"
+            aria-label="New tag"
+            disabled={busy || merging}
+            onclick={() => oncreatetag()}>+</button
+          >
+        {/if}
+      </h3>
+      {#if tags.length > 0}
+        <ul>
+          {#each tags as tag (tag.name)}
+            <li>
+              <button
+                type="button"
+                class="it"
+                title={tag.message ? `${tag.name} (${tag.shortTarget}) — ${tag.message}` : `${tag.name} (${tag.shortTarget})`}
+                onclick={() => onselecttag?.(tag.target)}
+                oncontextmenu={(e) => openTagMenu(e, tag)}
+              >
+                <span class="ic">{tag.annotated ? "◆" : "◇"}</span><span class="nm">{tag.name}</span>
+                <span class="r">{tag.shortTarget}</span>
+              </button>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    </section>
+  {/if}
 
   {#if stashList.length > 0}
     <section aria-label="Stashes">

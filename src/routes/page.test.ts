@@ -113,6 +113,18 @@ function app(extra: Handlers = {}) {
     lfs_unlock: () => null,
     lfs_locks_in_push: () => [],
     background_refresh: () => false,
+    tags: () => [],
+    create_tag: () => ({ id: 1, root: "C:/work/repo", rows: 1, graphVersion: 0 }),
+    delete_tag: () => ({ id: 1, root: "C:/work/repo", rows: 1, graphVersion: 0 }),
+    push_tag: () => null,
+    delete_remote_tag: () => null,
+    file_history: () => [],
+    blame_file: () => [],
+    op_log_stats: () => ({ entryCount: 0, totalBytes: 0, prunableCount: 0, reclaimableBytes: 0 }),
+    op_log_prune: () => ({ entryCount: 0, totalBytes: 0, prunableCount: 0, reclaimableBytes: 0 }),
+    outside_reflog: () => [],
+    has_commit_graph: () => false,
+    write_commit_graph: () => null,
     ...extra,
   };
   return mockCommands(handlers);
@@ -2271,5 +2283,138 @@ describe("Unity, LFS locks, Smart Merge verify, and open-editor guard", () => {
         force: false,
       }),
     );
+  });
+
+  it("lists and creates tags, inspects file history/blame, and prunes op log + views reflog", async () => {
+    let tagList = [
+      {
+        name: "v0.9.0",
+        target: "a".repeat(40),
+        shortTarget: "aaaaaaa",
+        annotated: true,
+        message: "beta" as string | null,
+        time: 1_700_000_000,
+      },
+    ];
+    let pruned = false;
+    const calls = app({
+      launch_path: () => "C:/work/repo",
+      tags: () => tagList,
+      create_tag: ({ name, target, message }) => {
+        tagList = [
+          {
+            name,
+            target: target ?? "a".repeat(40),
+            shortTarget: (target ?? "a".repeat(40)).slice(0, 7),
+            annotated: Boolean(message),
+            message: message ?? null,
+            time: 1_700_100_000,
+          },
+          ...tagList,
+        ];
+        return { id: 1, root: "C:/work/repo", rows: 1, graphVersion: 0 };
+      },
+      repo_status: () => ({
+        root: "C:/work/repo",
+        head: { kind: "branch", name: "master", id: "a".repeat(40) },
+        entries: [
+          {
+            path: "src/app.ts",
+            index: null,
+            worktree: "modified",
+            kind: "tracked",
+            binary: false,
+            bytes: 40,
+            conflicted: false,
+          },
+        ],
+      }),
+      worktree_file_diff: ({ path }) => ({
+        path,
+        binary: false,
+        hunks: [
+          {
+            oldStart: 1,
+            oldLines: 1,
+            newStart: 1,
+            newLines: 1,
+            lines: [{ kind: "added", old: null, new: 1, text: "const x = 1;" }],
+          },
+        ],
+      }),
+      file_history: () => [
+        {
+          id: "a".repeat(40),
+          shortId: "aaaaaaa",
+          subject: "Touch app.ts",
+          author: "Max",
+          time: 1_700_000_000,
+          change: "modified",
+        },
+      ],
+      blame_file: () => [
+        {
+          lineNo: 1,
+          commit: "a".repeat(40),
+          shortCommit: "aaaaaaa",
+          author: "Max",
+          time: 1_700_000_000,
+          summary: "Touch app.ts",
+          text: "export const ok = true;",
+        },
+      ],
+      op_log: () => [{ id: 1, time: 1_700_000_000, action: "Stage src/app.ts", undone: false, paths: [] }],
+      op_log_stats: () => ({
+        entryCount: pruned ? 1 : 5,
+        totalBytes: pruned ? 512 : 4096,
+        prunableCount: pruned ? 0 : 4,
+        reclaimableBytes: pruned ? 0 : 3584,
+      }),
+      op_log_prune: () => {
+        pruned = true;
+        return { entryCount: 1, totalBytes: 512, prunableCount: 0, reclaimableBytes: 0 };
+      },
+      outside_reflog: () => [
+        {
+          id: "a".repeat(40),
+          shortId: "aaaaaaa",
+          selector: "HEAD@{0}",
+          action: "commit: external fix",
+          time: 1_700_000_100,
+        },
+      ],
+    });
+    render(Page);
+
+    const tagsSection = await screen.findByRole("region", { name: "Tags" });
+    expect(await within(tagsSection).findByText("v0.9.0")).toBeInTheDocument();
+
+    await fireEvent.click(within(tagsSection).getByRole("button", { name: "New tag" }));
+    const tagDialog = await screen.findByRole("dialog", { name: "New tag" });
+    await fireEvent.input(within(tagDialog).getByLabelText("Tag name"), { target: { value: "v1.0.0" } });
+    await fireEvent.input(within(tagDialog).getByLabelText("Annotation message"), { target: { value: "Ship it" } });
+    await fireEvent.click(within(tagDialog).getByRole("button", { name: /Create tag/ }));
+
+    expect(calls.find((c) => c.cmd === "create_tag")?.args).toEqual({
+      id: 1,
+      name: "v1.0.0",
+      target: null,
+      message: "Ship it",
+    });
+    expect(await within(tagsSection).findByText("v1.0.0")).toBeInTheDocument();
+
+    await fireEvent.click(await screen.findByTitle("src/app.ts"));
+    await fireEvent.click(await screen.findByRole("button", { name: "History" }));
+    expect(await screen.findByText("Touch app.ts")).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Blame" }));
+    expect(await screen.findByText("export const ok = true;")).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Close file inspector" }));
+
+    await fireEvent.click(screen.getByRole("button", { name: "Op log" }));
+    await fireEvent.click(await screen.findByText(/Outside gitgud \(reflog\)/));
+    expect(await screen.findByText("HEAD@{0}")).toBeInTheDocument();
+    await fireEvent.click(await screen.findByRole("button", { name: "Prune old (4)" }));
+    expect(calls.some((c) => c.cmd === "op_log_prune")).toBe(true);
   });
 });

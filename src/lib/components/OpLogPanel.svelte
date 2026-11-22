@@ -1,23 +1,31 @@
 <script lang="ts">
-  import { opLog, type OpEntry } from "$lib/api";
+  import { opLog, type OpEntry, type OpLogStats, type ReflogEntry } from "$lib/api";
 
   let {
     repoId,
     revision,
     busy = false,
+    stats = null,
+    reflog = [],
     onundo,
     onrestoreto,
     onrestorefiles,
+    onprune,
+    onrestorereflog,
   }: {
     repoId: number;
     /** Changes after every write, so the list reloads. */
     revision: number;
     busy?: boolean;
+    stats?: OpLogStats | null;
+    reflog?: ReflogEntry[];
     onundo: () => void;
     /** Undo everything back to before this entry. */
     onrestoreto: (entry: OpEntry) => void;
     /** Put back the files a discard changed, as a new action. */
     onrestorefiles: (entry: OpEntry) => void;
+    onprune?: () => void;
+    onrestorereflog?: (entry: ReflogEntry) => void;
   } = $props();
 
   let entries = $state<OpEntry[] | null>(null);
@@ -43,6 +51,16 @@
   function time(seconds: number) {
     const d = new Date(seconds * 1000);
     return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  }
+
+  function formatBytes(bytes: number): string {
+    if (bytes < 1024) {
+      return `${bytes} B`;
+    }
+    if (bytes < 1024 * 1024) {
+      return `${(bytes / 1024).toFixed(1)} KB`;
+    }
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   }
 </script>
 
@@ -88,6 +106,33 @@
         {/if}
       </div>
     {/if}
+  {/if}
+
+  {#if stats}
+    <div class="statsbar" aria-label="Op log storage">
+      <span>{stats.entryCount} {stats.entryCount === 1 ? "entry" : "entries"} · {formatBytes(stats.totalBytes)}</span>
+      {#if stats.prunableCount > 0 && onprune}
+        <button type="button" class="lk" disabled={busy} onclick={onprune}>Prune old ({stats.prunableCount})</button>
+      {/if}
+    </div>
+  {/if}
+
+  {#if reflog.length > 0}
+    <details class="reflog">
+      <summary>Outside gitgud (reflog) <span class="ct">· {reflog.length}</span></summary>
+      <ul class="reflist" aria-label="Git reflog">
+        {#each reflog as r (`${r.selector}-${r.id}`)}
+          <li>
+            <span class="selid mono">{r.selector}</span>
+            <span class="rsha mono">{r.shortId}</span>
+            <span class="raction" title={r.action}>{r.action}</span>
+            {#if onrestorereflog}
+              <button type="button" class="lk" disabled={busy} onclick={() => onrestorereflog(r)}>Inspect</button>
+            {/if}
+          </li>
+        {/each}
+      </ul>
+    </details>
   {/if}
 </section>
 
@@ -180,5 +225,55 @@
     color: var(--muted);
     padding: 10px;
     margin: 0;
+  }
+  .statsbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 10px;
+    border-top: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 11px;
+  }
+  .reflog {
+    border-top: 1px solid var(--line);
+    font-size: 11.5px;
+  }
+  .reflog summary {
+    padding: 6px 10px;
+    cursor: default;
+    font-weight: 600;
+    color: var(--muted);
+  }
+  .reflist {
+    list-style: none;
+    margin: 0;
+    padding: 0 0 6px;
+    max-height: 180px;
+    overflow: auto;
+  }
+  .reflist li {
+    display: grid;
+    grid-template-columns: auto auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 10px;
+  }
+  .selid {
+    color: var(--muted);
+    font-size: 10.5px;
+  }
+  .rsha {
+    color: var(--l0);
+    font-size: 11px;
+  }
+  .raction {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .mono {
+    font-family: var(--mono);
   }
 </style>
