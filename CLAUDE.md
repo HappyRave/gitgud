@@ -3,9 +3,11 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 gitgud is a desktop Git GUI. The repo was wiped on 2026-11-21 for a fresh start; the earlier
-prototype is still in git history (`5f1257d` and before). Built so far: locating the system git, and
-opening a repo (folder picker, or `GITGUD_OPEN=<path>` at launch) to show its working-copy status
-as a bare list. Update this file as pieces land.
+prototype is still in git history (`5f1257d` and before). Built so far: locating the system git;
+opening a repo (folder picker, or `GITGUD_OPEN=<path>` at launch); the commit graph in the centre
+(topo order, lanes laid out in Rust, canvas lane column, rows fetched on scroll, WIP row on top);
+the working-copy status as a bare list beside it. No writes, no live refresh yet; the layout is not
+R1-A yet and lane colours are placeholders. Update this file as pieces land.
 
 The approved product spec is `docs/spec.md` (2026-11-21); design verdicts are in `docs/lab/decisions.md`.
 
@@ -34,6 +36,11 @@ package.json
 Logic belongs in `gitgud-core`; `src-tauri` only adapts it to commands, and the Svelte side only
 calls commands and renders. Core stays testable without compiling the webview.
 
+Open repos live in `session::Session` (Tauri managed state), by id: `open_repo` walks the history
+once, and later commands (`repo_status`, `graph_rows`) take the id. The graph keeps topology plus
+lane checkpoints every 256 rows (`graph::Layout`), so any window of rows is laid out by replaying
+at most 255 rows (spike 4.3).
+
 ## Commands
 
 ```bash
@@ -54,14 +61,24 @@ Every feature is tested at each layer it touches:
 
 - **Core** (`crates/gitgud-core`): unit tests next to the code, integration tests in `tests/`. They
   use the real `git` in temp dirs, never a mocked git. `testing::TestRepo` (feature `test-util`)
-  builds throwaway repos through the git CLI. Gix-based reads are checked against the CLI as an
-  oracle, e.g. `TestRepo::cli_status()` parses `git status --porcelain=v2`.
-- **Commands** (`src-tauri`): unit tests, on a `TestRepo`, that the serialized result matches the
-  shape `api.ts` declares. Commands are `async` so they stay off the main thread.
+  builds throwaway repos through the git CLI, with a fake clock so commit dates (and so orders) are
+  deterministic. Gix-based reads are checked against the CLI as an oracle: `cli_status()` parses
+  `git status --porcelain=v2`, `cli_topo()` parses `git log --topo-order`. Pure algorithms get
+  `proptest` property tests (the graph layout: windows equal the full layout, every edge reaches its
+  parent); keep `proptest-regressions/` committed.
+- **Commands** (`src-tauri`): tests go through Tauri's real IPC path (`tauri::test`, the `Ipc`
+  helper in `lib.rs`) with JSON args as the webview sends them, on `TestRepo`s. Commands are `async`
+  so they stay off the main thread. `build.rs` hands the Windows manifest to the linker for every
+  target; without it, test binaries die with `STATUS_ENTRYPOINT_NOT_FOUND`.
 - **Frontend** (vitest + jsdom + Testing Library): `$lib/test/ipc.ts`'s `mockCommands` answers
   commands from typed handlers. An unmocked command fails the test. Add every new command to
-  `Commands` in `api.ts`, plugin commands (`plugin:dialog|open`) included.
+  `Commands` in `api.ts`, plugin commands (`plugin:dialog|open`) included. Logic sits in plain TS
+  modules with their own tests (`$lib/graph/*`); components stay thin. jsdom has no canvas or
+  layout: the setup installs a recording 2D context (`$lib/test/canvas.ts`), and tests stub
+  `clientHeight`.
 - **Real app** (`e2e/`): `launchApp(env)` starts `target/debug/gitgud.exe` with a throwaway WebView2
-  profile, and Playwright drives it. `e2e/repo.ts` mirrors `TestRepo`. Pass `GITGUD_OPEN` to open a
-  repo, since native dialogs can't be driven. Files run one at a time (one CDP port). Screenshots
-  go to `e2e/out/` (ignored). Windows only.
+  profile, and Playwright drives it. `e2e/repo.ts` mirrors `TestRepo`; `generate(n)` makes large
+  histories with `git fast-import`. Pass `GITGUD_OPEN` to open a repo, since native dialogs can't
+  be driven. Performance targets from spec §6 are asserted here (10k commits: open + first rows
+  ≤ 300 ms). Files run one at a time (one CDP port). Screenshots go to `e2e/out/` (ignored).
+  Windows only.

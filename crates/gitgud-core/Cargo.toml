@@ -17,5 +17,6 @@ which = "8.0.6"
 
 [dev-dependencies]
 gitgud-core = { path = ".", features = ["test-util"] }
+proptest = "1.12.0"
 serde_json = "1.0.154"
 tempfile = "3.27.0"

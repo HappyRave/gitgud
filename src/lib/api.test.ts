@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { gitInfo, launchPath, pickFolder, repoStatus } from "./api";
+import { closeRepo, gitInfo, graphRows, launchPath, openRepo, pickFolder, repoStatus } from "./api";
 import { mockCommands } from "./test/ipc";
 
 describe("gitInfo", () => {
@@ -21,13 +21,26 @@ describe("gitInfo", () => {
   });
 });
 
-describe("repoStatus", () => {
-  it("passes the path to repo_status", async () => {
-    const status = { root: "C:/r", head: { kind: "branch", name: "main" } as const, entries: [] };
-    const calls = mockCommands({ repo_status: () => status });
+describe("repo commands", () => {
+  it("send their arguments under the names Rust expects", async () => {
+    const calls = mockCommands({
+      open_repo: () => ({ id: 3, root: "C:/r", rows: 10 }),
+      repo_status: () => ({ root: "C:/r", head: { kind: "branch", name: "main" }, entries: [] }),
+      graph_rows: () => [],
+      close_repo: () => null,
+    });
 
-    await expect(repoStatus("C:/r")).resolves.toEqual(status);
-    expect(calls).toEqual([{ cmd: "repo_status", args: { path: "C:/r" } }]);
+    await expect(openRepo("C:/r")).resolves.toEqual({ id: 3, root: "C:/r", rows: 10 });
+    await repoStatus(3);
+    await graphRows(3, 200, 100);
+    await closeRepo(3);
+
+    expect(calls).toEqual([
+      { cmd: "open_repo", args: { path: "C:/r" } },
+      { cmd: "repo_status", args: { id: 3 } },
+      { cmd: "graph_rows", args: { id: 3, start: 200, count: 100 } },
+      { cmd: "close_repo", args: { id: 3 } },
+    ]);
   });
 });
 

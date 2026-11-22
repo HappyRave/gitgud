@@ -1,0 +1,166 @@
+use gitgud_core::graph::{Graph, Part, RefLabel, Row};
+use gitgud_core::repo::{self, Error};
+use gitgud_core::session::Session;
+use gitgud_core::testing::TestRepo;
+
+fn history() -> TestRepo {
+    let repo = TestRepo::init();
+    repo.write("a.txt", "base").commit_all("base commit");
+    repo.git(&["checkout", "-q", "-b", "feature"]);
+    repo.write("f.txt", "f")
+        .commit_all("feature work\n\nwith a body");
+    repo.git(&["checkout", "-q", "main"]);
+    repo.write("m.txt", "m").commit_all("main work");
+    repo.git(&["merge", "-q", "--no-ff", "-m", "Merge feature", "feature"]);
+    repo.git(&["tag", "v1"]);
+    repo
+}
+
+fn rows(repo: &TestRepo, wip: bool) -> Vec<Row> {
+    let r = repo::open(repo.path()).unwrap();
+    let graph = Graph::build(&r, wip).unwrap();
+    graph.rows(&r, 0, graph.len()).unwrap()
+}
+
+#[test]
+fn metadata_matches_git_log() {
+    let repo = history();
+    let cli: Vec<Vec<String>> = repo
+        .git(&[
+            "log",
+            "--topo-order",
+            "--branches",
+            "--tags",
+            "HEAD",
+            "--format=%H%x1f%h%x1f%s%x1f%an%x1f%at",
+        ])
+        .lines()
+        .map(|l| l.split('\x1f').map(str::to_owned).collect())
+        .collect();
+    let ours: Vec<Vec<String>> = rows(&repo, false)
+        .into_iter()
+        .map(|r| vec![r.id, r.short_id, r.subject, r.author, r.time.to_string()])
+        .collect();
+    assert_eq!(ours, cli);
+}
+
+#[test]
+fn rows_carry_labels_and_layout() {
+    let repo = history();
+    let rows = rows(&repo, false);
+    assert_eq!(
+        rows[0].labels,
+        [
+            RefLabel::Branch {
+                name: "main".into(),
+                current: true
+            },
+            RefLabel::Tag { name: "v1".into() },
+        ]
+    );
+    assert_eq!(
+        rows[0]
+            .layout
+            .segments
+            .iter()
+            .filter(|s| s.part == Part::Bottom)
+            .count(),
+        2
+    );
+    assert!(rows.iter().all(|r| !r.wip));
+}
+
+#[test]
+fn wip_row_sits_on_top_of_head() {
+    let repo = history();
+    repo.git(&["checkout", "-q", "feature"]);
+    let rows = rows(&repo, true);
+    assert!(rows[0].wip);
+    assert_eq!(rows[0].subject, "Uncommitted changes");
+    assert!(rows[0].id.is_empty());
+
+    let head = repo.git(&["rev-parse", "HEAD"]);
+    let head_row = rows.iter().position(|r| r.id == head.trim()).unwrap();
+    let wip_lane = rows[0].layout.node;
+    // The WIP line runs straight down its lane into HEAD's dot.
+    for row in &rows[1..head_row] {
+        assert!(
+            row.layout
+                .segments
+                .iter()
+                .any(|s| s.part == Part::Through && s.from == wip_lane)
+        );
+    }
+    assert!(
+        rows[head_row]
+            .layout
+            .segments
+            .iter()
+            .any(|s| s.part == Part::Top && s.from == wip_lane)
+    );
+}
+
+#[test]
+fn windows_match_the_full_list() {
+    let repo = history();
+    let r = repo::open(repo.path()).unwrap();
+    let graph = Graph::build(&r, true).unwrap();
+    let full = graph.rows(&r, 0, graph.len()).unwrap();
+    assert_eq!(graph.rows(&r, 2, 2).unwrap(), full[2..4]);
+    assert_eq!(graph.rows(&r, 3, 100).unwrap(), full[3..]);
+    assert!(graph.rows(&r, 100, 5).unwrap().is_empty());
+}
+
+#[test]
+fn session_adds_wip_only_when_dirty() {
+    let repo = history();
+    let session = Session::default();
+
+    let clean = session.open(repo.path()).unwrap();
+    assert_eq!(clean.rows, 4);
+
+    repo.write("a.txt", "changed");
+    let dirty = session.open(repo.path()).unwrap();
+    assert_eq!(dirty.rows, 5);
+    assert_ne!(clean.id, dirty.id);
+
+    let open = session.get(dirty.id).unwrap();
+    assert!(open.graph.rows(&open.repo, 0, 1).unwrap()[0].wip);
+}
+
+#[test]
+fn session_opens_an_unborn_repo_without_rows() {
+    let repo = TestRepo::init();
+    repo.write("first.txt", "1");
+    let opened = Session::default().open(repo.path()).unwrap();
+    assert_eq!(opened.rows, 0);
+}
+
+#[test]
+fn session_get_and_close() {
+    let repo = history();
+    let session = Session::default();
+    let opened = session.open(repo.path()).unwrap();
+    assert_eq!(
+        opened.root.canonicalize().unwrap(),
+        repo.path().canonicalize().unwrap()
+    );
+
+    assert!(session.get(opened.id).is_ok());
+    session.close(opened.id).unwrap();
+    assert!(matches!(session.get(opened.id), Err(Error::UnknownRepo(id)) if id == opened.id));
+    assert!(matches!(
+        session.close(opened.id),
+        Err(Error::UnknownRepo(_))
+    ));
+    assert!(matches!(session.get(999), Err(Error::UnknownRepo(999))));
+}
+
+#[test]
+fn session_rejects_a_plain_folder() {
+    let dir = tempfile::tempdir().unwrap();
+    assert!(matches!(
+        Session::default().open(dir.path()),
+        Err(Error::NotARepo(_))
+    ));
+}

@@ -9,9 +9,10 @@ use gix::status::tree_index::TrackRenames;
 use gix::status::{Item, UntrackedFiles};
 use serde::{Serialize, Serializer};
 
-/// An open repository with a work tree.
+/// An open repository with a work tree. Cheap to share across threads.
 pub struct Repo {
-    inner: gix::Repository,
+    inner: gix::ThreadSafeRepository,
+    root: PathBuf,
 }
 
 /// Opens the repository containing `path`, walking up from a subfolder.
@@ -21,19 +22,24 @@ pub struct Repo {
 /// it has no work tree.
 pub fn open(path: impl AsRef<Path>) -> Result<Repo, Error> {
     let path = path.as_ref();
-    let inner = gix::discover(path).map_err(|_| Error::NotARepo(path.to_owned()))?;
-    if inner.workdir().is_none() {
+    let repo = gix::discover(path).map_err(|_| Error::NotARepo(path.to_owned()))?;
+    let Some(root) = repo.workdir().map(Path::to_owned) else {
         return Err(Error::Bare(path.to_owned()));
-    }
-    Ok(Repo { inner })
+    };
+    Ok(Repo {
+        inner: repo.into_sync(),
+        root,
+    })
 }
 
 impl Repo {
     /// The work tree root.
     pub fn root(&self) -> &Path {
-        self.inner
-            .workdir()
-            .expect("open() rejects repositories without a work tree")
+        &self.root
+    }
+
+    pub(crate) fn gix(&self) -> gix::Repository {
+        self.inner.to_thread_local()
     }
 
     /// The branch and file changes, like `git status --untracked-files=all --no-renames`.
@@ -49,7 +55,8 @@ impl Repo {
     }
 
     fn head(&self) -> Result<Head, Error> {
-        let head = self.inner.head().map_err(read_err)?;
+        let repo = self.gix();
+        let head = repo.head().map_err(read_err)?;
         Ok(match head.kind {
             gix::head::Kind::Symbolic(r) => Head::Branch {
                 name: r.name.shorten().to_string(),
@@ -64,8 +71,8 @@ impl Repo {
     }
 
     fn entries(&self) -> Result<Vec<Entry>, Error> {
-        let iter = self
-            .inner
+        let repo = self.gix();
+        let iter = repo
             .status(gix::progress::Discard)
             .map_err(read_err)?
             .untracked_files(UntrackedFiles::Files)
@@ -144,7 +151,7 @@ fn entry<'a>(by_path: &'a mut BTreeMap<String, Entry>, path: &BStr) -> &'a mut E
     })
 }
 
-fn read_err(err: impl std::error::Error) -> Error {
+pub(crate) fn read_err(err: impl std::error::Error) -> Error {
     Error::Read(err.to_string())
 }
 
@@ -210,6 +217,8 @@ pub enum Error {
     Bare(PathBuf),
     #[error("could not read the repository: {0}")]
     Read(String),
+    #[error("repository {0} is not open")]
+    UnknownRepo(u32),
 }
 
 impl Serialize for Error {
