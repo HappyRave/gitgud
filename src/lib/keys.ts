@@ -190,3 +190,21 @@ export function opLogKey(event: KeyboardEvent): "undo" | "redo" | null {
   }
   return null;
 }
+
+/** Ctrl+P opens the repository quick-switcher (spec §5). */
+export function isQuickSwitchKey(event: KeyboardEvent): boolean {
+  return event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey && event.key.toLowerCase() === "p";
+}
+
+/** Ctrl+W closes the active repository tab (spec §5). */
+export function isCloseTabKey(event: KeyboardEvent): boolean {
+  return event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey && event.key.toLowerCase() === "w";
+}
+
+/** Ctrl+Tab / Ctrl+Shift+Tab cycles open tabs (spec §5). */
+export function tabCycleKey(event: KeyboardEvent): -1 | 1 | null {
+  if (!event.ctrlKey || event.altKey || event.metaKey || event.key !== "Tab") {
+    return null;
+  }
+  return event.shiftKey ? -1 : 1;
+}

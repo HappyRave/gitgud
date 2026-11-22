@@ -1,11 +1,13 @@
 pub mod branches;
 pub mod cli;
+pub mod clone;
 pub mod diff;
 pub mod git;
 pub mod graph;
 pub mod history;
 pub mod image;
 mod job;
+pub mod library;
 pub mod merge;
 pub mod oplog;
 pub mod ops;

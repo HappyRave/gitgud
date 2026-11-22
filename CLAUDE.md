@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 gitgud is a desktop Git GUI. The repo was wiped on 2026-11-21 for a fresh start; the earlier
 prototype is still in git history (`5f1257d` and before). Built so far: locating the system git;
-opening a repo (folder picker, or `GITGUD_OPEN=<path>` at launch); the commit graph in the centre
+multi-repo workspace with always-first Library tab (`library.rs`), nested folders, drag-and-drop organization, smart filters (`Uncommitted` / `Not pushed` / `Locks I hold` / `Unity projects` / `Missing on disk`), local-only visible-row status refresh + `Fetch visible`, folder scanner (`ScanFolderDialog`), `git clone --progress` with `core.longpaths` and `GIT_LFS_PROGRESS` (`clone.rs`, `CloneDialog`), Library undo/redo (`Ctrl+Z`/`Ctrl+Y`), open repo tabs (`TabBar`, `Ctrl+P` `QuickSwitch`, `Ctrl+Tab`/`Ctrl+Shift+Tab`, `Ctrl+W`, session tab restore) or `GITGUD_OPEN=<path>` at launch; the commit graph in the centre
 (topo order, lanes laid out in Rust, canvas lane column, rows fetched on scroll, WIP row on top);
 a side pane with the working copy (file and hunk stage / unstage, working-copy diffs, commit box with `⋯` options for amend / `--signoff` / `--no-verify`)
 or, when a commit row or stash is selected, its message, files and text diff (`CommitDetail` / `StashDetail`); live refresh on
@@ -30,7 +30,7 @@ R on an older commit opens the plan, F / D apply at once, all undoable); Ctrl+F 
 working-copy keys of spec §5 plus Ctrl+2 / F6 / Ctrl+C / Ctrl+Shift+L / Ctrl+Shift+P / Ctrl+B; the ultrawide inspector
 split (≥ 2400 px); the strip's upstream / last-fetch line. Styling follows the lab
 mocks (tokens in `src/app.css`, light and dark); the lane colours are the mock's, never given a
-design round. Not yet: multi-repo Library & tabs (R3-A), command palette (`Ctrl+K`) / shortcut sheet (`?`) / line staging / syntax+intraline diff / plain-English error banner / settings modal, history
+design round. Not yet: command palette (`Ctrl+K`) / shortcut sheet (`?`) / line staging / syntax+intraline diff / plain-English error banner / settings modal, history
 edits over merge commits or the root commit (refused for now, Max 2026-11-22), stacks and PR
 links per stack level, the faded "still on origin" commits after Done, Unity Smart Merge / `.meta` guard / LFS locks, proposals.
 Update this file as pieces land.

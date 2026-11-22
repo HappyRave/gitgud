@@ -352,6 +352,106 @@ export interface CommitOptions {
   noVerify?: boolean;
 }
 
+export type HostKind = "gitHub" | "bitbucket" | "other" | "none";
+
+export interface LibraryFolder {
+  id: string;
+  name: string;
+  parentId: string | null;
+  order: number;
+}
+
+export interface RepoSummary {
+  path: string;
+  missing: boolean;
+  branch: string | null;
+  detached: boolean;
+  dirtyCount: number;
+  ahead: number;
+  behind: number;
+  fetchedAt: number | null;
+  locksHeld: number;
+  locksCheckedAt: number | null;
+  lastActivity: number | null;
+  host: HostKind;
+  isUnity: boolean;
+  checkedAt: number;
+}
+
+export interface LibraryRepo {
+  id: string;
+  name: string;
+  path: string;
+  folderId: string | null;
+  pinned: boolean;
+  order: number;
+  lastOpened: number | null;
+  cached: RepoSummary | null;
+}
+
+export interface OpenTabState {
+  openPaths: string[];
+  activePath: string | null;
+}
+
+export interface LibrarySnapshot {
+  version: number;
+  folders: LibraryFolder[];
+  repos: LibraryRepo[];
+  tabs: OpenTabState;
+  undoAction: string | null;
+  redoAction: string | null;
+}
+
+export interface AddRepoEntry {
+  path: string;
+  folderPath?: string | null;
+  name?: string | null;
+}
+
+export interface ScannedRepo {
+  name: string;
+  path: string;
+  alreadyInLibrary: boolean;
+}
+
+export interface ScanGroup {
+  dir: string;
+  suggestedFolder: string;
+  repos: ScannedRepo[];
+}
+
+export interface ScanResult {
+  root: string;
+  totalFound: number;
+  elapsedMs: number;
+  groups: ScanGroup[];
+}
+
+export interface LfsProgress {
+  state: string;
+  filesDone: number;
+  filesTotal: number;
+  bytesDone: number;
+  bytesTotal: number;
+  currentFile: string;
+}
+
+export interface CloneProgress {
+  phase: string;
+  percent: number;
+  done: number;
+  total: number;
+  lfs: LfsProgress | null;
+}
+
+export interface FetchManyProgress {
+  done: number;
+  total: number;
+  path: string;
+  error: string | null;
+}
+
 /** Staged: HEAD → index. Unstaged: index → work tree. */
 export type Side = "staged" | "unstaged";
 
@@ -451,6 +551,24 @@ export interface Commands {
   run_plan: { args: { id: number; onto: string; base: string; steps: PlanStep[]; updateRefs: boolean }; result: Opened };
   reword_head: { args: { id: number; message: string }; result: Opened };
   quick_edit: { args: { id: number; commit: string; action: "fixup" | "drop" }; result: Opened };
+  library_load: { args: Record<string, never>; result: LibrarySnapshot };
+  library_summaries: { args: { paths: string[] }; result: RepoSummary[] };
+  library_add_repos: { args: { entries: AddRepoEntry[] }; result: LibrarySnapshot };
+  library_remove_repo: { args: { id: string }; result: LibrarySnapshot };
+  library_locate_repo: { args: { id: string; newPath: string }; result: LibrarySnapshot };
+  library_move_repo: { args: { id: string; folderId: string | null; order: number }; result: LibrarySnapshot };
+  library_pin_repo: { args: { id: string; pinned: boolean }; result: LibrarySnapshot };
+  library_create_folder: { args: { name: string; parentId: string | null }; result: LibrarySnapshot };
+  library_rename_folder: { args: { id: string; name: string }; result: LibrarySnapshot };
+  library_delete_folder: { args: { id: string }; result: LibrarySnapshot };
+  library_move_folder: { args: { id: string; parentId: string | null; order: number }; result: LibrarySnapshot };
+  library_save_tabs: { args: { tabs: OpenTabState }; result: LibrarySnapshot };
+  library_undo: { args: Record<string, never>; result: LibrarySnapshot };
+  library_redo: { args: Record<string, never>; result: LibrarySnapshot };
+  scan_folder: { args: { root: string }; result: ScanResult };
+  clone_repo: { args: { url: string; dest: string; folderPath: string | null; longPaths: boolean }; result: string };
+  cancel_clone: { args: Record<string, never>; result: boolean };
+  fetch_many: { args: { paths: string[] }; result: RepoSummary[] };
   "plugin:window|set_title": { args: { label: string; value: string }; result: null };
   "plugin:dialog|open": { args: { options: { directory: boolean; title: string } }; result: string | null };
 }
@@ -594,4 +712,33 @@ export const quickEdit = (id: number, commit: string, action: "fixup" | "drop") 
 export const setWindowTitle = (value: string) => call("plugin:window|set_title", { label: "main", value });
 
 /** Native folder picker; `null` when cancelled. */
-export const pickFolder = () => open({ directory: true, title: "Open repository" });
+export const pickFolder = (title = "Open repository") => open({ directory: true, title });
+
+export const libraryLoad = () => call("library_load", {});
+export const librarySummaries = (paths: string[]) => call("library_summaries", { paths });
+export const libraryAddRepos = (entries: AddRepoEntry[]) => call("library_add_repos", { entries });
+export const libraryRemoveRepo = (id: string) => call("library_remove_repo", { id });
+export const libraryLocateRepo = (id: string, newPath: string) => call("library_locate_repo", { id, newPath });
+export const libraryMoveRepo = (id: string, folderId: string | null, order: number) =>
+  call("library_move_repo", { id, folderId, order });
+export const libraryPinRepo = (id: string, pinned: boolean) => call("library_pin_repo", { id, pinned });
+export const libraryCreateFolder = (name: string, parentId: string | null) =>
+  call("library_create_folder", { name, parentId });
+export const libraryRenameFolder = (id: string, name: string) => call("library_rename_folder", { id, name });
+export const libraryDeleteFolder = (id: string) => call("library_delete_folder", { id });
+export const libraryMoveFolder = (id: string, parentId: string | null, order: number) =>
+  call("library_move_folder", { id, parentId, order });
+export const librarySaveTabs = (tabs: OpenTabState) => call("library_save_tabs", { tabs });
+export const libraryUndo = () => call("library_undo", {});
+export const libraryRedo = () => call("library_redo", {});
+export const scanFolder = (root: string) => call("scan_folder", { root });
+export const cloneRepo = (url: string, dest: string, folderPath: string | null, longPaths: boolean) =>
+  call("clone_repo", { url, dest, folderPath, longPaths });
+export const cancelClone = () => call("cancel_clone", {});
+export const fetchMany = (paths: string[]) => call("fetch_many", { paths });
+
+export const onCloneProgress = (handler: (progress: CloneProgress) => void) =>
+  listen<CloneProgress>("clone-progress", (e) => handler(e.payload));
+
+export const onFetchManyProgress = (handler: (progress: FetchManyProgress) => void) =>
+  listen<FetchManyProgress>("fetch-many-progress", (e) => handler(e.payload));

@@ -29,6 +29,14 @@ type Handlers = Parameters<typeof mockCommands>[0];
 /** A working app: git found, repos open with ids counting up from 1. */
 function app(extra: Handlers = {}) {
   let next = 1;
+  const EMPTY_LIB = {
+    version: 1,
+    folders: [],
+    repos: [],
+    tabs: { openPaths: [], activePath: null },
+    undoAction: null,
+    redoAction: null,
+  };
   const handlers: Handlers = {
     git_info: () => GIT,
     launch_path: () => null,
@@ -47,6 +55,24 @@ function app(extra: Handlers = {}) {
       fetched: null,
     }),
     stashes: () => [],
+    library_load: () => EMPTY_LIB,
+    library_summaries: () => [],
+    library_add_repos: () => EMPTY_LIB,
+    library_remove_repo: () => EMPTY_LIB,
+    library_locate_repo: () => EMPTY_LIB,
+    library_move_repo: () => EMPTY_LIB,
+    library_pin_repo: () => EMPTY_LIB,
+    library_create_folder: () => EMPTY_LIB,
+    library_rename_folder: () => EMPTY_LIB,
+    library_delete_folder: () => EMPTY_LIB,
+    library_move_folder: () => EMPTY_LIB,
+    library_save_tabs: () => EMPTY_LIB,
+    library_undo: () => EMPTY_LIB,
+    library_redo: () => EMPTY_LIB,
+    scan_folder: ({ root }) => ({ root, totalFound: 0, elapsedMs: 1, groups: [] }),
+    clone_repo: ({ dest }) => dest,
+    cancel_clone: () => true,
+    fetch_many: () => [],
     ...extra,
   };
   return mockCommands(handlers);
@@ -107,7 +133,7 @@ describe("start page: opening a repo", () => {
     expect(calls.find((c) => c.cmd === "plugin:dialog|open")?.args).toMatchObject({ options: { directory: true } });
   });
 
-  it("closes the previous repo when another opens", async () => {
+  it("opens a second repo in a new tab and closing a tab calls close_repo", async () => {
     const calls = app({ launch_path: () => "C:/one", "plugin:dialog|open": () => "C:/two" });
     render(Page);
     await screen.findByText("first commit");
@@ -116,7 +142,10 @@ describe("start page: opening a repo", () => {
 
     const graphIds = () => calls.filter((c) => c.cmd === "graph_rows").map((c) => (c.args as { id: number }).id);
     await vi.waitFor(() => expect(graphIds()).toEqual([1, 2]));
-    expect(calls.filter((c) => c.cmd === "close_repo").map((c) => c.args)).toEqual([{ id: 1 }]);
+    expect(calls.some((c) => c.cmd === "close_repo")).toBe(false);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Close one" }));
+    await vi.waitFor(() => expect(calls.filter((c) => c.cmd === "close_repo").map((c) => c.args)).toEqual([{ id: 1 }]));
   });
 
   it("does nothing when the picker is cancelled", async () => {
@@ -280,11 +309,16 @@ describe("start page: sidebar", () => {
       }),
     });
     const view = render(Page);
-    const toolbar = view.container.querySelector("header.tb") as HTMLElement;
 
-    await vi.waitFor(() => expect(toolbar).toHaveTextContent("main ↑2 ↓1"));
+    let toolbar!: HTMLElement;
+    await vi.waitFor(() => {
+      toolbar = view.container.querySelector(".view:not([hidden]) header.tb") as HTMLElement;
+      expect(toolbar).toHaveTextContent("main ↑2 ↓1");
+    });
     expect(within(toolbar).getByRole("button", { name: "Open repository…" })).toHaveTextContent("repo");
-    expect(view.container.querySelector("footer.strip")).toHaveTextContent("● ↑2 ↓1 against origin/main · fetched 5 min ago");
+    expect(view.container.querySelector(".view:not([hidden]) footer.strip")).toHaveTextContent(
+      "● ↑2 ↓1 against origin/main · fetched 5 min ago",
+    );
   });
 
   it("names the open repo in the window title", async () => {
@@ -1745,5 +1779,152 @@ describe("start page: Milestone 1 workflows", () => {
     await fireEvent.click(within(detail2).getByRole("button", { name: "Pop" }));
     await vi.waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Popped stash@{0}"));
     expect(calls.find((c) => c.cmd === "stash_pop")?.args).toEqual({ id: 1, index: 0 });
+  });
+});
+
+describe("start page: Milestone 2 Library & multi-tab workspace", () => {
+  it("restores saved session tabs on launch when GITGUD_OPEN is empty", async () => {
+    const LIB = {
+      version: 1,
+      folders: [{ id: "f-1", name: "Studio", parentId: null, order: 0 }],
+      repos: [
+        {
+          id: "r-1",
+          name: "alpha",
+          path: "C:/work/alpha",
+          folderId: "f-1",
+          pinned: false,
+          order: 0,
+          lastOpened: 100,
+          cached: null,
+        },
+        {
+          id: "r-2",
+          name: "beta",
+          path: "C:/work/beta",
+          folderId: "f-1",
+          pinned: false,
+          order: 1,
+          lastOpened: 200,
+          cached: null,
+        },
+      ],
+      tabs: { openPaths: ["C:/work/alpha", "C:/work/beta"], activePath: "C:/work/beta" },
+      undoAction: null,
+      redoAction: null,
+    };
+    const calls = app({
+      library_load: () => LIB,
+      graph_rows: ({ id }) => [{ ...ROW, subject: id === 1 ? "alpha commit" : "beta commit" }],
+    });
+    render(Page);
+
+    expect(await screen.findByText("beta commit")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Library" })).toHaveAttribute("aria-selected", "false");
+    expect(screen.getByRole("tab", { name: /beta/ })).toHaveAttribute("aria-selected", "true");
+    expect(calls.filter((c) => c.cmd === "open_repo").map((c) => c.args)).toEqual([
+      { path: "C:/work/alpha" },
+      { path: "C:/work/beta" },
+    ]);
+  });
+
+  it("supports Ctrl+P quick switch, Ctrl+Tab cycling, Ctrl+W close without closing Library, and Scan a folder", async () => {
+    const LIB = {
+      version: 1,
+      folders: [{ id: "f-1", name: "Work", parentId: null, order: 0 }],
+      repos: [
+        {
+          id: "r-1",
+          name: "alpha",
+          path: "C:/work/alpha",
+          folderId: "f-1",
+          pinned: true,
+          order: 0,
+          lastOpened: 100,
+          cached: {
+            path: "C:/work/alpha",
+            missing: false,
+            branch: "main",
+            detached: false,
+            dirtyCount: 0,
+            ahead: 0,
+            behind: 0,
+            fetchedAt: null,
+            locksHeld: 0,
+            locksCheckedAt: null,
+            lastActivity: 100,
+            host: "gitHub" as const,
+            isUnity: false,
+            checkedAt: 100,
+          },
+        },
+      ],
+      tabs: { openPaths: [], activePath: null },
+      undoAction: null,
+      redoAction: null,
+    };
+    const calls = app({
+      library_load: () => LIB,
+      "plugin:dialog|open": () => "C:/work/scan-root",
+      scan_folder: () => ({
+        root: "C:/work/scan-root",
+        totalFound: 1,
+        elapsedMs: 15,
+        groups: [
+          {
+            dir: "C:/work/scan-root/games",
+            suggestedFolder: "Work / games",
+            repos: [{ name: "gamma", path: "C:/work/scan-root/games/gamma", alreadyInLibrary: false }],
+          },
+        ],
+      }),
+      library_add_repos: ({ entries }) => ({
+        ...LIB,
+        repos: [
+          ...LIB.repos,
+          {
+            id: "r-2",
+            name: entries[0].name ?? "gamma",
+            path: entries[0].path,
+            folderId: "f-1",
+            pinned: false,
+            order: 1,
+            lastOpened: null,
+            cached: null,
+          },
+        ],
+        undoAction: "Add repository",
+      }),
+    });
+    render(Page);
+    await screen.findByText("alpha");
+
+    await fireEvent.click(screen.getByRole("button", { name: "Scan a folder…" }));
+    const scanDlg = await screen.findByRole("dialog", { name: /Add repositories · scan/ });
+    await fireEvent.click(within(scanDlg).getByRole("button", { name: "Add 1 repo" }));
+    await vi.waitFor(() => {
+      const add = calls.find((c): c is { cmd: "library_add_repos"; args: Commands["library_add_repos"]["args"] } => c.cmd === "library_add_repos");
+      expect(add?.args.entries).toHaveLength(1);
+    });
+
+    await fireEvent.keyDown(window, { key: "p", ctrlKey: true });
+    const qs = await screen.findByRole("dialog", { name: "Go to repository" });
+    await fireEvent.input(within(qs).getByRole("textbox", { name: "Go to repository" }), { target: { value: "alp" } });
+    await fireEvent.keyDown(qs, { key: "Enter" });
+
+    expect(await screen.findByText("first commit")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /alpha/ })).toHaveAttribute("aria-selected", "true");
+
+    await fireEvent.keyDown(window, { key: "Tab", ctrlKey: true, shiftKey: true });
+    expect(screen.getByRole("tab", { name: "Library" })).toHaveAttribute("aria-selected", "true");
+
+    await fireEvent.keyDown(window, { key: "w", ctrlKey: true });
+    expect(calls.some((c) => c.cmd === "close_repo")).toBe(false);
+
+    await fireEvent.keyDown(window, { key: "Tab", ctrlKey: true });
+    expect(screen.getByRole("tab", { name: /alpha/ })).toHaveAttribute("aria-selected", "true");
+    await fireEvent.keyDown(window, { key: "w", ctrlKey: true });
+    await vi.waitFor(() => expect(calls.find((c) => c.cmd === "close_repo")?.args).toEqual({ id: 1 }));
+    expect(screen.getByRole("tab", { name: "Library" })).toHaveAttribute("aria-selected", "true");
   });
 });

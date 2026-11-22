@@ -1,22 +1,44 @@
+use std::path::Path;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use gitgud_core::branches::Branches;
+use gitgud_core::clone::{CloneProgress, clone_repo as core_clone_repo};
 use gitgud_core::diff::{CommitDetail, FileDiff};
 use gitgud_core::git::{self, GitInfo};
 use gitgud_core::graph::Row;
 use gitgud_core::history::{Action, HistoryPlan, Step};
+use gitgud_core::library::{
+    AddRepoEntry, DEFAULT_SCAN_DEPTH, LibrarySnapshot, LibraryStore, OpenTabState, RepoSummary,
+    ScanResult, display_path, scan_folder as core_scan_folder,
+};
 use gitgud_core::merge::{ConflictSides, ConflictText, MergeState, Side as MergeSide};
 use gitgud_core::oplog::{OpEntry, label_paths};
 use gitgud_core::ops::{CommitOptions, ResetMode};
 use gitgud_core::rebase::{RebasePlan, RebaseState, RebaseStep};
 use gitgud_core::remote::{PullStrategy, PushInfo};
-use gitgud_core::repo::{Error, Status};
+use gitgud_core::repo::{self, Error, Status};
 use gitgud_core::sequencer::{SequencerState, SequencerStep};
 use gitgud_core::session::{Opened, PlanPreview, PullResult, Reverted, Session};
 use gitgud_core::stash::StashEntry;
-use gitgud_core::task::Progress;
+use gitgud_core::task::{Cancel, Progress};
 use gitgud_core::worktree::{HunkHeader, Side};
 use tauri::{AppHandle, Builder, Emitter, Manager, Runtime, State};
 
 mod images;
+
+#[derive(Default)]
+struct ActiveClone(Mutex<Option<Cancel>>);
+
+struct ClearClone<'a>(&'a Mutex<Option<Cancel>>);
+
+impl Drop for ClearClone<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut g) = self.0.lock() {
+            *g = None;
+        }
+    }
+}
 
 #[tauri::command]
 async fn git_info() -> Result<GitInfo, git::Error> {
@@ -36,9 +58,13 @@ const REPO_CHANGED: &str = "repo-changed";
 async fn open_repo<R: Runtime>(
     app: AppHandle<R>,
     session: State<'_, Session>,
+    library: State<'_, LibraryStore>,
     path: String,
 ) -> Result<Opened, Error> {
-    let opened = session.open(path)?;
+    let opened = session.open(&path)?;
+    if let Err(e) = library.touch_repo(opened.root.to_string_lossy().as_ref()) {
+        eprintln!("gitgud: cannot update library last_opened: {e}");
+    }
     let id = opened.id;
     session.watch(id, move || {
         if let Err(e) = app.emit(REPO_CHANGED, id) {
@@ -748,9 +774,256 @@ async fn redo(session: State<'_, Session>, id: u32) -> Result<Reverted, Error> {
     session.redo(id)
 }
 
-fn app<R: Runtime>(builder: Builder<R>) -> Builder<R> {
+#[tauri::command]
+async fn library_load(library: State<'_, LibraryStore>) -> Result<LibrarySnapshot, Error> {
+    library.snapshot()
+}
+
+#[tauri::command]
+async fn library_summaries(
+    library: State<'_, LibraryStore>,
+    paths: Vec<String>,
+) -> Result<Vec<RepoSummary>, Error> {
+    library.refresh_summaries(&paths)
+}
+
+#[tauri::command]
+async fn library_add_repos(
+    library: State<'_, LibraryStore>,
+    entries: Vec<AddRepoEntry>,
+) -> Result<LibrarySnapshot, Error> {
+    library.add_repos(&entries)
+}
+
+#[tauri::command]
+async fn library_remove_repo(
+    library: State<'_, LibraryStore>,
+    id: String,
+) -> Result<LibrarySnapshot, Error> {
+    library.remove_repo(&id)
+}
+
+#[tauri::command]
+async fn library_locate_repo(
+    library: State<'_, LibraryStore>,
+    id: String,
+    new_path: String,
+) -> Result<LibrarySnapshot, Error> {
+    library.locate_repo(&id, &new_path)
+}
+
+#[tauri::command]
+async fn library_move_repo(
+    library: State<'_, LibraryStore>,
+    id: String,
+    folder_id: Option<String>,
+    order: usize,
+) -> Result<LibrarySnapshot, Error> {
+    library.move_repo(&id, folder_id, order)
+}
+
+#[tauri::command]
+async fn library_pin_repo(
+    library: State<'_, LibraryStore>,
+    id: String,
+    pinned: bool,
+) -> Result<LibrarySnapshot, Error> {
+    library.pin_repo(&id, pinned)
+}
+
+#[tauri::command]
+async fn library_create_folder(
+    library: State<'_, LibraryStore>,
+    name: String,
+    parent_id: Option<String>,
+) -> Result<LibrarySnapshot, Error> {
+    library.create_folder(&name, parent_id)
+}
+
+#[tauri::command]
+async fn library_rename_folder(
+    library: State<'_, LibraryStore>,
+    id: String,
+    name: String,
+) -> Result<LibrarySnapshot, Error> {
+    library.rename_folder(&id, &name)
+}
+
+#[tauri::command]
+async fn library_delete_folder(
+    library: State<'_, LibraryStore>,
+    id: String,
+) -> Result<LibrarySnapshot, Error> {
+    library.delete_folder(&id)
+}
+
+#[tauri::command]
+async fn library_move_folder(
+    library: State<'_, LibraryStore>,
+    id: String,
+    parent_id: Option<String>,
+    order: usize,
+) -> Result<LibrarySnapshot, Error> {
+    library.move_folder(&id, parent_id, order)
+}
+
+#[tauri::command]
+async fn library_save_tabs(
+    library: State<'_, LibraryStore>,
+    tabs: OpenTabState,
+) -> Result<LibrarySnapshot, Error> {
+    library.save_tabs(tabs)
+}
+
+#[tauri::command]
+async fn library_undo(library: State<'_, LibraryStore>) -> Result<LibrarySnapshot, Error> {
+    library.undo()
+}
+
+#[tauri::command]
+async fn library_redo(library: State<'_, LibraryStore>) -> Result<LibrarySnapshot, Error> {
+    library.redo()
+}
+
+#[tauri::command]
+async fn scan_folder(library: State<'_, LibraryStore>, root: String) -> Result<ScanResult, Error> {
+    let existing = library.existing_paths()?;
+    core_scan_folder(Path::new(&root), &existing, DEFAULT_SCAN_DEPTH)
+}
+
+const CLONE_PROGRESS: &str = "clone-progress";
+const FETCH_MANY_PROGRESS: &str = "fetch-many-progress";
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FetchManyProgress {
+    done: usize,
+    total: usize,
+    path: String,
+    error: Option<String>,
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn clone_repo<R: Runtime>(
+    app: AppHandle<R>,
+    session: State<'_, Session>,
+    library: State<'_, LibraryStore>,
+    active: State<'_, ActiveClone>,
+    url: String,
+    dest: String,
+    folder_path: Option<String>,
+    long_paths: bool,
+) -> Result<String, Error> {
+    let cancel = {
+        let mut g = active
+            .0
+            .lock()
+            .map_err(|_| Error::Read("clone lock poisoned".into()))?;
+        if g.is_some() {
+            return Err(Error::Refused("a clone is already in progress".into()));
+        }
+        let c = Cancel::default();
+        *g = Some(c.clone());
+        c
+    };
+    let _clear = ClearClone(&active.0);
+    let git = session.git()?;
+    let cloned = core_clone_repo(
+        git,
+        &url,
+        Path::new(&dest),
+        long_paths,
+        &cancel,
+        &mut |p: CloneProgress| {
+            if let Err(e) = app.emit(CLONE_PROGRESS, p) {
+                eprintln!("gitgud: cannot emit {CLONE_PROGRESS}: {e}");
+            }
+        },
+    )?;
+    let path_str = display_path(&cloned);
+    let _ = library.add_repos(&[AddRepoEntry {
+        path: path_str.clone(),
+        folder_path,
+        name: None,
+    }]);
+    let _ = library.refresh_summaries(std::slice::from_ref(&path_str));
+    Ok(path_str)
+}
+
+#[tauri::command]
+async fn cancel_clone(active: State<'_, ActiveClone>) -> Result<bool, Error> {
+    let guard = active
+        .0
+        .lock()
+        .map_err(|_| Error::Read("clone lock poisoned".into()))?;
+    if let Some(cancel) = guard.as_ref() {
+        cancel.cancel();
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+#[tauri::command]
+async fn fetch_many<R: Runtime>(
+    app: AppHandle<R>,
+    session: State<'_, Session>,
+    library: State<'_, LibraryStore>,
+    paths: Vec<String>,
+) -> Result<Vec<RepoSummary>, Error> {
+    let total = paths.len();
+    if total == 0 {
+        return Ok(Vec::new());
+    }
+    let git = session.git()?;
+    let done = AtomicUsize::new(0);
+    let next = AtomicUsize::new(0);
+    let workers = total.clamp(1, 4);
+    std::thread::scope(|s| {
+        for _ in 0..workers {
+            s.spawn(|| {
+                loop {
+                    let idx = next.fetch_add(1, Ordering::Relaxed);
+                    if idx >= total {
+                        break;
+                    }
+                    let path = &paths[idx];
+                    let err = match repo::open(path) {
+                        Ok(r) => git
+                            .run(r.root(), &["fetch", "--all", "--prune"], None)
+                            .err()
+                            .map(|e| e.to_string()),
+                        Err(e) => Some(e.to_string()),
+                    };
+                    let n = done.fetch_add(1, Ordering::Relaxed) + 1;
+                    if let Err(e) = app.emit(
+                        FETCH_MANY_PROGRESS,
+                        FetchManyProgress {
+                            done: n,
+                            total,
+                            path: path.clone(),
+                            error: err,
+                        },
+                    ) {
+                        eprintln!("gitgud: cannot emit {FETCH_MANY_PROGRESS}: {e}");
+                    }
+                }
+            });
+        }
+    });
+    library.refresh_summaries(&paths)
+}
+
+fn app_with_library<R: Runtime>(builder: Builder<R>, library: Option<LibraryStore>) -> Builder<R> {
+    let builder = if let Some(store) = library {
+        builder.manage(store)
+    } else {
+        builder
+    };
     builder
         .manage(Session::default())
+        .manage(ActiveClone::default())
         .register_asynchronous_uri_scheme_protocol("gitgud", |ctx, request, responder| {
             let app = ctx.app_handle().clone();
             let uri = request.uri().to_string();
@@ -832,14 +1105,40 @@ fn app<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             predicted_file,
             run_plan,
             reword_head,
-            quick_edit
+            quick_edit,
+            library_load,
+            library_summaries,
+            library_add_repos,
+            library_remove_repo,
+            library_locate_repo,
+            library_move_repo,
+            library_pin_repo,
+            library_create_folder,
+            library_rename_folder,
+            library_delete_folder,
+            library_move_folder,
+            library_save_tabs,
+            library_undo,
+            library_redo,
+            scan_folder,
+            clone_repo,
+            cancel_clone,
+            fetch_many
         ])
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    app(Builder::default())
+    app_with_library(Builder::default(), None)
         .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            let dir = app.path().app_data_dir()?;
+            std::fs::create_dir_all(&dir)?;
+            let store = LibraryStore::load(dir.join("library.json"))
+                .map_err(|e| std::io::Error::other(e.to_string()))?;
+            app.manage(store);
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
@@ -857,19 +1156,26 @@ mod tests {
 
     /// Invokes `cmd` through the real IPC path, with JSON args as the webview sends them.
     struct Ipc {
+        _library_dir: tempfile::TempDir,
         app: tauri::App<MockRuntime>,
         webview: WebviewWindow<MockRuntime>,
     }
 
     impl Ipc {
         fn new() -> Self {
-            let app = app(mock_builder())
+            let dir = tempfile::tempdir().unwrap();
+            let store = LibraryStore::load(dir.path().join("library.json")).unwrap();
+            let app = app_with_library(mock_builder(), Some(store))
                 .build(mock_context(noop_assets()))
                 .unwrap();
             let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
                 .build()
                 .unwrap();
-            Self { app, webview }
+            Self {
+                _library_dir: dir,
+                app,
+                webview,
+            }
         }
 
         fn call(&self, cmd: &str, args: Value) -> Result<Value, Value> {
@@ -1724,5 +2030,84 @@ mod tests {
             ipc.call("sequencer_state", json!({ "id": id })).unwrap(),
             Value::Null
         );
+    }
+
+    #[test]
+    fn library_scan_clone_and_fetch_many_through_ipc() {
+        let ipc = Ipc::new();
+        let origin = history();
+        let bare_dir = tempfile::tempdir().unwrap();
+        let bare = bare_dir.path().join("upstream.git");
+        origin.git(&["clone", "-q", "--bare", ".", bare.to_str().unwrap()]);
+
+        let dest_root = tempfile::tempdir().unwrap();
+        let cloned_dest = dest_root.path().join("cloned-app");
+        let cloned_path = ipc
+            .call(
+                "clone_repo",
+                json!({
+                    "url": bare.to_str().unwrap(),
+                    "dest": cloned_dest.to_str().unwrap(),
+                    "folderPath": "Studio / Games",
+                    "longPaths": true,
+                }),
+            )
+            .unwrap();
+        assert!(cloned_path.as_str().unwrap().ends_with("cloned-app"));
+
+        let loaded = ipc.call("library_load", json!({})).unwrap();
+        assert_eq!(loaded["repos"].as_array().unwrap().len(), 1);
+        assert_eq!(loaded["folders"].as_array().unwrap().len(), 2);
+
+        let scanned = ipc
+            .call("scan_folder", json!({ "root": dest_root.path() }))
+            .unwrap();
+        assert_eq!(scanned["totalFound"], 1);
+        assert!(
+            scanned["groups"][0]["repos"][0]["alreadyInLibrary"]
+                .as_bool()
+                .unwrap()
+        );
+
+        let folder = ipc
+            .call(
+                "library_create_folder",
+                json!({ "name": "Tools", "parentId": null }),
+            )
+            .unwrap();
+        assert!(
+            folder["folders"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|f| f["name"] == "Tools")
+        );
+
+        let undone = ipc.call("library_undo", json!({})).unwrap();
+        assert!(
+            !undone["folders"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|f| f["name"] == "Tools")
+        );
+
+        let redone = ipc.call("library_redo", json!({})).unwrap();
+        assert!(
+            redone["folders"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|f| f["name"] == "Tools")
+        );
+
+        origin
+            .write("remote.txt", "from remote")
+            .commit_all("new remote commit");
+        origin.git(&["push", "-q", bare.to_str().unwrap(), "main"]);
+        let sums = ipc
+            .call("fetch_many", json!({ "paths": [cloned_path] }))
+            .unwrap();
+        assert_eq!(sums[0]["behind"], 1);
     }
 }

@@ -7,11 +7,14 @@ import {
   isNewBranchKey,
   isPullKey,
   isPushKey,
+  isQuickSwitchKey,
+  isCloseTabKey,
   isSplitKey,
   opLogKey,
   paneKey,
   planKey,
   sideKey,
+  tabCycleKey,
   workingKey,
 } from "./keys";
 
@@ -197,5 +200,13 @@ describe("pull, push, and new-branch keys", () => {
     expect(isNewBranchKey(event({ key: "b", ctrlKey: true }))).toBe(true);
     expect(isNewBranchKey(event({ key: "b", ctrlKey: true, shiftKey: true }))).toBe(false);
     expect(isNewBranchKey(event({ key: "b", ctrlKey: true }, document.createElement("textarea")))).toBe(false);
+  });
+
+  it("maps Ctrl+P, Ctrl+W, and Ctrl+Tab / Ctrl+Shift+Tab", () => {
+    expect(isQuickSwitchKey(event({ key: "p", ctrlKey: true }))).toBe(true);
+    expect(isCloseTabKey(event({ key: "w", ctrlKey: true }))).toBe(true);
+    expect(tabCycleKey(event({ key: "Tab", ctrlKey: true }))).toBe(1);
+    expect(tabCycleKey(event({ key: "Tab", ctrlKey: true, shiftKey: true }))).toBe(-1);
+    expect(tabCycleKey(event({ key: "Tab" }))).toBeNull();
   });
 });

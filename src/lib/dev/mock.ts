@@ -1,5 +1,18 @@
 import { mockIPC } from "@tauri-apps/api/mocks";
-import type { Commands, Conflict, HistoryPlan, MergeState, Opened, OpEntry, PlanCommit, RebaseState, Row, RowLayout, Status } from "$lib/api";
+import type {
+  Commands,
+  Conflict,
+  HistoryPlan,
+  LibrarySnapshot,
+  MergeState,
+  Opened,
+  OpEntry,
+  PlanCommit,
+  RebaseState,
+  Row,
+  RowLayout,
+  Status,
+} from "$lib/api";
 
 /**
  * Dev-only fake backend so the UI can be looked at in a plain browser:
@@ -9,6 +22,43 @@ import type { Commands, Conflict, HistoryPlan, MergeState, Opened, OpEntry, Plan
 export function installMock(scenario: string) {
   const now = Math.floor(Date.now() / 1000);
   let graphVersion = 0;
+  let mockLib: LibrarySnapshot = {
+    version: 1,
+    folders: [
+      { id: "f-studio", name: "Studio", parentId: null, order: 0 },
+      { id: "f-arcade", name: "Arcade", parentId: "f-studio", order: 0 },
+    ],
+    repos: [
+      {
+        id: "r-boat",
+        name: "boat",
+        path: "C:/Users/Max/Documents/Projects/boat",
+        folderId: "f-arcade",
+        pinned: true,
+        order: 0,
+        lastOpened: now - 120,
+        cached: {
+          path: "C:/Users/Max/Documents/Projects/boat",
+          missing: false,
+          branch: "master",
+          detached: false,
+          dirtyCount: 3,
+          ahead: 1,
+          behind: 0,
+          fetchedAt: now - 300,
+          locksHeld: 1,
+          locksCheckedAt: now - 300,
+          lastActivity: now - 120,
+          host: "gitHub",
+          isUnity: true,
+          checkedAt: now - 10,
+        },
+      },
+    ],
+    tabs: { openPaths: [], activePath: null },
+    undoAction: null,
+    redoAction: null,
+  };
   const opened = (): Opened => ({ id: 1, root: "C:/Users/Max/Documents/Projects/boat", rows: ROWS.length, graphVersion });
 
   const lane = (node: number, segments: RowLayout["segments"] = []): RowLayout => ({ node, segments, overflow: false });
@@ -320,6 +370,107 @@ export function installMock(scenario: string) {
     stash_drop: () => opened(),
     pr_url: ({ branch }) => `https://github.com/Max/boat/pull/new/${branch}`,
     open_external_url: () => null,
+    library_load: () => mockLib,
+    library_summaries: () => mockLib.repos.map((r) => r.cached!).filter(Boolean),
+    library_add_repos: ({ entries }) => {
+      for (const e of entries) {
+        mockLib = {
+          ...mockLib,
+          repos: [
+            ...mockLib.repos,
+            {
+              id: `r-${Date.now()}`,
+              name: e.name ?? e.path.split(/[\\/]/).pop() ?? e.path,
+              path: e.path,
+              folderId: null,
+              pinned: false,
+              order: mockLib.repos.length,
+              lastOpened: null,
+              cached: null,
+            },
+          ],
+          undoAction: "Add repository",
+        };
+      }
+      return mockLib;
+    },
+    library_remove_repo: ({ id }) => {
+      mockLib = { ...mockLib, repos: mockLib.repos.filter((r) => r.id !== id), undoAction: "Remove repository" };
+      return mockLib;
+    },
+    library_locate_repo: ({ id, newPath }) => {
+      mockLib = {
+        ...mockLib,
+        repos: mockLib.repos.map((r) => (r.id === id ? { ...r, path: newPath } : r)),
+        undoAction: "Locate repository",
+      };
+      return mockLib;
+    },
+    library_move_repo: ({ id, folderId, order }) => {
+      mockLib = {
+        ...mockLib,
+        repos: mockLib.repos.map((r) => (r.id === id ? { ...r, folderId, order } : r)),
+        undoAction: "Move repository",
+      };
+      return mockLib;
+    },
+    library_pin_repo: ({ id, pinned }) => {
+      mockLib = {
+        ...mockLib,
+        repos: mockLib.repos.map((r) => (r.id === id ? { ...r, pinned } : r)),
+        undoAction: pinned ? "Pin" : "Unpin",
+      };
+      return mockLib;
+    },
+    library_create_folder: ({ name, parentId }) => {
+      mockLib = {
+        ...mockLib,
+        folders: [...mockLib.folders, { id: `f-${Date.now()}`, name, parentId, order: mockLib.folders.length }],
+        undoAction: `Create folder ${name}`,
+      };
+      return mockLib;
+    },
+    library_rename_folder: ({ id, name }) => {
+      mockLib = {
+        ...mockLib,
+        folders: mockLib.folders.map((f) => (f.id === id ? { ...f, name } : f)),
+        undoAction: `Rename folder`,
+      };
+      return mockLib;
+    },
+    library_delete_folder: ({ id }) => {
+      mockLib = { ...mockLib, folders: mockLib.folders.filter((f) => f.id !== id), undoAction: "Delete folder" };
+      return mockLib;
+    },
+    library_move_folder: ({ id, parentId, order }) => {
+      mockLib = {
+        ...mockLib,
+        folders: mockLib.folders.map((f) => (f.id === id ? { ...f, parentId, order } : f)),
+        undoAction: "Move folder",
+      };
+      return mockLib;
+    },
+    library_save_tabs: ({ tabs }) => {
+      mockLib = { ...mockLib, tabs };
+      return mockLib;
+    },
+    library_undo: () => mockLib,
+    library_redo: () => mockLib,
+    scan_folder: ({ root }) => ({
+      root,
+      totalFound: 1,
+      elapsedMs: 12,
+      groups: [
+        {
+          dir: root,
+          suggestedFolder: "Projects",
+          repos: [{ name: "sample-game", path: `${root}/sample-game`, alreadyInLibrary: false }],
+        },
+      ],
+    }),
+    clone_repo: ({ dest }) => dest,
+    cancel_clone: () => true,
+    fetch_many: () => mockLib.repos.map((r) => r.cached!).filter(Boolean),
     "plugin:window|set_title": () => null,
   };
 
