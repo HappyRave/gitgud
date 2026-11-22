@@ -1,15 +1,21 @@
 <script lang="ts">
-  import type { Change, Entry, Head, Side, Status } from "$lib/api";
+  import type { Change, Entry, Head, LfsLock, MetaIssue, Side, Status } from "$lib/api";
 
   let {
     status,
     busy = false,
     selected = null,
     lastAction = null,
+    metaIssues = [],
+    locks = [],
+    lfsPatterns = [],
+    locksSupported = false,
     onstage,
     onunstage,
     onselectfile,
     ondiscard,
+    onlock,
+    onunlock,
   }: {
     status: Status;
     busy?: boolean;
@@ -17,14 +23,40 @@
     selected?: { path: string; side: Side } | null;
     /** What Ctrl+Z would undo, named on the clean state (R1 state 5). */
     lastAction?: string | null;
+    metaIssues?: MetaIssue[];
+    locks?: LfsLock[];
+    lfsPatterns?: string[];
+    locksSupported?: boolean;
     onstage: (paths: string[]) => void;
     onunstage: (paths: string[]) => void;
     onselectfile?: (path: string, side: Side) => void;
     /** Throws away unstaged changes; undoable with Ctrl+Z. */
     ondiscard?: (paths: string[]) => void;
+    onlock?: (path: string) => void;
+    onunlock?: (path: string, force: boolean) => void;
   } = $props();
 
   const LETTER: Record<Change, string> = { added: "A", modified: "M", deleted: "D", typeChange: "T" };
+
+  const lockByPath = $derived(new Map(locks.map((l) => [l.path, l])));
+
+  function isLfsPath(path: string): boolean {
+    if (lfsPatterns.length === 0) {
+      return false;
+    }
+    const lower = path.toLowerCase();
+    for (const pat of lfsPatterns) {
+      const p = pat.toLowerCase();
+      if (p.startsWith("*.")) {
+        if (lower.endsWith(p.slice(1))) {
+          return true;
+        }
+      } else if (lower === p || lower.endsWith(`/${p}`)) {
+        return true;
+      }
+    }
+    return false;
+  }
 
   const groups = $derived(
     [
@@ -85,6 +117,17 @@
     <span class="r">Ctrl+1</span>
   </div>
 
+  {#if metaIssues.length > 0}
+    <div class="meta-warn" role="status" aria-label="Unity .meta warnings">
+      {#each metaIssues as issue (issue.kind + issue.path)}
+        <div class="meta-item">
+          <span class="meta-tag">{issue.kind}</span>
+          <span>{issue.detail}</span>
+        </div>
+      {/each}
+    </div>
+  {/if}
+
   {#if groups.length === 0}
     <div class="empty">
       <b>Nothing to commit, working tree clean.</b>
@@ -111,6 +154,8 @@
       {#each group.rows as entry (entry.path)}
         {@const letter = group.change(entry)}
         {@const cut = entry.path.lastIndexOf("/") + 1}
+        {@const lock = lockByPath.get(entry.path)}
+        {@const lfs = isLfsPath(entry.path)}
         <li>
           <span class="badge l-{letter === '?' ? 'q' : letter === '!' ? 'x' : letter}">{letter}</span>
           {#if group.side && onselectfile}
@@ -124,6 +169,33 @@
             >
           {:else}
             <span class="path" title={entry.path}><span class="dir">{entry.path.slice(0, cut)}</span>{entry.path.slice(cut)}</span>
+          {/if}
+          {#if lfs}
+            <span class="lfs-tag" title="Tracked by Git LFS">LFS</span>
+          {/if}
+          {#if lock}
+            <span class="lock-tag" class:theirs={!lock.ours} title="Locked by {lock.owner} since {lock.lockedAt}"
+              >🔒 {lock.ours ? "Locked (you)" : `Locked by ${lock.owner}`}</span
+            >
+          {/if}
+          {#if locksSupported && (lock || lfs) && (onlock || onunlock)}
+            {#if lock && onunlock}
+              <button
+                type="button"
+                class="act"
+                disabled={busy}
+                aria-label="Unlock {entry.path}"
+                onclick={() => onunlock(entry.path, !lock.ours)}>Unlock</button
+              >
+            {:else if !lock && onlock}
+              <button
+                type="button"
+                class="act"
+                disabled={busy}
+                aria-label="Lock {entry.path}"
+                onclick={() => onlock(entry.path)}>Lock</button
+              >
+            {/if}
           {/if}
           {#if group.side === "unstaged" && ondiscard}
             <button class="act" disabled={busy} aria-label="Discard {entry.path}" onclick={() => ondiscard([entry.path])}
@@ -143,6 +215,28 @@
   .wc {
     display: flex;
     flex-direction: column;
+  }
+  .meta-warn {
+    padding: 5px 10px;
+    background: var(--warn);
+    color: var(--warn-ink);
+    border-bottom: 1px solid var(--line);
+    display: grid;
+    gap: 3px;
+    font-size: 11px;
+  }
+  .meta-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .meta-tag {
+    font: 600 9.5px var(--mono);
+    text-transform: uppercase;
+    padding: 0 4px;
+    border-radius: 3px;
+    background: color-mix(in srgb, var(--warn-ink) 14%, transparent);
+    flex: none;
   }
   .detached {
     color: var(--bad-ink);
@@ -231,6 +325,26 @@
   }
   .dir {
     color: var(--muted);
+  }
+  .lfs-tag {
+    flex: none;
+    font: 600 9.5px var(--mono);
+    padding: 0 4px;
+    border-radius: 3px;
+    background: var(--hover);
+    color: var(--muted);
+  }
+  .lock-tag {
+    flex: none;
+    font: 10.5px var(--body);
+    padding: 0 5px;
+    border-radius: 3px;
+    background: var(--sel);
+    color: var(--l0);
+  }
+  .lock-tag.theirs {
+    background: var(--warn);
+    color: var(--warn-ink);
   }
   /* Hidden until hover, but still focusable and announced: opacity, not visibility. */
   .act {

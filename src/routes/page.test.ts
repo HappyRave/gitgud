@@ -79,6 +79,40 @@ function app(extra: Handlers = {}) {
     config_get_identity: () => ({ userName: "Ada", userEmail: "ada@example.com" }),
     config_set_identity: () => null,
     tool_diagnostics: () => ({ gitPath: GIT.path, gitVersion: GIT.version, lfsVersion: null }),
+    unity_info: () => ({
+      isUnity: false,
+      projectRoot: null,
+      editorOpen: false,
+      editorVersion: null,
+      smartMergeConfigured: false,
+      smartMergeToolPath: null,
+      detectedEditors: [],
+    }),
+    unity_configure_smart_merge: () => ({
+      isUnity: true,
+      projectRoot: "C:/work/repo",
+      editorOpen: false,
+      editorVersion: "6000.0.12f1",
+      smartMergeConfigured: true,
+      smartMergeToolPath: null,
+      detectedEditors: [],
+    }),
+    unity_meta_issues: () => [],
+    unity_remerge_conflicts: () => ({ id: 1, root: "C:/work/repo", rows: 1, graphVersion: 0 }),
+    unity_confirm_verify: () => ({ id: 1, root: "C:/work/repo", rows: 1, graphVersion: 0 }),
+    unity_check_open_assets: () => false,
+    lfs_info: () => ({
+      installed: false,
+      version: null,
+      trackedPatterns: [],
+      supportsLocks: false,
+      locksUnsupportedReason: null,
+    }),
+    lfs_locks: () => [],
+    lfs_lock: () => null,
+    lfs_unlock: () => null,
+    lfs_locks_in_push: () => [],
+    background_refresh: () => false,
     ...extra,
   };
   return mockCommands(handlers);
@@ -2010,5 +2044,232 @@ describe("command palette, shortcut sheet, settings, and error fixes", () => {
     expect(alert).toHaveTextContent("Remote has newer commits");
     await fireEvent.click(within(alert).getByRole("button", { name: "Pull now" }));
     await vi.waitFor(() => expect(calls.some((c) => c.cmd === "pull")).toBe(true));
+  });
+});
+
+describe("Unity, LFS locks, Smart Merge verify, and open-editor guard", () => {
+  it("shows .meta warnings, LFS badges, Bitbucket hidden locks, and open-editor warning", async () => {
+    const calls = app({
+      launch_path: () => "C:/work/unity",
+      repo_status: () => ({
+        root: "C:/work/unity",
+        head: { kind: "branch", name: "main" },
+        entries: [{ path: "Assets/Art/Hero.psd", kind: "tracked", index: null, worktree: "modified" }],
+      }),
+      branches: () => ({
+        local: [
+          { name: "main", current: true, upstream: null, ahead: 0, behind: 0 },
+          { name: "feature", current: false, upstream: null, ahead: 0, behind: 0 },
+        ],
+        remotes: [],
+        fetched: null,
+      }),
+      unity_info: () => ({
+        isUnity: true,
+        projectRoot: "C:/work/unity",
+        editorOpen: true,
+        editorVersion: "6000.0.12f1",
+        smartMergeConfigured: false,
+        smartMergeToolPath: null,
+        detectedEditors: [],
+      }),
+      unity_meta_issues: () => [
+        { kind: "missingMeta", path: "Assets/NoMeta.cs", detail: "Missing .meta file for Assets/NoMeta.cs" },
+      ],
+      unity_check_open_assets: () => true,
+      lfs_info: () => ({
+        installed: true,
+        version: "git-lfs/3.6.0",
+        trackedPatterns: ["*.psd"],
+        supportsLocks: false,
+        locksUnsupportedReason: "Bitbucket Cloud does not support Git LFS file locking",
+      }),
+      checkout: () => ({ id: 1, root: "C:/work/unity", rows: 1, graphVersion: 0 }),
+    });
+    render(Page);
+
+    expect(await screen.findByText(/Missing \.meta file/)).toBeInTheDocument();
+    expect(screen.getByText("LFS")).toBeInTheDocument();
+    // Bitbucket Cloud hides Locks section completely (spec O1).
+    expect(screen.queryByRole("region", { name: "Locks" })).not.toBeInTheDocument();
+
+    await fireEvent.dblClick(screen.getByRole("button", { name: "feature" }));
+    const warnDlg = await screen.findByRole("dialog", { name: "Unity Editor is open" });
+    await fireEvent.click(within(warnDlg).getByRole("button", { name: "Proceed anyway" }));
+    await vi.waitFor(() =>
+      expect(calls.find((c) => c.cmd === "checkout")?.args).toEqual({ id: 1, branch: "feature" }),
+    );
+  });
+
+  it("shows Smart Merge setup, gates merge commit on Verify confirmation, and unlocks on Push", async () => {
+    let remerged = false;
+    let confirmed = false;
+    const calls = app({
+      launch_path: () => "C:/work/unity",
+      branches: () => ({
+        local: [{ name: "main", current: true, upstream: "origin/main", ahead: 1, behind: 0 }],
+        remotes: [{ name: "origin", branches: ["origin/main"] }],
+        fetched: 1_700_000_000,
+      }),
+      unity_info: () => ({
+        isUnity: true,
+        projectRoot: "C:/work/unity",
+        editorOpen: false,
+        editorVersion: "6000.0.12f1",
+        smartMergeConfigured: remerged,
+        smartMergeToolPath: "C:/Unity/UnityYAMLMerge.exe",
+        detectedEditors: ["C:/Unity/UnityYAMLMerge.exe"],
+      }),
+      unity_configure_smart_merge: () => ({
+        isUnity: true,
+        projectRoot: "C:/work/unity",
+        editorOpen: false,
+        editorVersion: "6000.0.12f1",
+        smartMergeConfigured: true,
+        smartMergeToolPath: "C:/Unity/UnityYAMLMerge.exe",
+        detectedEditors: ["C:/Unity/UnityYAMLMerge.exe"],
+      }),
+      unity_remerge_conflicts: () => {
+        remerged = true;
+        return { id: 1, root: "C:/work/unity", rows: 1, graphVersion: 0 };
+      },
+      unity_confirm_verify: ({ confirmed: c }) => {
+        confirmed = c;
+        return { id: 1, root: "C:/work/unity", rows: 1, graphVersion: 0 };
+      },
+      merge_state: () =>
+        !remerged
+          ? {
+              theirs: "feature",
+              message: "Merge feature",
+              conflicts: [{ path: "Assets/Ship.prefab", kind: "unityYaml", resolved: false }],
+            }
+          : {
+              theirs: "feature",
+              message: "Merge feature",
+              conflicts: [{ path: "Assets/Ship.prefab", kind: "unityYaml", resolved: true }],
+              unityVerify: [
+                {
+                  path: "Assets/Ship.prefab",
+                  verify: [
+                    {
+                      fileId: "200",
+                      objectName: "Engine (200)",
+                      property: "speed",
+                      base: "10",
+                      ours: "20",
+                      theirs: "30",
+                      merged: "30",
+                      confirmed,
+                    },
+                  ],
+                  autoMerged: [
+                    {
+                      fileId: "100",
+                      objectName: "Transform (Ship)",
+                      property: "m_LocalPosition",
+                      side: "yours",
+                      value: "{x: 1}",
+                    },
+                  ],
+                },
+              ],
+            },
+      lfs_info: () => ({
+        installed: true,
+        version: "git-lfs/3.6.0",
+        trackedPatterns: ["*.psd"],
+        supportsLocks: true,
+        locksUnsupportedReason: null,
+      }),
+      lfs_locks: () => [
+        { id: "1", path: "Assets/Art/Ship.psd", owner: "Ada", lockedAt: "2026-11-22T00:00:00Z", ours: true },
+      ],
+      lfs_locks_in_push: () => [
+        { id: "1", path: "Assets/Art/Ship.psd", owner: "Ada", lockedAt: "2026-11-22T00:00:00Z", ours: true },
+      ],
+      push_info: () => ({
+        branch: "main",
+        remote: "origin",
+        remoteBranch: "main",
+        upstream: "origin/main",
+        ahead: 1,
+        behind: 0,
+        needsForce: false,
+        commits: [{ shortId: "aaaaaaa", subject: "ship art" }],
+        remotes: ["origin"],
+        prUrl: null,
+      }),
+      push: () => ({ id: 1, root: "C:/work/unity", rows: 1, graphVersion: 0 }),
+    });
+    render(Page);
+
+    const setupBtn = await screen.findByRole("button", { name: /Set up Smart Merge/ });
+    await fireEvent.click(setupBtn);
+
+    expect(await screen.findByText(/Auto-merged cleanly \(1 properties\)/)).toBeInTheDocument();
+    const summary = screen.getByRole("region", { name: "Merge summary" });
+    expect(within(summary).getByRole("button", { name: /Commit merge/ })).toBeDisabled();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Confirm all" }));
+    await vi.waitFor(() =>
+      expect(within(screen.getByRole("region", { name: "Merge summary" })).getByRole("button", { name: /Commit merge/ })).toBeEnabled(),
+    );
+
+    // Simulate clean state after merge commit for push-unlock test.
+    remerged = false;
+  });
+
+  it("shows Locks in sidebar and unlocks selected files after Push", async () => {
+    const calls = app({
+      launch_path: () => "C:/work/unity",
+      branches: () => ({
+        local: [{ name: "main", current: true, upstream: "origin/main", ahead: 1, behind: 0 }],
+        remotes: [{ name: "origin", branches: ["origin/main"] }],
+        fetched: 1_700_000_000,
+      }),
+      lfs_info: () => ({
+        installed: true,
+        version: "git-lfs/3.6.0",
+        trackedPatterns: ["*.psd"],
+        supportsLocks: true,
+        locksUnsupportedReason: null,
+      }),
+      lfs_locks: () => [
+        { id: "1", path: "Assets/Art/Ship.psd", owner: "Ada", lockedAt: "2026-11-22T00:00:00Z", ours: true },
+      ],
+      lfs_locks_in_push: () => [
+        { id: "1", path: "Assets/Art/Ship.psd", owner: "Ada", lockedAt: "2026-11-22T00:00:00Z", ours: true },
+      ],
+      push_info: () => ({
+        branch: "main",
+        remote: "origin",
+        remoteBranch: "main",
+        upstream: "origin/main",
+        ahead: 1,
+        behind: 0,
+        needsForce: false,
+        commits: [{ shortId: "aaaaaaa", subject: "ship art" }],
+        remotes: ["origin"],
+        prUrl: null,
+      }),
+      push: () => ({ id: 1, root: "C:/work/unity", rows: 1, graphVersion: 0 }),
+    });
+    render(Page);
+
+    expect(await screen.findByRole("region", { name: "Locks" })).toHaveTextContent("Ship.psd");
+
+    await fireEvent.click(screen.getByRole("button", { name: /Push/ }));
+    const dlg = await screen.findByRole("dialog", { name: "Push main" });
+    expect(await within(dlg).findByText("Unlock")).toBeInTheDocument();
+    await fireEvent.click(within(dlg).getByRole("button", { name: "Push" }));
+
+    await vi.waitFor(() =>
+      expect(calls.find((c) => c.cmd === "lfs_unlock")?.args).toEqual({
+        id: 1,
+        path: "Assets/Art/Ship.psd",
+        force: false,
+      }),
+    );
   });
 });

@@ -9,12 +9,13 @@ use gitgud_core::diff::{CommitDetail, FileDiff};
 use gitgud_core::git::{self, GitInfo};
 use gitgud_core::graph::Row;
 use gitgud_core::history::{Action, HistoryPlan, Step};
+use gitgud_core::lfs::{LfsInfo, LfsLock};
 use gitgud_core::library::{
     AddRepoEntry, DEFAULT_SCAN_DEPTH, LibrarySnapshot, LibraryStore, OpenTabState, RepoSummary,
     ScanResult, display_path, scan_folder as core_scan_folder,
 };
 use gitgud_core::merge::{ConflictSides, ConflictText, MergeState, Side as MergeSide};
-use gitgud_core::oplog::{OpEntry, label_paths};
+use gitgud_core::oplog::OpEntry;
 use gitgud_core::ops::{CommitOptions, ResetMode};
 use gitgud_core::rebase::{RebasePlan, RebaseState, RebaseStep};
 use gitgud_core::remote::{PullStrategy, PushInfo};
@@ -23,6 +24,7 @@ use gitgud_core::sequencer::{SequencerState, SequencerStep};
 use gitgud_core::session::{Opened, PlanPreview, PullResult, Reverted, Session};
 use gitgud_core::stash::StashEntry;
 use gitgud_core::task::{Cancel, Progress};
+use gitgud_core::unity::{MetaIssue, UnityInfo};
 use gitgud_core::worktree::{HunkHeader, LineSelect, Side};
 use tauri::{AppHandle, Builder, Emitter, Manager, Runtime, State};
 
@@ -201,8 +203,7 @@ async fn discard(
     id: u32,
     paths: Vec<String>,
 ) -> Result<Opened, Error> {
-    let action = label_paths("Discard", &paths);
-    session.write_destructive(id, &action, &paths, |repo, git| repo.discard(git, &paths))
+    session.discard(id, &paths)
 }
 
 #[tauri::command]
@@ -226,8 +227,7 @@ async fn refresh_repo(session: State<'_, Session>, id: u32) -> Result<Opened, Er
 
 #[tauri::command]
 async fn stage(session: State<'_, Session>, id: u32, paths: Vec<String>) -> Result<Opened, Error> {
-    let action = label_paths("Stage", &paths);
-    session.write(id, &action, |repo, git| repo.stage(git, &paths))
+    session.stage(id, &paths)
 }
 
 #[tauri::command]
@@ -236,8 +236,7 @@ async fn unstage(
     id: u32,
     paths: Vec<String>,
 ) -> Result<Opened, Error> {
-    let action = label_paths("Unstage", &paths);
-    session.write(id, &action, |repo, git| repo.unstage(git, &paths))
+    session.unstage(id, &paths)
 }
 
 #[tauri::command]
@@ -1090,6 +1089,115 @@ async fn fetch_many<R: Runtime>(
     library.refresh_summaries(&paths)
 }
 
+#[tauri::command]
+async fn unity_info(session: State<'_, Session>, id: u32) -> Result<UnityInfo, Error> {
+    session.unity_info(id)
+}
+
+#[tauri::command]
+async fn unity_configure_smart_merge(
+    session: State<'_, Session>,
+    id: u32,
+    tool_path: Option<String>,
+) -> Result<UnityInfo, Error> {
+    session.unity_configure_smart_merge(id, tool_path.as_deref())
+}
+
+#[tauri::command]
+async fn unity_meta_issues(session: State<'_, Session>, id: u32) -> Result<Vec<MetaIssue>, Error> {
+    session.unity_meta_issues(id)
+}
+
+#[tauri::command]
+async fn unity_remerge_conflicts(session: State<'_, Session>, id: u32) -> Result<Opened, Error> {
+    session.unity_remerge_conflicts(id)
+}
+
+#[tauri::command]
+async fn unity_confirm_verify(
+    session: State<'_, Session>,
+    id: u32,
+    path: String,
+    file_id: Option<String>,
+    property: Option<String>,
+    confirmed: bool,
+) -> Result<Opened, Error> {
+    session.unity_confirm_verify(
+        id,
+        &path,
+        file_id.as_deref(),
+        property.as_deref(),
+        confirmed,
+    )
+}
+
+#[tauri::command]
+async fn unity_check_open_assets(
+    session: State<'_, Session>,
+    id: u32,
+    range: String,
+) -> Result<bool, Error> {
+    session.unity_check_open_assets(id, &range)
+}
+
+#[tauri::command]
+async fn lfs_info(session: State<'_, Session>, id: u32) -> Result<LfsInfo, Error> {
+    session.lfs_info(id)
+}
+
+#[tauri::command]
+async fn lfs_locks(
+    session: State<'_, Session>,
+    library: State<'_, LibraryStore>,
+    id: u32,
+) -> Result<Vec<LfsLock>, Error> {
+    let locks = session.lfs_locks(id)?;
+    if let Ok(open) = session.get(id) {
+        let ours_count = locks.iter().filter(|l| l.ours).count();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX));
+        let _ =
+            library.update_cached_locks(&open.repo.root().to_string_lossy(), ours_count, Some(now));
+    }
+    Ok(locks)
+}
+
+#[tauri::command]
+async fn lfs_lock(session: State<'_, Session>, id: u32, path: String) -> Result<(), Error> {
+    session.lfs_lock(id, &path)
+}
+
+#[tauri::command]
+async fn lfs_unlock(
+    session: State<'_, Session>,
+    id: u32,
+    path: String,
+    force: Option<bool>,
+) -> Result<(), Error> {
+    session.lfs_unlock(id, &path, force.unwrap_or(false))
+}
+
+#[tauri::command]
+async fn lfs_locks_in_push(
+    session: State<'_, Session>,
+    id: u32,
+    remote: String,
+    remote_branch: String,
+    branch: String,
+) -> Result<Vec<LfsLock>, Error> {
+    session.lfs_locks_in_push(id, &remote, &remote_branch, &branch)
+}
+
+#[tauri::command]
+async fn background_refresh(
+    session: State<'_, Session>,
+    id: u32,
+    min_age_secs: Option<u64>,
+) -> Result<bool, Error> {
+    session.background_refresh(id, min_age_secs.unwrap_or(600))
+}
+
 fn app_with_library<R: Runtime>(builder: Builder<R>, library: Option<LibraryStore>) -> Builder<R> {
     let builder = if let Some(store) = library {
         builder.manage(store)
@@ -1204,7 +1312,19 @@ fn app_with_library<R: Runtime>(builder: Builder<R>, library: Option<LibraryStor
             discard_lines,
             config_get_identity,
             config_set_identity,
-            tool_diagnostics
+            tool_diagnostics,
+            unity_info,
+            unity_configure_smart_merge,
+            unity_meta_issues,
+            unity_remerge_conflicts,
+            unity_confirm_verify,
+            unity_check_open_assets,
+            lfs_info,
+            lfs_locks,
+            lfs_lock,
+            lfs_unlock,
+            lfs_locks_in_push,
+            background_refresh
         ])
 }
 
@@ -2339,5 +2459,101 @@ mod tests {
         let diag = ipc.call("tool_diagnostics", json!({})).unwrap();
         assert!(diag["gitPath"].as_str().unwrap().contains("git"));
         assert_eq!(diag["gitVersion"].as_str().unwrap().split('.').count(), 3);
+    }
+
+    #[test]
+    fn unity_lfs_tga_and_background_refresh_through_ipc() {
+        let ipc = Ipc::new();
+        let repo = TestRepo::init();
+        // Minimal valid 1x1 32bpp uncompressed TGA
+        let mut tga = vec![0u8; 22];
+        tga[2] = 2;
+        tga[12..14].copy_from_slice(&1u16.to_le_bytes());
+        tga[14..16].copy_from_slice(&1u16.to_le_bytes());
+        tga[16] = 32;
+        tga[17] = 0x20;
+        tga[18..22].copy_from_slice(&[0, 255, 0, 255]);
+        std::fs::write(repo.path().join("tex.tga"), &tga).unwrap();
+
+        repo.write(
+            "ProjectSettings/ProjectVersion.txt",
+            "m_EditorVersion: 6000.0.12f1\n",
+        )
+        .write(
+            ".gitattributes",
+            "*.tga filter=lfs diff=lfs merge=lfs -text\n",
+        )
+        .write("Assets/Foo.cs", "class Foo {}")
+        .write(
+            "Assets/Foo.cs.meta",
+            "fileFormatVersion: 2\nguid: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
+        )
+        .commit_all("unity init");
+        repo.git(&[
+            "remote",
+            "add",
+            "origin",
+            "https://bitbucket.org/team/game.git",
+        ]);
+
+        repo.write("Temp/UnityLockfile", "")
+            .write("Assets/Foo.cs", "class Foo { int x; }")
+            .write(
+                "Assets/Foo.cs.meta",
+                "fileFormatVersion: 2\nguid: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\ntimeCreated: 2\n",
+            )
+            .write("Assets/Bar.cs", "class Bar {}");
+
+        let id = open(&ipc, &repo)["id"].clone();
+
+        let uinfo = ipc.call("unity_info", json!({ "id": id })).unwrap();
+        assert_eq!(uinfo["isUnity"], true);
+        assert_eq!(uinfo["editorOpen"], true);
+        assert_eq!(uinfo["editorVersion"], "6000.0.12f1");
+
+        let issues = ipc.call("unity_meta_issues", json!({ "id": id })).unwrap();
+        assert!(
+            issues
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|i| i["kind"] == "missingMeta" && i["path"] == "Assets/Bar.cs")
+        );
+
+        // Staging Assets/Foo.cs via IPC auto-pairs Assets/Foo.cs.meta.
+        ipc.call("stage", json!({ "id": id, "paths": ["Assets/Foo.cs"] }))
+            .unwrap();
+        let status = ipc.call("repo_status", json!({ "id": id })).unwrap();
+        assert!(
+            status["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|e| e["path"] == "Assets/Foo.cs.meta" && !e["index"].is_null())
+        );
+
+        let lfs = ipc.call("lfs_info", json!({ "id": id })).unwrap();
+        assert_eq!(lfs["supportsLocks"], false);
+        assert!(
+            lfs["locksUnsupportedReason"]
+                .as_str()
+                .unwrap()
+                .contains("Bitbucket Cloud")
+        );
+
+        let bg = ipc.call("background_refresh", json!({ "id": id })).unwrap();
+        assert_eq!(bg, false);
+
+        // TGA image protocol decodes and serves as image/png.
+        let r = images::respond(
+            &ipc.app.state::<Session>(),
+            &format!(
+                "http://gitgud.localhost/image?repo={}&path=tex.tga&at=worktree",
+                id.as_u64().unwrap()
+            ),
+        );
+        assert_eq!(r.status(), tauri::http::StatusCode::OK);
+        assert_eq!(r.headers()[tauri::http::header::CONTENT_TYPE], "image/png");
+        assert!(r.body().starts_with(b"\x89PNG\r\n\x1a\n"));
     }
 }

@@ -114,6 +114,12 @@ replaying at most 255 rows (spike 4.3).
 - **Config & diagnostics** (`config.rs`): reads/writes `user.name` and `user.email` at global or
   repo-local scope (`Session::set_repo_identity` triggers config reload), and reports installed git
   and git-lfs paths/versions.
+- **Unity & LFS** (`unity.rs`, `lfs.rs`): detects `ProjectVersion.txt`, `Temp/UnityLockfile` (guards
+  checkout/merge/rebase touching `Assets/`), Hub `UnityYAMLMerge.exe`, Smart Merge setup in local
+  `.git/config` + `.git/info/attributes` (never `.gitattributes`), v1.0 per-property verification in
+  `merge.json` gating `merge_commit`, `.meta` auto-pairing (`Session::{stage,unstage,discard}`) +
+  non-blocking `.meta` warnings, Git LFS locks (disabled on Bitbucket Cloud per O1) + unlock-on-push,
+  and quiet non-interactive 10-min `background_refresh` (`cli::GitCli::run_background`).
 - **Network** (`task.rs`, `job.rs`): long git runs parse `--progress` and cancel by killing a
   Windows Job Object (git starts suspended, joins the job, resumes), which also ends grandchildren
   `taskkill /T` misses. A cancelled fetch deletes its `tmp_pack_*` files.
@@ -125,7 +131,8 @@ replaying at most 255 rows (spike 4.3).
 - **Images** (`image.rs`, `src-tauri/src/images.rs`): the webview loads image versions from the
   custom protocol `gitgud` (`http://gitgud.localhost/image?repo=&path=&at=` on WebView2; `at` is
   head / index / worktree / yours / theirs / commit / parent), not over IPC. LFS pointers are read
-  from `.git/lfs/objects`; a version that isn't there answers 404 with the reason as text.
+  from `.git/lfs/objects` (and `.tga` / flat `.psd` decode purely in Rust to PNG); a version that
+  isn't there answers 404 with the reason as text.
 - **Diffs** (`diff.rs`, `$lib/diff/*`) are gix histogram + slider heuristics, 3 lines of context, against
   the first parent, no renames, with optional whitespace normalization (`ignoreWhitespace`) keeping
   original line text. The frontend adds syntax tokenizing (`highlight.ts`), word/token intra-line spans

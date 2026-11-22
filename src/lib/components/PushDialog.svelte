@@ -1,11 +1,13 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { openExternalUrl, pushInfo, type PushInfo } from "$lib/api";
+  import { SvelteSet } from "svelte/reactivity";
+  import { lfsLocksInPush, openExternalUrl, pushInfo, type LfsLock, type PushInfo } from "$lib/api";
   import Dialog from "./Dialog.svelte";
 
   let {
     repoId,
     initialForce = false,
+    locksSupported = false,
     busy = false,
     onpush,
     oncancel,
@@ -13,8 +15,16 @@
     repoId: number;
     /** Pre-enables `--force-with-lease` when opened from the Done panel. */
     initialForce?: boolean;
+    locksSupported?: boolean;
     busy?: boolean;
-    onpush: (opts: { remote: string; branch: string; remoteBranch: string; setUpstream: boolean; forceWithLease: boolean }) => void;
+    onpush: (opts: {
+      remote: string;
+      branch: string;
+      remoteBranch: string;
+      setUpstream: boolean;
+      forceWithLease: boolean;
+      unlockPaths: string[];
+    }) => void;
     oncancel: () => void;
   } = $props();
 
@@ -24,6 +34,8 @@
   let remoteBranch = $state("");
   let setUpstream = $state(false);
   let forceWithLease = $state(false);
+  let pushLocks = $state<LfsLock[]>([]);
+  const unlockSelection = new SvelteSet<string>();
   let cancelButton = $state<HTMLButtonElement | null>(null);
   let pushButton = $state<HTMLButtonElement | null>(null);
 
@@ -36,6 +48,17 @@
         remoteBranch = res.remoteBranch;
         setUpstream = !res.upstream;
         forceWithLease = initialForce || res.needsForce;
+        if (locksSupported && remote) {
+          lfsLocksInPush(repoId, remote, remoteBranch.trim() || res.branch, res.branch)
+            .then((locks) => {
+              pushLocks = locks;
+              unlockSelection.clear();
+              for (const l of locks) {
+                unlockSelection.add(l.path);
+              }
+            })
+            .catch(() => (pushLocks = []));
+        }
         if (forceWithLease) {
           cancelButton?.focus();
         } else {
@@ -51,6 +74,14 @@
     load();
   });
 
+  function toggleUnlock(path: string) {
+    if (unlockSelection.has(path)) {
+      unlockSelection.delete(path);
+    } else {
+      unlockSelection.add(path);
+    }
+  }
+
   function submit() {
     if (!info || !remote || busy) {
       return;
@@ -61,6 +92,7 @@
       remoteBranch: remoteBranch.trim() || info.branch,
       setUpstream,
       forceWithLease,
+      unlockPaths: pushLocks.filter((l) => unlockSelection.has(l.path)).map((l) => l.path),
     });
   }
 </script>
@@ -126,6 +158,21 @@
         <input type="checkbox" bind:checked={forceWithLease} />
         <span>Force-push safely (<code>--force-with-lease</code>)</span>
       </label>
+      {#if pushLocks.length > 0}
+        <div class="locklist" aria-label="LFS locks in push">
+          <div class="ab">Unlock LFS files after push:</div>
+          {#each pushLocks as lock (lock.path)}
+            <label class="chk">
+              <input
+                type="checkbox"
+                checked={unlockSelection.has(lock.path)}
+                onchange={() => toggleUnlock(lock.path)}
+              />
+              <span>Unlock <code>{lock.path}</code></span>
+            </label>
+          {/each}
+        </div>
+      {/if}
     </div>
   {/if}
 

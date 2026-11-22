@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
@@ -10,6 +11,7 @@ use crate::config;
 use crate::git;
 use crate::graph::{Graph, Row};
 use crate::history::{Action, HistoryPlan, PlanPrediction, Step};
+use crate::lfs::{self, LfsInfo, LfsLock};
 use crate::merge::{MergeOutcome, MergeState, Side};
 use crate::oplog::{OpEntry, OpLog, label_amend, label_commit};
 use crate::ops::{CommitOptions, ResetMode};
@@ -18,6 +20,7 @@ use crate::remote::{PullOutcome, PullStrategy};
 use crate::repo::{self, Error, Repo};
 use crate::sequencer::{SequencerKind, SequencerState, SequencerStep};
 use crate::task::{Cancel, Progress};
+use crate::unity::{self, MetaIssue, UnityInfo};
 use crate::watch::RepoWatcher;
 use crate::worktree::LineSelect;
 
@@ -31,6 +34,8 @@ pub struct Session {
     tasks: Mutex<HashMap<u32, Cancel>>,
     /// The graph of each repo with its history plan drawn in.
     previews: Mutex<HashMap<u32, Arc<Graph>>>,
+    /// Last silent background refresh timestamp per repo id.
+    last_bg_refresh: Mutex<HashMap<u32, Instant>>,
     git: OnceLock<GitCli>,
 }
 
@@ -172,6 +177,10 @@ impl Session {
         self.previews
             .lock()
             .expect("preview lock poisoned")
+            .remove(&id);
+        self.last_bg_refresh
+            .lock()
+            .expect("bg refresh lock poisoned")
             .remove(&id);
         self.lock()
             .remove(&id)
@@ -1073,6 +1082,223 @@ impl Session {
         self.refresh(id)
     }
 
+    /// Stages `paths`, auto-pairing matching `.meta` <-> asset changes present in status.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`], [`Error::Read`], or git's error.
+    pub fn stage(&self, id: u32, paths: &[String]) -> Result<Opened, Error> {
+        let open = self.get(id)?;
+        let status = open.repo.status()?;
+        let (expanded, paired) = unity::expand_meta_pairs(&status, paths);
+        let action = label_paths_meta("Stage", paths, &expanded, &paired);
+        self.write(id, &action, |repo, git| repo.stage(git, &expanded))
+    }
+
+    /// Unstages `paths`, auto-pairing matching `.meta` <-> asset changes present in status.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`], [`Error::Read`], or git's error.
+    pub fn unstage(&self, id: u32, paths: &[String]) -> Result<Opened, Error> {
+        let open = self.get(id)?;
+        let status = open.repo.status()?;
+        let (expanded, paired) = unity::expand_meta_pairs(&status, paths);
+        let action = label_paths_meta("Unstage", paths, &expanded, &paired);
+        self.write(id, &action, |repo, git| repo.unstage(git, &expanded))
+    }
+
+    /// Discards `paths`, auto-pairing matching `.meta` <-> asset changes present in status; undoable.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`], [`Error::Read`], or git's error.
+    pub fn discard(&self, id: u32, paths: &[String]) -> Result<Opened, Error> {
+        let open = self.get(id)?;
+        let status = open.repo.status()?;
+        let (expanded, paired) = unity::expand_meta_pairs(&status, paths);
+        let action = label_paths_meta("Discard", paths, &expanded, &paired);
+        self.write_destructive(id, &action, &expanded, |repo, git| {
+            repo.discard(git, &expanded)
+        })
+    }
+
+    /// Detects Unity project info and Smart Merge configuration for repo `id`.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`] or [`Error::Command`].
+    pub fn unity_info(&self, id: u32) -> Result<UnityInfo, Error> {
+        let open = self.get(id)?;
+        unity::detect_unity(self.git()?, &open.repo)
+    }
+
+    /// Configures Unity Smart Merge in local `.git/config` and `.git/info/attributes` only.
+    ///
+    /// # Errors
+    /// See [`unity::configure_smart_merge`].
+    pub fn unity_configure_smart_merge(
+        &self,
+        id: u32,
+        tool_path: Option<&str>,
+    ) -> Result<UnityInfo, Error> {
+        let open = self.get(id)?;
+        let info = unity::configure_smart_merge(self.git()?, &open.repo, tool_path)?;
+        self.refresh(id)?;
+        Ok(info)
+    }
+
+    /// Checks changed Unity `.meta` files for missing, orphan, colliding GUID, or case issues.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`] or [`Error::Read`].
+    pub fn unity_meta_issues(&self, id: u32) -> Result<Vec<MetaIssue>, Error> {
+        let open = self.get(id)?;
+        let status = open.repo.status()?;
+        Ok(unity::check_meta_issues(&open.repo, &status))
+    }
+
+    /// Re-runs Unity Smart Merge over conflicted Unity YAML files; undoable via Ctrl+Z.
+    ///
+    /// # Errors
+    /// See [`Repo::remerge_unity_files`].
+    pub fn unity_remerge_conflicts(&self, id: u32) -> Result<Opened, Error> {
+        let open = self.get(id)?;
+        let paths = open.repo.conflicted_paths()?;
+        self.write_destructive(id, "Run Unity Smart Merge", &paths, |repo, git| {
+            repo.remerge_unity_files(git).map(drop)
+        })
+    }
+
+    /// Confirms or unconfirms Unity Smart Merge property changes on `path`; undoable via Ctrl+Z.
+    ///
+    /// # Errors
+    /// See [`Repo::confirm_unity_verify`].
+    pub fn unity_confirm_verify(
+        &self,
+        id: u32,
+        path: &str,
+        file_id: Option<&str>,
+        property: Option<&str>,
+        confirmed: bool,
+    ) -> Result<Opened, Error> {
+        let action = if confirmed {
+            format!("Verify Smart Merge in {path}")
+        } else {
+            format!("Unconfirm Smart Merge in {path}")
+        };
+        self.write(id, &action, |repo, _| {
+            repo.confirm_unity_verify(path, file_id, property, confirmed)
+        })
+    }
+
+    /// Returns whether Unity Editor lockfile is present AND `range` touches `Assets/`.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`] or [`Error::Command`].
+    pub fn unity_check_open_assets(&self, id: u32, range: &str) -> Result<bool, Error> {
+        let open = self.get(id)?;
+        let git = self.git()?;
+        let info = unity::detect_unity(git, &open.repo)?;
+        if !info.editor_open {
+            return Ok(false);
+        }
+        unity::range_touches_assets(git, open.repo.root(), range)
+    }
+
+    /// Git LFS info and host lock support (Bitbucket Cloud disables locks).
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`] or [`Error::Command`].
+    pub fn lfs_info(&self, id: u32) -> Result<LfsInfo, Error> {
+        let open = self.get(id)?;
+        lfs::lfs_info(self.git()?, &open.repo)
+    }
+
+    /// Lists Git LFS locks on the remote.
+    ///
+    /// # Errors
+    /// See [`lfs::lfs_locks_list`].
+    pub fn lfs_locks(&self, id: u32) -> Result<Vec<LfsLock>, Error> {
+        let open = self.get(id)?;
+        lfs::lfs_locks_list(self.git()?, &open.repo)
+    }
+
+    /// Locks `path` with `git lfs lock`.
+    ///
+    /// # Errors
+    /// See [`lfs::lfs_lock`].
+    pub fn lfs_lock(&self, id: u32, path: &str) -> Result<(), Error> {
+        let open = self.get(id)?;
+        lfs::lfs_lock(self.git()?, &open.repo, path)
+    }
+
+    /// Unlocks `path` with `git lfs unlock`.
+    ///
+    /// # Errors
+    /// See [`lfs::lfs_unlock`].
+    pub fn lfs_unlock(&self, id: u32, path: &str, force: bool) -> Result<(), Error> {
+        let open = self.get(id)?;
+        lfs::lfs_unlock(self.git()?, &open.repo, path, force)
+    }
+
+    /// Lists active locks held by us on files touched in commits about to be pushed.
+    ///
+    /// # Errors
+    /// See [`lfs::locks_in_push`].
+    pub fn lfs_locks_in_push(
+        &self,
+        id: u32,
+        remote: &str,
+        remote_branch: &str,
+        branch: &str,
+    ) -> Result<Vec<LfsLock>, Error> {
+        let open = self.get(id)?;
+        lfs::locks_in_push(self.git()?, &open.repo, remote, remote_branch, branch)
+    }
+
+    /// Quiet non-interactive background fetch when repo is idle and stale beyond `min_age_secs`.
+    /// Returns `Ok(true)` if fetched and refreshed, `Ok(false)` when skipped or offline.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`] if closed.
+    pub fn background_refresh(&self, id: u32, min_age_secs: u64) -> Result<bool, Error> {
+        let open = self.get(id)?;
+        let git = self.git()?;
+        if open.repo.primary_remote_url().is_none() {
+            return Ok(false);
+        }
+        if open.repo.merge_state(git).ok().flatten().is_some()
+            || open.repo.rebase_state(git).ok().flatten().is_some()
+            || open.repo.sequencer_state(git).ok().flatten().is_some()
+        {
+            return Ok(false);
+        }
+        {
+            let guard = self
+                .last_bg_refresh
+                .lock()
+                .expect("bg refresh lock poisoned");
+            if let Some(prev) = guard.get(&id)
+                && prev.elapsed() < Duration::from_secs(min_age_secs)
+            {
+                return Ok(false);
+            }
+        }
+        if open.writing.try_lock().is_err() {
+            return Ok(false);
+        }
+        let ok = git
+            .run_background(open.repo.root(), &["fetch", "--all", "--prune"])
+            .is_ok();
+        self.last_bg_refresh
+            .lock()
+            .expect("bg refresh lock poisoned")
+            .insert(id, Instant::now());
+        if ok {
+            let _ = self.refresh_inner(id, true);
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
     /// Runs `f` as the only write on repo `id`, with its watcher paused.
     fn exclusive<T>(
         &self,
@@ -1104,6 +1330,25 @@ impl Session {
 
     fn watchers(&self) -> MutexGuard<'_, HashMap<u32, RepoWatcher>> {
         self.watchers.lock().expect("watcher lock poisoned")
+    }
+}
+
+fn label_paths_meta(
+    verb: &str,
+    original: &[String],
+    expanded: &[String],
+    paired: &[String],
+) -> String {
+    if paired.is_empty() {
+        return match original {
+            [one] => format!("{verb} {one}"),
+            many => format!("{verb} {} files", many.len()),
+        };
+    }
+    if original.len() == 1 && paired.len() == 1 {
+        format!("{verb} {} + {}", original[0], paired[0])
+    } else {
+        format!("{verb} {} files (+ .meta)", expanded.len())
     }
 }
 

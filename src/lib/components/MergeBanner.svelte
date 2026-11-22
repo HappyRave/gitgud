@@ -4,6 +4,7 @@
     branch,
     left,
     total,
+    unconfirmed = 0,
     busy = false,
     oncommit,
     onabort,
@@ -13,12 +14,13 @@
     branch: string;
     left: number;
     total: number;
+    unconfirmed?: number;
     busy?: boolean;
     oncommit: () => void;
     onabort: () => void;
   } = $props();
 
-  const done = $derived(left === 0);
+  const done = $derived(left === 0 && unconfirmed === 0);
 </script>
 
 <div class="banner" class:done role="region" aria-label="Merge in progress">

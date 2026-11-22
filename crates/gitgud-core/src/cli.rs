@@ -108,6 +108,30 @@ impl GitCli {
         ))
     }
 
+    /// Runs `git <args>` quietly without any interactive prompts (for background fetch/refresh).
+    ///
+    /// # Errors
+    /// As [`GitCli::run`].
+    pub fn run_background(&self, cwd: &Path, args: &[&str]) -> Result<String, Error> {
+        let mut cmd = self.command(cwd, args);
+        cmd.env("GCM_INTERACTIVE", "never")
+            .env("GIT_ASKPASS", "")
+            .env("SSH_ASKPASS", "");
+        if std::env::var_os("GIT_SSH_COMMAND").is_none() {
+            cmd.env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes");
+        }
+        let fail = |message: String| command_error(args, message);
+        let output = cmd.output().map_err(|e| fail(e.to_string()))?;
+        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        if output.status.success() {
+            return Ok(stdout);
+        }
+        Err(fail(failure_message(
+            &stdout,
+            &String::from_utf8_lossy(&output.stderr),
+        )))
+    }
+
     /// `git <args>` in `cwd` with piped output, no console window and no prompts.
     pub(crate) fn command(&self, cwd: &Path, args: &[&str]) -> Command {
         let mut cmd = Command::new(&self.path);

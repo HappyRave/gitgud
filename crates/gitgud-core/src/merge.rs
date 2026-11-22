@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::cli::{GitCli, command_error, failure_message};
 use crate::diff::is_binary;
 use crate::repo::{Error, Repo, read_err};
+use crate::unity::{UnityMergeFile, run_smart_merge_on_conflict};
 
 /// Unity files Smart Merge handles (R4 state 4).
 const UNITY_YAML: [&str; 7] = [
@@ -43,6 +44,7 @@ pub struct Conflict {
 
 /// A merge that stopped on conflicts and waits to be committed or aborted.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MergeState {
     /// The branch being merged in, when gitgud started the merge.
     pub theirs: Option<String>,
@@ -50,6 +52,9 @@ pub struct MergeState {
     pub message: String,
     /// Every file the merge stopped on, in list order (kind, then path).
     pub conflicts: Vec<Conflict>,
+    /// Unity Smart Merge per-property verification summary (v1.0).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unity_verify: Vec<UnityMergeFile>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -113,6 +118,8 @@ struct Started {
     merge_head: String,
     theirs: String,
     conflicts: Vec<Conflict>,
+    #[serde(default)]
+    unity_verify: Vec<UnityMergeFile>,
 }
 
 impl Repo {
@@ -202,6 +209,7 @@ impl Repo {
             merge_head,
             theirs: branch.to_owned(),
             conflicts,
+            unity_verify: Vec::new(),
         };
         fs::create_dir_all(self.state_file().parent().expect("has a parent")).map_err(read_err)?;
         fs::write(
@@ -233,6 +241,10 @@ impl Repo {
         for c in &mut conflicts {
             c.resolved = !now.contains(&c.path);
         }
+        let (theirs, unity_verify) = match started {
+            Some(s) => (Some(s.theirs), s.unity_verify),
+            None => (None, Vec::new()),
+        };
         let msg = fs::read_to_string(self.git_dir().join("MERGE_MSG")).unwrap_or_default();
         let message = msg
             .lines()
@@ -242,9 +254,10 @@ impl Repo {
             .trim()
             .to_owned();
         Ok(Some(MergeState {
-            theirs: started.map(|s| s.theirs),
+            theirs,
             message,
             conflicts,
+            unity_verify,
         }))
     }
 
@@ -260,7 +273,8 @@ impl Repo {
     /// Commits the resolved merge with `message`.
     ///
     /// # Errors
-    /// [`Error::Refused`] while files are still conflicted, or git's error.
+    /// [`Error::Refused`] while files are still conflicted or Smart Merge items
+    /// wait for confirmation, or git's error.
     pub fn merge_commit(&self, git: &GitCli, message: &str) -> Result<(), Error> {
         let left = self.conflicted_paths()?;
         if !left.is_empty() {
@@ -269,8 +283,127 @@ impl Repo {
                 left.len()
             )));
         }
+        if let Some(merge_head) = self.merge_head()?
+            && let Some(started) = fs::read(self.state_file())
+                .ok()
+                .and_then(|b| serde_json::from_slice::<Started>(&b).ok())
+                .filter(|s| s.merge_head == merge_head)
+        {
+            let unconfirmed: usize = started
+                .unity_verify
+                .iter()
+                .flat_map(|f| &f.verify)
+                .filter(|v| !v.confirmed)
+                .count();
+            if unconfirmed > 0 {
+                return Err(Error::Refused(format!(
+                    "{unconfirmed} Smart Merge change(s) still need verification before committing"
+                )));
+            }
+        }
         self.commit(git, message)?;
         self.forget_merge()
+    }
+
+    /// Runs the configured Unity Smart Merge driver over unresolved Unity YAML conflicts,
+    /// recording per-property verification items into `.git/gitgud/merge.json`.
+    ///
+    /// # Errors
+    /// [`Error::Refused`] if no merge is in progress, or [`Error::Read`] / [`Error::Command`].
+    pub fn remerge_unity_files(&self, git: &GitCli) -> Result<usize, Error> {
+        let Some(merge_head) = self.merge_head()? else {
+            return Err(Error::Refused("no merge is in progress".into()));
+        };
+        let now = self.conflicted_paths()?;
+        let mut started = fs::read(self.state_file())
+            .ok()
+            .and_then(|b| serde_json::from_slice::<Started>(&b).ok())
+            .filter(|s| s.merge_head == merge_head)
+            .unwrap_or(Started {
+                merge_head: merge_head.clone(),
+                theirs: String::new(),
+                conflicts: self.classify(git, &now)?,
+                unity_verify: Vec::new(),
+            });
+
+        let mut merged_count = 0usize;
+        let unity_paths: Vec<String> = started
+            .conflicts
+            .iter()
+            .filter(|c| c.kind == ConflictKind::UnityYaml && now.contains(&c.path))
+            .map(|c| c.path.clone())
+            .collect();
+
+        for path in unity_paths {
+            let [base, ours, theirs] = self.stages(&path)?;
+            let (Some(ours), Some(theirs)) = (ours, theirs) else {
+                continue;
+            };
+            let base = base.unwrap_or_default();
+            if let Some(umf) = run_smart_merge_on_conflict(git, self, &path, &base, &ours, &theirs)?
+            {
+                started.unity_verify.retain(|f| f.path != path);
+                if !umf.verify.is_empty() || !umf.auto_merged.is_empty() {
+                    started.unity_verify.push(umf);
+                }
+                merged_count += 1;
+            }
+        }
+
+        fs::create_dir_all(self.state_file().parent().expect("has a parent")).map_err(read_err)?;
+        fs::write(
+            self.state_file(),
+            serde_json::to_vec(&started).map_err(read_err)?,
+        )
+        .map_err(read_err)?;
+        Ok(merged_count)
+    }
+
+    /// Marks Smart Merge verification items confirmed or unconfirmed on `path`.
+    ///
+    /// # Errors
+    /// [`Error::Refused`] when no matching merge or verification entry exists.
+    pub fn confirm_unity_verify(
+        &self,
+        path: &str,
+        file_id: Option<&str>,
+        property: Option<&str>,
+        confirmed: bool,
+    ) -> Result<(), Error> {
+        let Some(merge_head) = self.merge_head()? else {
+            return Err(Error::Refused("no merge is in progress".into()));
+        };
+        let bytes = fs::read(self.state_file()).map_err(|_| {
+            Error::Refused("no Smart Merge verification data for this merge".into())
+        })?;
+        let mut started: Started = serde_json::from_slice(&bytes).map_err(read_err)?;
+        if started.merge_head != merge_head {
+            return Err(Error::Refused("merge state is stale".into()));
+        }
+        let mut updated = 0usize;
+        for file in &mut started.unity_verify {
+            if file.path != path {
+                continue;
+            }
+            for item in &mut file.verify {
+                let id_match = file_id.is_none_or(|id| item.file_id == id);
+                let prop_match = property.is_none_or(|p| item.property == p);
+                if id_match && prop_match {
+                    item.confirmed = confirmed;
+                    updated += 1;
+                }
+            }
+        }
+        if updated == 0 {
+            return Err(Error::Refused(format!(
+                "no Smart Merge verification item matched {path}"
+            )));
+        }
+        fs::write(
+            self.state_file(),
+            serde_json::to_vec(&started).map_err(read_err)?,
+        )
+        .map_err(read_err)
     }
 
     /// The conflicted text file `path` chunked by git's own merge (`merge-file

@@ -1,6 +1,14 @@
 <script lang="ts">
   import { SvelteSet } from "svelte/reactivity";
-  import { branches as loadBranches, stashes as loadStashes, type Branch, type Branches, type StashEntry } from "$lib/api";
+  import {
+    branches as loadBranches,
+    stashes as loadStashes,
+    type Branch,
+    type Branches,
+    type LfsInfo,
+    type LfsLock,
+    type StashEntry,
+  } from "$lib/api";
   import { aheadBehind, branchTree, visibleRows } from "$lib/sidebar/tree";
   import ContextMenu, { type MenuItem } from "./ContextMenu.svelte";
 
@@ -11,6 +19,8 @@
     oplogOpen = false,
     merging = false,
     selectedStash = null,
+    lfsInfo = null,
+    locks = [],
     data = $bindable(null),
     oncheckout,
     onmerge,
@@ -26,6 +36,8 @@
     onstashapply,
     onstashpop,
     onstashdrop,
+    onrefreshlocks,
+    onunlock,
   }: {
     /** "Rebase current onto" from a branch's context menu. */
     onrebase: (branch: string) => void;
@@ -39,6 +51,8 @@
     /** A merge or rebase is in progress: no checkout, merge or rebase. */
     merging?: boolean;
     selectedStash?: number | null;
+    lfsInfo?: LfsInfo | null;
+    locks?: LfsLock[];
     /** Double-click (or Enter) on a local branch. */
     oncheckout: (branch: string) => void;
     /** "Merge into current" from a branch's context menu. */
@@ -54,6 +68,8 @@
     onstashapply?: (index: number) => void;
     onstashpop?: (index: number) => void;
     onstashdrop?: (index: number) => void;
+    onrefreshlocks?: () => void;
+    onunlock?: (path: string, force: boolean) => void;
   } = $props();
 
   let error = $state<string | null>(null);
@@ -166,24 +182,33 @@
   const rows = $derived(data ? visibleRows(branchTree(data.local), collapsed) : []);
 
   $effect(() => {
-    const key = `${repoId}:${revision}`;
-    loadBranches(repoId).then(
+    let stale = false;
+    const id = repoId;
+    const rev = revision;
+    loadBranches(id).then(
       (b) => {
-        if (key === `${repoId}:${revision}`) {
+        if (!stale && repoId === id && revision === rev) {
           data = b;
           error = null;
         }
       },
-      (err) => (error = String(err)),
+      (err) => {
+        if (!stale) {
+          error = String(err);
+        }
+      },
     );
-    loadStashes(repoId).then(
+    loadStashes(id).then(
       (s) => {
-        if (key === `${repoId}:${revision}`) {
+        if (!stale && repoId === id && revision === rev) {
           stashList = s;
         }
       },
       () => {},
     );
+    return () => {
+      stale = true;
+    };
   });
 
   function toggle(set: SvelteSet<string>, key: string) {
@@ -276,6 +301,46 @@
           </li>
         {/each}
       </ul>
+    </section>
+  {/if}
+
+  {#if lfsInfo?.supportsLocks && (locks.length > 0 || lfsInfo.trackedPatterns.length > 0)}
+    <section aria-label="Locks">
+      <h3>
+        Locks
+        <span class="ct">{locks.length}</span>
+        {#if onrefreshlocks}
+          <button type="button" class="add" disabled={busy} aria-label="Refresh locks" title="Refresh LFS locks" onclick={onrefreshlocks}
+            >↻</button
+          >
+        {/if}
+      </h3>
+      {#if locks.length === 0}
+        <div class="it leaf">No files locked</div>
+      {:else}
+        <ul>
+          {#each locks as lock (lock.id + lock.path)}
+            {@const base = lock.path.split("/").pop() ?? lock.path}
+            <li>
+              <div class="it" title="{lock.path} · {lock.owner}">
+                <span class="ic">🔒</span>
+                <span class="nm">{base}</span>
+                <span class="r">{lock.ours ? "you" : lock.owner}</span>
+                {#if onunlock}
+                  <button
+                    type="button"
+                    class="add"
+                    disabled={busy}
+                    aria-label="Unlock {lock.path}"
+                    title="Unlock {lock.path}"
+                    onclick={() => onunlock(lock.path, !lock.ours)}>✕</button
+                  >
+                {/if}
+              </div>
+            </li>
+          {/each}
+        </ul>
+      {/if}
     </section>
   {/if}
 

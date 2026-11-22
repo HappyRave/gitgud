@@ -2,6 +2,7 @@
   import { onDestroy, onMount, tick } from "svelte";
   import { SvelteMap } from "svelte/reactivity";
   import {
+    backgroundRefresh,
     cancelTask,
     checkout,
     checkoutRemote,
@@ -19,6 +20,10 @@
     gitInfo,
     historyPlan,
     hunkHeader,
+    lfsInfo,
+    lfsLock,
+    lfsLocks,
+    lfsUnlock,
     merge,
     mergeAbort,
     mergeCommit,
@@ -68,9 +73,12 @@
     type CommitOptions,
     type HistoryPlan,
     type Hunk,
+    type LfsInfo,
+    type LfsLock,
     type LineSelect,
     type MergeSide,
     type MergeState,
+    type MetaIssue,
     type Opened,
     type OpEntry,
     type PlanAction,
@@ -86,6 +94,15 @@
     type Side,
     type Status,
     type TaskOp,
+    type UnityInfo,
+  } from "$lib/api";
+  import {
+    unityCheckOpenAssets,
+    unityConfigureSmartMerge,
+    unityConfirmVerify,
+    unityInfo,
+    unityMetaIssues,
+    unityRemergeConflicts,
   } from "$lib/api";
   import BranchDialog from "$lib/components/BranchDialog.svelte";
   import type { PaletteRepoActions } from "$lib/components/CommandPalette.svelte";
@@ -94,6 +111,7 @@
   import ConflictView from "$lib/components/ConflictView.svelte";
   import ContextMenu, { type MenuItem } from "$lib/components/ContextMenu.svelte";
   import DeleteBranchDialog from "$lib/components/DeleteBranchDialog.svelte";
+  import Dialog from "$lib/components/Dialog.svelte";
   import ErrorBanner from "$lib/components/ErrorBanner.svelte";
   import FindBar from "$lib/components/FindBar.svelte";
   import Graph from "$lib/components/Graph.svelte";
@@ -216,6 +234,11 @@
   let resetAsk = $state<{ id: string; shortId: string; subject: string } | null>(null);
   let sequencerAsk = $state<{ kind: "cherryPick" | "revert"; id: string; shortId: string; subject: string } | null>(null);
   let stashAsk = $state(false);
+  let openAssetsAsk = $state<{ label: string; run: () => void } | null>(null);
+  let unityState = $state<UnityInfo | null>(null);
+  let metaIssues = $state<MetaIssue[]>([]);
+  let lfs = $state<LfsInfo | null>(null);
+  let locks = $state<LfsLock[]>([]);
   const dialogOpen = $derived(
     !!mergeAsk ||
       !!rebaseAsk ||
@@ -226,6 +249,7 @@
       !!deleteAsk ||
       !!resetAsk ||
       !!sequencerAsk ||
+      !!openAssetsAsk ||
       stashAsk,
   );
 
@@ -237,6 +261,90 @@
 
   let lastAction = $state<string | null>(null);
   let nextRedo = $state<string | null>(null);
+
+  $effect(() => {
+    if (!opened) {
+      unityState = null;
+      metaIssues = [];
+      return;
+    }
+    const id = opened.id;
+    const rev = revision;
+    unityInfo(id)
+      .then((u) => {
+        if (opened?.id !== id || revision !== rev) {
+          return;
+        }
+        unityState = u;
+        if (u.isUnity) {
+          unityMetaIssues(id)
+            .then((m) => {
+              if (opened?.id === id && revision === rev) {
+                metaIssues = m;
+              }
+            })
+            .catch(() => {});
+        } else {
+          metaIssues = [];
+        }
+      })
+      .catch(() => {});
+  });
+
+  function refreshLocks(id: number) {
+    lfsLocks(id)
+      .then((list) => {
+        if (opened?.id === id) {
+          locks = list;
+        }
+      })
+      .catch(() => {});
+  }
+
+  $effect(() => {
+    if (!opened) {
+      lfs = null;
+      locks = [];
+      return;
+    }
+    const id = opened.id;
+    lfsInfo(id)
+      .then((info) => {
+        if (opened?.id !== id) {
+          return;
+        }
+        lfs = info;
+        if (info.supportsLocks) {
+          refreshLocks(id);
+        } else {
+          locks = [];
+        }
+      })
+      .catch(() => {});
+  });
+
+  $effect(() => {
+    if (!active || !opened) {
+      return;
+    }
+    const id = opened.id;
+    const timer = setInterval(() => {
+      if (active && opened?.id === id && !fetching && !conflicted && !busy) {
+        backgroundRefresh(id, 600)
+          .then((ok) => {
+            if (ok && opened?.id === id) {
+              onOutsideChange(id);
+              if (lfs?.supportsLocks) {
+                refreshLocks(id);
+              }
+            }
+          })
+          .catch(() => {});
+      }
+    }, 600_000);
+    return () => clearInterval(timer);
+  });
+
   $effect(() => {
     if (!opened) {
       return;
@@ -323,6 +431,76 @@
     return side === "staged" ? !!entry?.index : !!entry && (!!entry.worktree || entry.kind === "untracked");
   }
 
+  async function guardAssets(label: string, range: string, run: () => void) {
+    if (!opened || !unityState?.isUnity || !unityState.editorOpen) {
+      run();
+      return;
+    }
+    try {
+      if (await unityCheckOpenAssets(opened.id, range)) {
+        openAssetsAsk = { label, run };
+        return;
+      }
+    } catch {
+      // Proceed if asset-touch check isn't applicable (e.g., unborn ref).
+    }
+    run();
+  }
+
+  function guardedCheckout(branch: string) {
+    guardAssets(`Check out ${branch}`, `HEAD..${branch}`, () => write((id) => checkout(id, branch)));
+  }
+
+  async function onLockFile(filePath: string) {
+    if (!opened || busy) {
+      return;
+    }
+    error = null;
+    try {
+      await lfsLock(opened.id, filePath);
+      notice = `Locked ${filePath}`;
+      refreshLocks(opened.id);
+    } catch (err) {
+      error = String(err);
+    }
+  }
+
+  async function onUnlockFile(filePath: string, force = false) {
+    if (!opened || busy) {
+      return;
+    }
+    error = null;
+    try {
+      await lfsUnlock(opened.id, filePath, force);
+      notice = `Unlocked ${filePath}`;
+      refreshLocks(opened.id);
+    } catch (err) {
+      error = String(err);
+    }
+  }
+
+  async function setupAndRemergeUnity() {
+    if (!opened || busy) {
+      return;
+    }
+    const id = opened.id;
+    error = null;
+    try {
+      unityState = await unityConfigureSmartMerge(id, null);
+      await write((rid) => unityRemergeConflicts(rid), "Configured Smart Merge and re-merged Unity files");
+    } catch (err) {
+      error = String(err);
+    }
+  }
+
+  function runRemergeUnity() {
+    write((id) => unityRemergeConflicts(id), "Re-merged Unity files with UnityYAMLMerge");
+  }
+
+  function onConfirmVerify(filePath: string, fileId: string | null, property: string | null, confirmed: boolean) {
+    write((id) => unityConfirmVerify(id, filePath, fileId, property, confirmed));
+  }
+
   function onHunk(filePath: string, action: "stage" | "unstage" | "discard", hunk: Hunk) {
     const header = hunkHeader(hunk);
     const run = { stage: stageHunk, unstage: unstageHunk, discard: discardHunk }[action];
@@ -381,7 +559,7 @@
             at: selectedCommit,
             atLabel: selectedCommit ? selectedCommit.slice(0, 7) : null,
           }),
-        oncheckout: (b) => write((id) => checkout(id, b)),
+        oncheckout: (b) => guardedCheckout(b),
         onmerge: (b) => (mergeAsk = b),
         onrebase: (b) => (rebaseAsk = b),
         ondeletebranch: (b) => onDeleteBranch(b),
@@ -522,6 +700,7 @@
     remoteBranch: string;
     setUpstream: boolean;
     forceWithLease: boolean;
+    unlockPaths?: string[];
   }) {
     if (!opened || fetching) {
       return;
@@ -532,8 +711,14 @@
     error = null;
     try {
       const next = await push(id, opts.remote, opts.branch, opts.remoteBranch, opts.setUpstream, opts.forceWithLease);
+      for (const path of opts.unlockPaths ?? []) {
+        await lfsUnlock(id, path, false).catch(() => {});
+      }
       if (opened?.id === id) {
         show(next, await read(id));
+        if ((opts.unlockPaths?.length ?? 0) > 0 && lfs?.supportsLocks) {
+          refreshLocks(id);
+        }
         notice = opts.forceWithLease
           ? `Force-pushed ${opts.branch} to ${opts.remote}/${opts.remoteBranch}`
           : `Pushed ${opts.branch} to ${opts.remote}/${opts.remoteBranch}`;
@@ -570,9 +755,11 @@
   async function startMerge(branch: string) {
     mergeAsk = null;
     const into = branchName;
-    if ((await write((id) => merge(id, branch))) && !merging) {
-      notice = `Merged ${branch} into ${into}`;
-    }
+    guardAssets(`Merge ${branch} into ${into}`, `HEAD...${branch}`, async () => {
+      if ((await write((id) => merge(id, branch))) && !merging) {
+        notice = `Merged ${branch} into ${into}`;
+      }
+    });
   }
 
   async function resolveFile(filePath: string, how: string, run: (id: number) => Promise<Opened>) {
@@ -596,7 +783,9 @@
     resolveFile(filePath, side === "yours" ? "keep yours" : "take theirs", (id) => resolveSide(id, filePath, side));
 
   function commitMerge() {
-    if (mergeLeft === 0 && mergeDraft.trim()) {
+    const unconfirmed =
+      merging?.unityVerify?.some((f) => f.verify.some((v) => !v.confirmed)) ?? false;
+    if (mergeLeft === 0 && !unconfirmed && mergeDraft.trim()) {
       write((id) => mergeCommit(id, mergeDraft), "Merge committed · Ctrl+Z undoes it");
     }
   }
@@ -604,9 +793,11 @@
   async function startRebase(onto: string) {
     rebaseAsk = null;
     const branch = branchName;
-    if ((await write((id) => rebase(id, onto))) && !rebasing) {
-      notice = `Rebased ${branch} onto ${onto} · Ctrl+Z undoes it`;
-    }
+    guardAssets(`Rebase ${branch} onto ${onto}`, `${onto}...HEAD`, async () => {
+      if ((await write((id) => rebase(id, onto))) && !rebasing) {
+        notice = `Rebased ${branch} onto ${onto} · Ctrl+Z undoes it`;
+      }
+    });
   }
 
   async function openPlan(from: string, preset?: { id: string; action: PlanAction }) {
@@ -1092,6 +1283,7 @@
         branch={branchName}
         left={mergeLeft}
         total={merging.conflicts.length}
+        unconfirmed={merging.unityVerify?.reduce((n, f) => n + f.verify.filter((v) => !v.confirmed).length, 0) ?? 0}
         {busy}
         oncommit={commitMerge}
         onabort={() => write((id) => mergeAbort(id), "Merge aborted · Ctrl+Z brings it back")}
@@ -1128,7 +1320,9 @@
           merging={!!conflicted}
           {selectedStash}
           oplogOpen={inspector === "oplog" && !selectedCommit && selectedStash === null}
-          oncheckout={(branch) => write((id) => checkout(id, branch))}
+          lfsInfo={lfs}
+          {locks}
+          oncheckout={guardedCheckout}
           onmerge={(branch) => (mergeAsk = branch)}
           onrebase={(branch) => (rebaseAsk = branch)}
           oncreatebranch={(at) => (branchAsk = { mode: "create", at: at ?? null, atLabel: at ?? null })}
@@ -1146,6 +1340,8 @@
           onstashapply={(idx) => write((id) => stashApply(id, idx), `Applied stash@{${idx}} · Ctrl+Z undoes it`)}
           onstashpop={(idx) => write((id) => stashPop(id, idx), `Popped stash@{${idx}} · Ctrl+Z undoes it`)}
           onstashdrop={(idx) => write((id) => stashDrop(id, idx), `Dropped stash@{${idx}} · Ctrl+Z undoes it`)}
+          onrefreshlocks={() => opened && refreshLocks(opened.id)}
+          onunlock={onUnlockFile}
           onoplog={() => {
             inspector = inspector === "oplog" ? "working" : "oplog";
             closeDetail();
@@ -1194,9 +1390,13 @@
           how={resolvedHow}
           bind:message={() => mergeDraft, (v) => (messageEdit = v)}
           {busy}
+          unityInfo={unityState}
           onresolvewith={resolveText}
           onresolveside={resolvePick}
           oncommit={commitMerge}
+          onsetupSmartMerge={setupAndRemergeUnity}
+          onremergeUnity={runRemergeUnity}
+          onconfirmVerify={onConfirmVerify}
           children={inspector === "oplog" ? () => opLog(repoId) : undefined}
           whenResolved={merging ? undefined : continueOp}
         />
@@ -1306,12 +1506,18 @@
               {busy}
               suspended={suspended || dialogOpen}
               {lastAction}
+              {metaIssues}
+              {locks}
+              lfsPatterns={lfs?.trackedPatterns ?? []}
+              locksSupported={lfs?.supportsLocks ?? false}
               bind:selected={selectedFile}
               onstage={(paths) => write((id) => stage(id, paths))}
               onunstage={(paths) => write((id) => unstage(id, paths))}
               ondiscard={(paths) => write((id) => discard(id, paths))}
               onhunk={onHunk}
               onlines={onLines}
+              onlock={onLockFile}
+              onunlock={onUnlockFile}
               oncommit={onCommit}
               onstash={() => (stashAsk = true)}
             />
@@ -1356,6 +1562,7 @@
       <PushDialog
         repoId={opened.id}
         initialForce={pushAsk.initialForce}
+        locksSupported={lfs?.supportsLocks ?? false}
         {busy}
         onpush={startPush}
         oncancel={() => (pushAsk = null)}
@@ -1418,6 +1625,26 @@
         }}
         oncancel={() => (stashAsk = false)}
       />
+    {/if}
+    {#if openAssetsAsk}
+      <Dialog title="Unity Editor is open" oncancel={() => (openAssetsAsk = null)}>
+        <p class="ab">
+          <code>Temp/UnityLockfile</code> is present and <b>{openAssetsAsk.label}</b> updates files inside
+          <code>Assets/</code>. Modifying Assets while Unity is running can trigger broken asset reloads or lock errors.
+        </p>
+        {#snippet footer()}
+          <button type="button" onclick={() => (openAssetsAsk = null)}>Cancel</button>
+          <button
+            type="button"
+            class="pri"
+            onclick={() => {
+              const run = openAssetsAsk?.run;
+              openAssetsAsk = null;
+              run?.();
+            }}>Proceed anyway</button
+          >
+        {/snippet}
+      </Dialog>
     {/if}
   {:else}
     <div class="start empty">

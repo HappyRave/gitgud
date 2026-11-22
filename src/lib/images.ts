@@ -3,7 +3,7 @@ export type ImageAt =
   | { at: "head" | "index" | "worktree" | "yours" | "theirs" }
   | { at: "commit" | "parent"; commit: string };
 
-const IMAGE = /\.(png|jpe?g|gif|webp|bmp|ico|svg)$/i;
+const IMAGE = /\.(png|jpe?g|gif|webp|bmp|ico|svg|tga|psd)$/i;
 
 export const isImage = (path: string) => IMAGE.test(path);
 

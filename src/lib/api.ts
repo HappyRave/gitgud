@@ -165,6 +165,65 @@ export interface Conflict {
   resolved: boolean;
 }
 
+export interface VerifyItem {
+  fileId: string;
+  objectName: string;
+  property: string;
+  base: string | null;
+  ours: string | null;
+  theirs: string | null;
+  merged: string | null;
+  confirmed: boolean;
+}
+
+export interface AutoMergedItem {
+  fileId: string;
+  objectName: string;
+  property: string;
+  side: string;
+  value: string | null;
+}
+
+export interface UnityMergeFile {
+  path: string;
+  verify: VerifyItem[];
+  autoMerged: AutoMergedItem[];
+}
+
+export type MetaIssueKind = "missingMeta" | "orphanMeta" | "guidCollision" | "caseMismatch";
+
+export interface MetaIssue {
+  kind: MetaIssueKind;
+  path: string;
+  detail: string;
+}
+
+export interface UnityInfo {
+  isUnity: boolean;
+  projectRoot: string | null;
+  editorOpen: boolean;
+  editorVersion: string | null;
+  smartMergeConfigured: boolean;
+  smartMergeToolPath: string | null;
+  detectedEditors: string[];
+}
+
+export interface LfsInfo {
+  installed: boolean;
+  version: string | null;
+  trackedPatterns: string[];
+  supportsLocks: boolean;
+  locksUnsupportedReason: string | null;
+}
+
+export interface LfsLock {
+  id: string;
+  path: string;
+  owner: string;
+  lockedAt: string;
+  ours: boolean;
+}
+
 export interface MergeState {
   /** The branch being merged in, when gitgud started the merge. */
   theirs: string | null;
@@ -172,6 +231,8 @@ export interface MergeState {
   message: string;
   /** In list order: Unity YAML, code, binary; then path. */
   conflicts: Conflict[];
+  /** Per-property Unity Smart Merge verification items (v1.0). */
+  unityVerify?: UnityMergeFile[];
 }
 
 export type Chunk =
@@ -551,6 +612,21 @@ export interface Commands {
   config_get_identity: { args: { id?: number | null }; result: IdentityConfig };
   config_set_identity: { args: { id?: number | null; name: string; email: string }; result: null };
   tool_diagnostics: { args: Record<string, never>; result: ToolDiagnostics };
+  unity_info: { args: { id: number }; result: UnityInfo };
+  unity_configure_smart_merge: { args: { id: number; toolPath?: string | null }; result: UnityInfo };
+  unity_meta_issues: { args: { id: number }; result: MetaIssue[] };
+  unity_remerge_conflicts: { args: { id: number }; result: Opened };
+  unity_confirm_verify: {
+    args: { id: number; path: string; fileId?: string | null; property?: string | null; confirmed: boolean };
+    result: Opened;
+  };
+  unity_check_open_assets: { args: { id: number; range: string }; result: boolean };
+  lfs_info: { args: { id: number }; result: LfsInfo };
+  lfs_locks: { args: { id: number }; result: LfsLock[] };
+  lfs_lock: { args: { id: number; path: string }; result: null };
+  lfs_unlock: { args: { id: number; path: string; force?: boolean }; result: null };
+  lfs_locks_in_push: { args: { id: number; remote: string; remoteBranch: string; branch: string }; result: LfsLock[] };
+  background_refresh: { args: { id: number; minAgeSecs?: number }; result: boolean };
   pr_url: { args: { id: number; branch: string }; result: string | null };
   open_external_url: { args: { url: string }; result: null };
   predict_merge: { args: { id: number; branch: string }; result: string[] };
@@ -767,6 +843,26 @@ export const cloneRepo = (url: string, dest: string, folderPath: string | null, 
   call("clone_repo", { url, dest, folderPath, longPaths });
 export const cancelClone = () => call("cancel_clone", {});
 export const fetchMany = (paths: string[]) => call("fetch_many", { paths });
+export const unityInfo = (id: number) => call("unity_info", { id });
+export const unityConfigureSmartMerge = (id: number, toolPath: string | null = null) =>
+  call("unity_configure_smart_merge", { id, toolPath });
+export const unityMetaIssues = (id: number) => call("unity_meta_issues", { id });
+export const unityRemergeConflicts = (id: number) => call("unity_remerge_conflicts", { id });
+export const unityConfirmVerify = (
+  id: number,
+  path: string,
+  fileId: string | null,
+  property: string | null,
+  confirmed: boolean,
+) => call("unity_confirm_verify", { id, path, fileId, property, confirmed });
+export const unityCheckOpenAssets = (id: number, range: string) => call("unity_check_open_assets", { id, range });
+export const lfsInfo = (id: number) => call("lfs_info", { id });
+export const lfsLocks = (id: number) => call("lfs_locks", { id });
+export const lfsLock = (id: number, path: string) => call("lfs_lock", { id, path });
+export const lfsUnlock = (id: number, path: string, force = false) => call("lfs_unlock", { id, path, force });
+export const lfsLocksInPush = (id: number, remote: string, remoteBranch: string, branch: string) =>
+  call("lfs_locks_in_push", { id, remote, remoteBranch, branch });
+export const backgroundRefresh = (id: number, minAgeSecs = 600) => call("background_refresh", { id, minAgeSecs });
 
 export const onCloneProgress = (handler: (progress: CloneProgress) => void) =>
   listen<CloneProgress>("clone-progress", (e) => handler(e.payload));

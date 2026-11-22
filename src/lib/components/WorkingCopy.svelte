@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { CommitOptions, Hunk, LineSelect, Status } from "$lib/api";
+  import type { CommitOptions, Hunk, LfsLock, LineSelect, MetaIssue, Status } from "$lib/api";
   import { workingKey } from "$lib/keys";
   import { fileOrder, stepFile, type FileRef } from "$lib/working";
   import CommitBox from "./CommitBox.svelte";
@@ -14,12 +14,18 @@
     busy = false,
     suspended = false,
     lastAction = null,
+    metaIssues = [],
+    locks = [],
+    lfsPatterns = [],
+    locksSupported = false,
     selected = $bindable(null),
     onstage,
     onunstage,
     ondiscard,
     onhunk,
     onlines,
+    onlock,
+    onunlock,
     oncommit,
     onstash,
   }: {
@@ -31,6 +37,10 @@
     /** A dialog is open over the page: the single-key shortcuts stay off. */
     suspended?: boolean;
     lastAction?: string | null;
+    metaIssues?: MetaIssue[];
+    locks?: LfsLock[];
+    lfsPatterns?: string[];
+    locksSupported?: boolean;
     /** The file whose diff is shown. */
     selected?: FileRef | null;
     onstage: (paths: string[]) => void;
@@ -38,6 +48,8 @@
     ondiscard: (paths: string[]) => void;
     onhunk: (path: string, action: "stage" | "unstage" | "discard", hunk: Hunk) => void;
     onlines?: (path: string, action: "stage" | "unstage" | "discard", select: LineSelect) => void;
+    onlock?: (path: string) => void;
+    onunlock?: (path: string, force: boolean) => void;
     oncommit: (message: string, options?: CommitOptions) => Promise<void>;
     onstash?: () => void;
   } = $props();
@@ -123,10 +135,16 @@
       {busy}
       {selected}
       {lastAction}
+      {metaIssues}
+      {locks}
+      {lfsPatterns}
+      {locksSupported}
       {onstage}
       {onunstage}
       onselectfile={(path, side) => (selected = { path, side })}
       {ondiscard}
+      {onlock}
+      {onunlock}
     />
   </div>
   {#if selected}

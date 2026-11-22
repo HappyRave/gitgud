@@ -8,6 +8,7 @@ pub mod graph;
 pub mod history;
 pub mod image;
 mod job;
+pub mod lfs;
 pub mod library;
 pub mod merge;
 pub mod oplog;
@@ -23,5 +24,6 @@ pub mod stash;
 pub mod task;
 #[cfg(any(test, feature = "test-util"))]
 pub mod testing;
+pub mod unity;
 pub mod watch;
 pub mod worktree;

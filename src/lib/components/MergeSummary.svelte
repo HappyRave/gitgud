@@ -6,6 +6,7 @@
     how,
     message = $bindable(),
     busy = false,
+    unconfirmedCount = 0,
     oncommit,
   }: {
     conflicts: Conflict[];
@@ -13,6 +14,7 @@
     /** The merge commit message, prefilled by the page. */
     message: string;
     busy?: boolean;
+    unconfirmedCount?: number;
     oncommit: () => void;
   } = $props();
 
@@ -43,9 +45,15 @@
   <div class="cbox">
     <textarea aria-label="Merge commit message" rows="6" bind:value={message} onkeydown={onKeydown}></textarea>
     <div class="bt">
-      <span class="ab">Message prefilled; what was picked per file goes into the body.</span>
+      {#if unconfirmedCount > 0}
+        <span class="warn">Confirm {unconfirmedCount} Smart Merge verification item(s) before committing.</span>
+      {:else}
+        <span class="ab">Message prefilled; what was picked per file goes into the body.</span>
+      {/if}
       <span class="sp"></span>
-      <button class="pri" disabled={busy || !message.trim()} onclick={oncommit}>Commit merge <span class="k">Ctrl+↵</span></button>
+      <button class="pri" disabled={busy || !message.trim() || unconfirmedCount > 0} onclick={oncommit}
+        >Commit merge <span class="k">Ctrl+↵</span></button
+      >
     </div>
   </div>
 </section>
@@ -83,6 +91,11 @@
     color: var(--muted);
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+  .warn {
+    color: var(--warn-ink);
+    font-weight: 500;
+    font-size: 11.5px;
   }
   .cbox {
     display: grid;

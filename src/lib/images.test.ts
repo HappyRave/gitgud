@@ -5,7 +5,8 @@ describe("isImage", () => {
   it("knows the formats the webview shows", () => {
     expect(isImage("Assets/T.PNG")).toBe(true);
     expect(isImage("a.jpeg")).toBe(true);
-    expect(isImage("a.psd")).toBe(false);
+    expect(isImage("a.psd")).toBe(true);
+    expect(isImage("a.tga")).toBe(true);
     expect(isImage("png")).toBe(false);
   });
 });
