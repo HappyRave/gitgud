@@ -129,8 +129,28 @@ impl Repo {
             .try_find_reference(full.as_str())
             .map_err(read_err)?
             .ok_or_else(|| Error::Refused(format!("there is no branch {name}")))?;
-        let target_tree = target
-            .peel_to_commit()
+        let target_id = target.peel_to_id().map_err(read_err)?.detach();
+        self.diff_head_to_oid(target_id)
+    }
+
+    /// Paths whose content differs between HEAD and revision `rev`.
+    ///
+    /// # Errors
+    /// [`Error::Command`] when `rev` doesn't resolve to a commit.
+    pub fn checkout_rev_paths(&self, git: &GitCli, rev: &str) -> Result<Vec<String>, Error> {
+        let hex = git.run(
+            self.root(),
+            &["rev-parse", "--verify", &format!("{rev}^{{commit}}")],
+            None,
+        )?;
+        let id = ObjectId::from_hex(hex.trim().as_bytes()).map_err(read_err)?;
+        self.diff_head_to_oid(id)
+    }
+
+    fn diff_head_to_oid(&self, target_id: ObjectId) -> Result<Vec<String>, Error> {
+        let repo = self.gix();
+        let target_tree = repo
+            .find_commit(target_id)
             .map_err(read_err)?
             .tree()
             .map_err(read_err)?;
@@ -165,10 +185,120 @@ impl Repo {
         git.run(self.root(), &["switch", "--no-guess", name], None)
             .map(drop)
     }
+
+    /// Creates branch `name` at `at` (or HEAD when `None`), optionally checking it out.
+    ///
+    /// # Errors
+    /// [`Error::Refused`] for an empty name, or [`Error::Command`] with git's message.
+    pub fn create_branch(
+        &self,
+        git: &GitCli,
+        name: &str,
+        at: Option<&str>,
+        checkout: bool,
+    ) -> Result<(), Error> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(Error::Refused("branch name can't be empty".into()));
+        }
+        if checkout {
+            let mut args = vec!["switch", "-c", name];
+            if let Some(target) = at {
+                args.push(target);
+            }
+            git.run(self.root(), &args, None).map(drop)
+        } else {
+            let mut args = vec!["branch", name];
+            if let Some(target) = at {
+                args.push(target);
+            }
+            git.run(self.root(), &args, None).map(drop)
+        }
+    }
+
+    /// Renames local branch `old` to `new`.
+    ///
+    /// # Errors
+    /// [`Error::Refused`] for an empty name, or [`Error::Command`] with git's message.
+    pub fn rename_branch(&self, git: &GitCli, old: &str, new: &str) -> Result<(), Error> {
+        let new = new.trim();
+        if new.is_empty() {
+            return Err(Error::Refused("branch name can't be empty".into()));
+        }
+        git.run(self.root(), &["branch", "-m", old, new], None)
+            .map(drop)
+    }
+
+    /// Deletes local branch `name`, refusing to delete the current branch.
+    ///
+    /// # Errors
+    /// [`Error::Refused`] when `name` is checked out, or [`Error::Command`] when
+    /// `force` is false and the branch has unmerged commits.
+    pub fn delete_branch(&self, git: &GitCli, name: &str, force: bool) -> Result<(), Error> {
+        let repo = self.gix();
+        if let Ok(Some(head)) = repo.head_name()
+            && head.shorten() == name
+        {
+            return Err(Error::Refused(format!(
+                "can't delete {name} while it is checked out"
+            )));
+        }
+        let flag = if force { "-D" } else { "-d" };
+        git.run(self.root(), &["branch", flag, name], None)
+            .map(drop)
+    }
+
+    /// Sets or clears the upstream tracking branch of `branch`.
+    ///
+    /// # Errors
+    /// [`Error::Command`] with git's message.
+    pub fn set_upstream(
+        &self,
+        git: &GitCli,
+        branch: &str,
+        upstream: Option<&str>,
+    ) -> Result<(), Error> {
+        match upstream {
+            Some(u) => {
+                let flag = format!("--set-upstream-to={u}");
+                git.run(self.root(), &["branch", &flag, branch], None)
+                    .map(drop)
+            }
+            None => git
+                .run(self.root(), &["branch", "--unset-upstream", branch], None)
+                .map(drop),
+        }
+    }
+
+    /// Creates local branch `local_name` tracking `remote_branch` and checks it out.
+    ///
+    /// # Errors
+    /// [`Error::Refused`] for an empty name, or [`Error::Command`] with git's message.
+    pub fn checkout_remote(
+        &self,
+        git: &GitCli,
+        remote_branch: &str,
+        local_name: &str,
+    ) -> Result<(), Error> {
+        let local_name = local_name.trim();
+        if local_name.is_empty() {
+            return Err(Error::Refused("branch name can't be empty".into()));
+        }
+        git.run(
+            self.root(),
+            &["switch", "-c", local_name, "--track", remote_branch],
+            None,
+        )
+        .map(drop)
+    }
 }
 
 /// Commits reachable from `tip` but not from `other`.
-fn count_only_in(repo: &gix::Repository, tip: ObjectId, other: ObjectId) -> Result<u32, Error> {
+pub(crate) fn count_only_in(
+    repo: &gix::Repository,
+    tip: ObjectId,
+    other: ObjectId,
+) -> Result<u32, Error> {
     let walk = repo
         .rev_walk([tip])
         .with_hidden([other])

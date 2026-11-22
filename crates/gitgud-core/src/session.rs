@@ -9,10 +9,13 @@ use crate::cli::GitCli;
 use crate::git;
 use crate::graph::{Graph, Row};
 use crate::history::{Action, HistoryPlan, PlanPrediction, Step};
-use crate::merge::{MergeState, Side};
-use crate::oplog::{OpEntry, OpLog};
-use crate::rebase::{RebaseState, RebaseStep};
+use crate::merge::{MergeOutcome, MergeState, Side};
+use crate::oplog::{OpEntry, OpLog, label_amend, label_commit};
+use crate::ops::{CommitOptions, ResetMode};
+use crate::rebase::{RebaseOutcome, RebaseState, RebaseStep};
+use crate::remote::{PullOutcome, PullStrategy};
 use crate::repo::{self, Error, Repo};
+use crate::sequencer::{SequencerKind, SequencerState, SequencerStep};
 use crate::task::{Cancel, Progress};
 use crate::watch::RepoWatcher;
 
@@ -45,8 +48,14 @@ pub struct OpenRepo {
     pub repo: Arc<Repo>,
     pub graph: Arc<Graph>,
     pub graph_version: u32,
+    config_stamp: Option<(std::time::SystemTime, u64)>,
     /// One write at a time per repo: the op log records before and after states.
     writing: Arc<Mutex<()>>,
+}
+
+fn config_stamp(repo: &Repo) -> Option<(std::time::SystemTime, u64)> {
+    let meta = std::fs::metadata(repo.gix().common_dir().join("config")).ok()?;
+    Some((meta.modified().ok()?, meta.len()))
 }
 
 /// The outcome of an undo or redo.
@@ -56,6 +65,14 @@ pub struct Reverted {
     pub opened: Opened,
     /// The action that was undone or redone.
     pub action: String,
+}
+
+/// The outcome of a pull operation alongside the refreshed repo state.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PullResult {
+    pub opened: Opened,
+    pub outcome: PullOutcome,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -81,6 +98,7 @@ impl Session {
         let graph = Graph::build(&repo, dirty)?;
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let open = OpenRepo {
+            config_stamp: config_stamp(&repo),
             repo: Arc::new(repo),
             graph: Arc::new(graph),
             graph_version: 0,
@@ -97,14 +115,38 @@ impl Session {
     /// # Errors
     /// [`Error::UnknownRepo`], or a read error.
     pub fn refresh(&self, id: u32) -> Result<Opened, Error> {
+        self.refresh_inner(id, false)
+    }
+
+    fn refresh_inner(&self, id: u32, force_reload: bool) -> Result<Opened, Error> {
         let open = self.get(id)?;
-        let dirty = !open.repo.status()?.entries.is_empty();
-        if open.graph.is_current(&open.repo, dirty)? {
+        let stamp = config_stamp(&open.repo);
+        let reload = force_reload || stamp != open.config_stamp;
+        let repo = if reload {
+            Arc::new(repo::open(open.repo.root())?)
+        } else {
+            open.repo.clone()
+        };
+        let dirty = !repo.status()?.entries.is_empty();
+        if open.graph.is_current(&repo, dirty)? {
+            if reload {
+                let updated = OpenRepo {
+                    repo,
+                    graph: open.graph.clone(),
+                    graph_version: open.graph_version,
+                    config_stamp: stamp,
+                    writing: open.writing.clone(),
+                };
+                let res = opened(id, &updated);
+                self.lock().insert(id, updated);
+                return Ok(res);
+            }
             return Ok(opened(id, &open));
         }
         let fresh = OpenRepo {
-            repo: open.repo.clone(),
-            graph: Arc::new(Graph::build(&open.repo, dirty)?),
+            config_stamp: config_stamp(&repo),
+            repo: repo.clone(),
+            graph: Arc::new(Graph::build(&repo, dirty)?),
             graph_version: open.graph_version + 1,
             writing: open.writing.clone(),
         };
@@ -519,31 +561,463 @@ impl Session {
         })
     }
 
+    /// Creates branch `name` at `at` (or HEAD when `None`), optionally checking
+    /// it out. Undoable with Ctrl+Z.
+    ///
+    /// # Errors
+    /// [`Error::Command`] or [`Error::Refused`] when the branch can't be created.
+    pub fn create_branch(
+        &self,
+        id: u32,
+        name: &str,
+        at: Option<&str>,
+        checkout: bool,
+    ) -> Result<Opened, Error> {
+        let open = self.get(id)?;
+        let git = self.git()?;
+        let trimmed = name.trim();
+        let action = format!("Create branch {trimmed}");
+        let paths = if checkout {
+            match at {
+                Some(target) => open.repo.checkout_rev_paths(git, target)?,
+                None => Vec::new(),
+            }
+        } else {
+            Vec::new()
+        };
+        if paths.is_empty() {
+            self.write(id, &action, |repo, git| {
+                repo.create_branch(git, trimmed, at, checkout)
+            })
+        } else {
+            self.write_destructive(id, &action, &paths, |repo, git| {
+                repo.create_branch(git, trimmed, at, checkout)
+            })
+        }
+    }
+
+    /// Renames local branch `old` to `new`; undoable with Ctrl+Z.
+    ///
+    /// # Errors
+    /// See [`Repo::rename_branch`].
+    pub fn rename_branch(&self, id: u32, old: &str, new: &str) -> Result<Opened, Error> {
+        let trimmed = new.trim();
+        let action = format!("Rename {old} to {trimmed}");
+        self.write(id, &action, |repo, git| {
+            repo.rename_branch(git, old, trimmed)
+        })
+    }
+
+    /// Deletes local branch `name`; undoable with Ctrl+Z.
+    ///
+    /// # Errors
+    /// See [`Repo::delete_branch`].
+    pub fn delete_branch(&self, id: u32, name: &str, force: bool) -> Result<Opened, Error> {
+        let action = format!("Delete branch {name}");
+        self.write(id, &action, |repo, git| {
+            repo.delete_branch(git, name, force)
+        })
+    }
+
+    /// Sets or clears the upstream tracking branch of `branch`.
+    ///
+    /// # Errors
+    /// See [`Repo::set_upstream`].
+    pub fn set_upstream(
+        &self,
+        id: u32,
+        branch: &str,
+        upstream: Option<&str>,
+    ) -> Result<Opened, Error> {
+        self.exclusive(id, |open, git| {
+            open.repo.set_upstream(git, branch, upstream)
+        })?;
+        self.refresh_inner(id, true)
+    }
+
+    /// Creates and checks out local branch `local_name` tracking `remote_branch`;
+    /// undoable with Ctrl+Z.
+    ///
+    /// # Errors
+    /// See [`Repo::checkout_remote`].
+    pub fn checkout_remote(
+        &self,
+        id: u32,
+        remote_branch: &str,
+        local_name: &str,
+    ) -> Result<Opened, Error> {
+        let open = self.get(id)?;
+        let git = self.git()?;
+        let trimmed = local_name.trim();
+        let paths = open.repo.checkout_rev_paths(git, remote_branch)?;
+        let action = format!("Check out {trimmed} ({remote_branch})");
+        self.write_destructive(id, &action, &paths, |repo, git| {
+            repo.checkout_remote(git, remote_branch, trimmed)
+        })
+    }
+
+    /// Commits or amends with `message` and `options`; undoable with Ctrl+Z.
+    ///
+    /// # Errors
+    /// See [`Repo::commit_with`].
+    pub fn commit_with(
+        &self,
+        id: u32,
+        message: &str,
+        options: CommitOptions,
+    ) -> Result<Opened, Error> {
+        let action = if options.amend {
+            label_amend(message)
+        } else {
+            label_commit(message)
+        };
+        self.write(id, &action, |repo, git| {
+            repo.commit_with(git, message, options)
+        })
+    }
+
+    /// Resets the current branch to `target` (`soft`, `mixed`, or `hard`).
+    /// Hard reset snapshots dirty/changed work-tree files so Ctrl+Z undoes it.
+    ///
+    /// # Errors
+    /// See [`Repo::reset`].
+    pub fn reset(&self, id: u32, target: &str, mode: ResetMode) -> Result<Opened, Error> {
+        let open = self.get(id)?;
+        let git = self.git()?;
+        let short = &target[..target.len().min(7)];
+        let kind = match mode {
+            ResetMode::Soft => "soft",
+            ResetMode::Mixed => "mixed",
+            ResetMode::Hard => "hard",
+        };
+        let action = format!("Reset ({kind}) to {short}");
+        if mode == ResetMode::Hard {
+            let paths = open.repo.reset_hard_paths(git, target)?;
+            self.write_destructive(id, &action, &paths, |repo, git| {
+                repo.reset(git, target, mode)
+            })
+        } else {
+            self.write(id, &action, |repo, git| repo.reset(git, target, mode))
+        }
+    }
+
+    /// Cherry-picks `commit` onto HEAD; stops on conflicts. Undoable with Ctrl+Z.
+    ///
+    /// # Errors
+    /// See [`Repo::cherry_pick`].
+    pub fn cherry_pick(&self, id: u32, commit: &str) -> Result<Opened, Error> {
+        let open = self.get(id)?;
+        let git = self.git()?;
+        let paths = open.repo.sequencer_paths(git, commit)?;
+        let short = &commit[..commit.len().min(7)];
+        let action = format!("Cherry-pick {short}");
+        self.write_destructive(id, &action, &paths, |repo, git| {
+            repo.cherry_pick(git, commit).map(drop)
+        })
+    }
+
+    /// Reverts `commit` onto HEAD; stops on conflicts. Undoable with Ctrl+Z.
+    ///
+    /// # Errors
+    /// See [`Repo::revert_commit`].
+    pub fn revert_commit(&self, id: u32, commit: &str) -> Result<Opened, Error> {
+        let open = self.get(id)?;
+        let git = self.git()?;
+        let paths = open.repo.sequencer_paths(git, commit)?;
+        let short = &commit[..commit.len().min(7)];
+        let action = format!("Revert {short}");
+        self.write_destructive(id, &action, &paths, |repo, git| {
+            repo.revert_commit(git, commit).map(drop)
+        })
+    }
+
+    /// The cherry-pick or revert stopped on conflicts in repo `id`, if any.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`], or a read error.
+    pub fn sequencer_state(&self, id: u32) -> Result<Option<SequencerState>, Error> {
+        self.get(id)?.repo.sequencer_state(self.git()?)
+    }
+
+    /// Continues or aborts the cherry-pick or revert in progress. Undoable.
+    ///
+    /// # Errors
+    /// See [`Repo::sequencer_step`].
+    pub fn sequencer_step(&self, id: u32, step: SequencerStep) -> Result<Opened, Error> {
+        let open = self.get(id)?;
+        let git = self.git()?;
+        let (kind, oid) = open
+            .repo
+            .sequencer_head()?
+            .ok_or_else(|| Error::Refused("no cherry-pick or revert is in progress".into()))?;
+        let paths = open.repo.sequencer_paths(git, &oid)?;
+        let action = match (kind, step) {
+            (SequencerKind::CherryPick, SequencerStep::Continue) => "Continue cherry-pick",
+            (SequencerKind::CherryPick, SequencerStep::Abort) => "Abort cherry-pick",
+            (SequencerKind::Revert, SequencerStep::Continue) => "Continue revert",
+            (SequencerKind::Revert, SequencerStep::Abort) => "Abort revert",
+        };
+        self.write_destructive(id, action, &paths, |repo, git| {
+            repo.sequencer_step(git, step)
+        })
+    }
+
+    /// Saves working-copy changes into a new stash; undoable with Ctrl+Z.
+    ///
+    /// # Errors
+    /// See [`Repo::stash_save`].
+    pub fn stash_save(
+        &self,
+        id: u32,
+        message: Option<&str>,
+        include_untracked: bool,
+    ) -> Result<Opened, Error> {
+        let open = self.get(id)?;
+        let paths = open.repo.stash_save_paths(include_untracked)?;
+        let action = match message.map(str::trim).filter(|m| !m.is_empty()) {
+            Some(m) => format!("Stash \"{m}\""),
+            None => "Stash changes".into(),
+        };
+        self.write_destructive(id, &action, &paths, |repo, git| {
+            repo.stash_save(git, message, include_untracked)
+        })
+    }
+
+    /// Applies `stash@{index}` to the working copy; undoable with Ctrl+Z.
+    ///
+    /// # Errors
+    /// See [`Repo::stash_apply`].
+    pub fn stash_apply(&self, id: u32, index: usize) -> Result<Opened, Error> {
+        let open = self.get(id)?;
+        let paths = open.repo.stash_paths(index)?;
+        let action = format!("Apply stash@{{{index}}}");
+        self.write_destructive(id, &action, &paths, |repo, git| {
+            repo.stash_apply(git, index)
+        })
+    }
+
+    /// Applies `stash@{index}` and removes it on success; undoable with Ctrl+Z.
+    ///
+    /// # Errors
+    /// See [`Repo::stash_pop`].
+    pub fn stash_pop(&self, id: u32, index: usize) -> Result<Opened, Error> {
+        let open = self.get(id)?;
+        let paths = open.repo.stash_paths(index)?;
+        let action = format!("Pop stash@{{{index}}}");
+        self.write_destructive(id, &action, &paths, |repo, git| repo.stash_pop(git, index))
+    }
+
+    /// Drops `stash@{index}`; undoable with Ctrl+Z.
+    ///
+    /// # Errors
+    /// See [`Repo::stash_drop`].
+    pub fn stash_drop(&self, id: u32, index: usize) -> Result<Opened, Error> {
+        let action = format!("Drop stash@{{{index}}}");
+        self.write(id, &action, |repo, git| repo.stash_drop(git, index))
+    }
+
     /// Fetches every remote of repo `id`, reporting progress, then refreshes.
     /// [`Session::cancel`] stops it. Not recorded in the op log: it only moves
     /// remote-tracking refs.
     ///
     /// # Errors
-    /// [`Error::Refused`] when a fetch is already running, [`Error::Cancelled`],
-    /// or git's error.
+    /// [`Error::Refused`] when a remote task is already running,
+    /// [`Error::Cancelled`], or git's error.
     pub fn fetch(&self, id: u32, mut on_progress: impl FnMut(Progress)) -> Result<Opened, Error> {
         let open = self.get(id)?;
         let git = self.git()?;
+        self.run_task(id, |cancel| open.repo.fetch(git, &mut on_progress, cancel))?;
+        self.refresh(id)
+    }
+
+    /// Fetches the current branch's upstream remote and integrates changes using
+    /// `strategy`. Honouring `pull.rebase` / `pull.ff` (defaulting to fast-forward
+    /// only) when `strategy` is [`PullStrategy::Auto`]. Undoable locally.
+    ///
+    /// # Errors
+    /// [`Error::Refused`], [`Error::Cancelled`], or git's error.
+    pub fn pull(
+        &self,
+        id: u32,
+        strategy: PullStrategy,
+        remember: bool,
+        mut on_progress: impl FnMut(Progress),
+    ) -> Result<PullResult, Error> {
+        let open = self.get(id)?;
+        let git = self.git()?;
+        if open.repo.merge_state(git)?.is_some()
+            || open.repo.rebase_state(git)?.is_some()
+            || open.repo.sequencer_head()?.is_some()
+        {
+            return Err(Error::Refused(
+                "finish or abort the operation in progress first".into(),
+            ));
+        }
+        let target = open.repo.pull_target()?;
+        self.run_task(id, |cancel| {
+            open.repo
+                .fetch_remote(git, target.remote.as_deref(), &mut on_progress, cancel)
+        })?;
+        if remember && matches!(strategy, PullStrategy::Merge | PullStrategy::Rebase) {
+            open.repo
+                .set_pull_rebase(git, strategy == PullStrategy::Rebase)?;
+        }
+        let effective = match strategy {
+            PullStrategy::Auto => open.repo.configured_pull_strategy(git)?,
+            other => other,
+        };
+        let (ahead, behind) = match open.repo.upstream_counts(&target.upstream_full) {
+            Ok(counts) => counts,
+            Err(e) => {
+                let _ = self.refresh(id);
+                return Err(e);
+            }
+        };
+        if behind == 0 {
+            return Ok(PullResult {
+                opened: self.refresh(id)?,
+                outcome: PullOutcome::UpToDate,
+            });
+        }
+        if effective == PullStrategy::FfOnly && ahead > 0 {
+            return Ok(PullResult {
+                opened: self.refresh(id)?,
+                outcome: PullOutcome::Diverged {
+                    ahead,
+                    behind,
+                    upstream: target.upstream_short,
+                },
+            });
+        }
+        if ahead == 0 || effective == PullStrategy::FfOnly {
+            let paths = open.repo.merge_paths(git, &target.upstream_short)?;
+            let action = format!("Pull {}", target.upstream_short);
+            let opened = match self.write_destructive(id, &action, &paths, |repo, git| {
+                repo.fast_forward(git, &target.upstream_short)
+            }) {
+                Ok(o) => o,
+                Err(e) => {
+                    let _ = self.refresh(id);
+                    return Err(e);
+                }
+            };
+            return Ok(PullResult {
+                opened,
+                outcome: PullOutcome::FastForwarded,
+            });
+        }
+        match effective {
+            PullStrategy::Merge => {
+                let paths = open.repo.merge_paths(git, &target.upstream_short)?;
+                let action = format!("Pull (merge) {}", target.upstream_short);
+                let mut outcome = PullOutcome::Merged;
+                let opened = match self.write_destructive(id, &action, &paths, |repo, git| {
+                    if repo.merge(git, &target.upstream_short)? == MergeOutcome::Conflicts {
+                        outcome = PullOutcome::Conflicts;
+                    }
+                    Ok(())
+                }) {
+                    Ok(o) => o,
+                    Err(e) => {
+                        let _ = self.refresh(id);
+                        return Err(e);
+                    }
+                };
+                Ok(PullResult { opened, outcome })
+            }
+            PullStrategy::Rebase => {
+                let paths = open.repo.rebase_paths(git, &target.upstream_short)?;
+                let action = format!("Pull (rebase) {}", target.upstream_short);
+                let mut outcome = PullOutcome::Rebased;
+                let opened = match self.write_destructive(id, &action, &paths, |repo, git| {
+                    if repo.rebase(git, &target.upstream_short)? == RebaseOutcome::Stopped {
+                        outcome = PullOutcome::Conflicts;
+                    }
+                    Ok(())
+                }) {
+                    Ok(o) => o,
+                    Err(e) => {
+                        let _ = self.refresh(id);
+                        return Err(e);
+                    }
+                };
+                Ok(PullResult { opened, outcome })
+            }
+            PullStrategy::Auto | PullStrategy::FfOnly => unreachable!(),
+        }
+    }
+
+    /// Pushes `branch` to `remote`'s `remote_branch`, reporting progress.
+    /// Force pushes strictly use `--force-with-lease`. Not recorded in the op log
+    /// because pushes cannot be undone remotely.
+    ///
+    /// # Errors
+    /// [`Error::Refused`], [`Error::Cancelled`], or git's error.
+    #[allow(clippy::too_many_arguments)]
+    pub fn push(
+        &self,
+        id: u32,
+        remote: &str,
+        branch: &str,
+        remote_branch: &str,
+        set_upstream: bool,
+        force_with_lease: bool,
+        mut on_progress: impl FnMut(Progress),
+    ) -> Result<Opened, Error> {
+        let open = self.get(id)?;
+        let git = self.git()?;
+        self.run_task(id, |cancel| {
+            open.repo.push(
+                git,
+                remote,
+                branch,
+                remote_branch,
+                set_upstream,
+                force_with_lease,
+                &mut on_progress,
+                cancel,
+            )
+        })?;
+        self.refresh_inner(id, set_upstream)
+    }
+
+    /// Deletes `branch` on `remote`. Irreversible remotely.
+    ///
+    /// # Errors
+    /// See [`Repo::delete_remote_branch`].
+    pub fn delete_remote_branch(
+        &self,
+        id: u32,
+        remote: &str,
+        branch: &str,
+    ) -> Result<Opened, Error> {
+        let open = self.get(id)?;
+        open.repo
+            .delete_remote_branch(self.git()?, remote, branch)?;
+        self.refresh(id)
+    }
+
+    fn run_task<T>(
+        &self,
+        id: u32,
+        f: impl FnOnce(&Cancel) -> Result<T, Error>,
+    ) -> Result<T, Error> {
         let cancel = Cancel::default();
         {
             let mut tasks = self.tasks.lock().expect("task lock poisoned");
             if tasks.contains_key(&id) {
-                return Err(Error::Refused("a fetch is already running".into()));
+                return Err(Error::Refused(
+                    "a remote operation is already running".into(),
+                ));
             }
             tasks.insert(id, cancel.clone());
         }
-        let result = open.repo.fetch(git, &mut on_progress, &cancel);
+        let result = f(&cancel);
         self.tasks.lock().expect("task lock poisoned").remove(&id);
-        result?;
-        self.refresh(id)
+        result
     }
 
-    /// Cancels repo `id`'s running fetch. Returns whether one was running.
+    /// Cancels repo `id`'s running remote task. Returns whether one was running.
     pub fn cancel(&self, id: u32) -> bool {
         match self.tasks.lock().expect("task lock poisoned").get(&id) {
             Some(cancel) => {

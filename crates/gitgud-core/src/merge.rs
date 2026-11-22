@@ -174,6 +174,11 @@ impl Repo {
         if self.rebasing() {
             return Err(Error::Refused("finish or abort the rebase first".into()));
         }
+        if self.sequencer_head()?.is_some() {
+            return Err(Error::Refused(
+                "finish or abort the operation in progress first".into(),
+            ));
+        }
         if self.merge_head()?.is_some() {
             return Err(Error::Refused("a merge is already in progress".into()));
         }

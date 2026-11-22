@@ -37,7 +37,8 @@ export type RefLabel =
   | { kind: "head" }
   | { kind: "branch"; name: string; current: boolean }
   | { kind: "remote"; name: string }
-  | { kind: "tag"; name: string };
+  | { kind: "tag"; name: string }
+  | { kind: "stash"; name: string };
 
 export interface Segment {
   from: number;
@@ -66,6 +67,8 @@ export interface Row {
   after?: string | null;
   /** On a plan preview: a commit the plan replaces. */
   faded?: boolean;
+  /** Stash index (`stash@{n}`) when this row is a stash. */
+  stash?: number;
   layout: RowLayout;
 }
 
@@ -285,6 +288,70 @@ export interface PlanPreview {
   rows: number;
 }
 
+export type PullStrategy = "auto" | "ffOnly" | "merge" | "rebase";
+
+export type PullOutcome =
+  | { kind: "upToDate" }
+  | { kind: "fastForwarded" }
+  | { kind: "merged" }
+  | { kind: "rebased" }
+  | { kind: "conflicts" }
+  | { kind: "diverged"; ahead: number; behind: number; upstream: string };
+
+export interface PullResult {
+  opened: Opened;
+  outcome: PullOutcome;
+}
+
+export interface PushCommit {
+  shortId: string;
+  subject: string;
+}
+
+export interface PushInfo {
+  branch: string;
+  remote: string | null;
+  remoteBranch: string;
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+  needsForce: boolean;
+  commits: PushCommit[];
+  remotes: string[];
+  prUrl: string | null;
+}
+
+export type ResetMode = "soft" | "mixed" | "hard";
+
+export type SequencerKind = "cherryPick" | "revert";
+
+export interface SequencerState {
+  kind: SequencerKind;
+  commit: string;
+  shortId: string;
+  subject: string;
+  message: string;
+  conflicts: Conflict[];
+}
+
+export type SequencerStep = "continue" | "abort";
+
+export interface StashEntry {
+  index: number;
+  id: string;
+  shortId: string;
+  message: string;
+  branch: string;
+  time: number;
+  parentId: string;
+}
+
+export interface CommitOptions {
+  amend?: boolean;
+  signoff?: boolean;
+  noVerify?: boolean;
+}
+
 /** Staged: HEAD → index. Unstaged: index → work tree. */
 export type Side = "staged" | "unstaged";
 
@@ -324,9 +391,46 @@ export interface Commands {
   restore_to: { args: { id: number; entry: number }; result: Reverted };
   restore_files: { args: { id: number; entry: number }; result: Opened };
   cancel_fetch: { args: { id: number }; result: boolean };
+  cancel_task: { args: { id: number }; result: boolean };
+  pull: { args: { id: number; strategy: PullStrategy; remember?: boolean }; result: PullResult };
+  push_info: { args: { id: number; remote?: string | null }; result: PushInfo };
+  push: {
+    args: {
+      id: number;
+      remote: string;
+      branch: string;
+      remoteBranch?: string | null;
+      setUpstream: boolean;
+      forceWithLease: boolean;
+    };
+    result: Opened;
+  };
+  delete_remote_branch: { args: { id: number; remote: string; branch: string }; result: Opened };
+  create_branch: { args: { id: number; name: string; at?: string | null; checkout: boolean }; result: Opened };
+  rename_branch: { args: { id: number; old: string; new: string }; result: Opened };
+  delete_branch: { args: { id: number; name: string; force: boolean }; result: Opened };
+  set_upstream: { args: { id: number; branch: string; upstream: string | null }; result: Opened };
+  checkout_remote: { args: { id: number; remoteBranch: string; localName: string }; result: Opened };
   stage: { args: { id: number; paths: string[] }; result: Opened };
   unstage: { args: { id: number; paths: string[] }; result: Opened };
-  commit: { args: { id: number; message: string }; result: Opened };
+  commit: { args: { id: number; message: string; amend?: boolean; signoff?: boolean; noVerify?: boolean }; result: Opened };
+  head_commit_message: { args: { id: number }; result: string | null };
+  reset: { args: { id: number; target: string; mode: ResetMode }; result: Opened };
+  predict_cherry_pick: { args: { id: number; commit: string }; result: string[] };
+  predict_revert: { args: { id: number; commit: string }; result: string[] };
+  cherry_pick: { args: { id: number; commit: string }; result: Opened };
+  revert_commit: { args: { id: number; commit: string }; result: Opened };
+  sequencer_state: { args: { id: number }; result: SequencerState | null };
+  sequencer_step: { args: { id: number; step: SequencerStep }; result: Opened };
+  stashes: { args: { id: number }; result: StashEntry[] };
+  stash_detail: { args: { id: number; index: number }; result: CommitDetail };
+  stash_file_diff: { args: { id: number; index: number; path: string }; result: FileDiff };
+  stash_save: { args: { id: number; message?: string | null; includeUntracked: boolean }; result: Opened };
+  stash_apply: { args: { id: number; index: number }; result: Opened };
+  stash_pop: { args: { id: number; index: number }; result: Opened };
+  stash_drop: { args: { id: number; index: number }; result: Opened };
+  pr_url: { args: { id: number; branch: string }; result: string | null };
+  open_external_url: { args: { url: string }; result: null };
   predict_merge: { args: { id: number; branch: string }; result: string[] };
   merge: { args: { id: number; branch: string }; result: Opened };
   merge_state: { args: { id: number }; result: MergeState | null };
@@ -384,6 +488,46 @@ export const checkout = (id: number, branch: string) => call("checkout", { id, b
 export const restoreTo = (id: number, entry: number) => call("restore_to", { id, entry });
 export const restoreFiles = (id: number, entry: number) => call("restore_files", { id, entry });
 export const cancelFetch = (id: number) => call("cancel_fetch", { id });
+export const cancelTask = (id: number) => call("cancel_task", { id });
+export const pull = (id: number, strategy: PullStrategy, remember = false) => call("pull", { id, strategy, remember });
+export const pushInfo = (id: number, remote?: string | null) => call("push_info", { id, remote: remote ?? null });
+export const push = (
+  id: number,
+  remote: string,
+  branch: string,
+  remoteBranch: string | null,
+  setUpstream: boolean,
+  forceWithLease: boolean,
+) => call("push", { id, remote, branch, remoteBranch, setUpstream, forceWithLease });
+export const deleteRemoteBranch = (id: number, remote: string, branch: string) =>
+  call("delete_remote_branch", { id, remote, branch });
+export const createBranch = (id: number, name: string, at: string | null, checkout: boolean) =>
+  call("create_branch", { id, name, at, checkout });
+export const renameBranch = (id: number, oldName: string, newName: string) =>
+  call("rename_branch", { id, old: oldName, new: newName });
+export const deleteBranch = (id: number, name: string, force: boolean) => call("delete_branch", { id, name, force });
+export const setUpstream = (id: number, branch: string, upstream: string | null) =>
+  call("set_upstream", { id, branch, upstream });
+export const checkoutRemote = (id: number, remoteBranch: string, localName: string) =>
+  call("checkout_remote", { id, remoteBranch, localName });
+export const headCommitMessage = (id: number) => call("head_commit_message", { id });
+export const resetRepo = (id: number, target: string, mode: ResetMode) => call("reset", { id, target, mode });
+export const predictCherryPick = (id: number, commit: string) => call("predict_cherry_pick", { id, commit });
+export const predictRevert = (id: number, commit: string) => call("predict_revert", { id, commit });
+export const cherryPick = (id: number, commit: string) => call("cherry_pick", { id, commit });
+export const revertCommit = (id: number, commit: string) => call("revert_commit", { id, commit });
+export const sequencerState = (id: number) => call("sequencer_state", { id });
+export const sequencerStep = (id: number, step: SequencerStep) => call("sequencer_step", { id, step });
+export const stashes = (id: number) => call("stashes", { id });
+export const stashDetail = (id: number, index: number) => call("stash_detail", { id, index });
+export const stashFileDiff = (id: number, index: number, path: string) => call("stash_file_diff", { id, index, path });
+export const stashSave = (id: number, message: string | null, includeUntracked: boolean) =>
+  call("stash_save", { id, message, includeUntracked });
+export const stashApply = (id: number, index: number) => call("stash_apply", { id, index });
+export const stashPop = (id: number, index: number) => call("stash_pop", { id, index });
+export const stashDrop = (id: number, index: number) => call("stash_drop", { id, index });
+export const prUrl = (id: number, branch: string) => call("pr_url", { id, branch });
+export const openExternalUrl = (url: string) => call("open_external_url", { url });
 /** Files merging `branch` would leave conflicted; touches nothing. */
 export const predictMerge = (id: number, branch: string) => call("predict_merge", { id, branch });
 /** Clean merges commit at once; undoable with Ctrl+Z either way. */
@@ -405,12 +549,21 @@ export interface Progress {
   total: number;
 }
 
+export type TaskOp = "fetch" | "pull" | "push";
+
+/** Calls `handler` with each progress line of a running fetch, pull or push. */
+export const onTaskProgress = (handler: (id: number, op: TaskOp, progress: Progress) => void) =>
+  listen<{ id: number; op: TaskOp; progress: Progress }>("task-progress", (e) =>
+    handler(e.payload.id, e.payload.op, e.payload.progress),
+  );
+
 /** Calls `handler` with each progress line of a running fetch. Resolves to an unsubscribe. */
 export const onFetchProgress = (handler: (id: number, progress: Progress) => void) =>
   listen<{ id: number; progress: Progress }>("fetch-progress", (e) => handler(e.payload.id, e.payload.progress));
 export const stage = (id: number, paths: string[]) => call("stage", { id, paths });
 export const unstage = (id: number, paths: string[]) => call("unstage", { id, paths });
-export const commit = (id: number, message: string) => call("commit", { id, message });
+export const commit = (id: number, message: string, options: CommitOptions = {}) =>
+  call("commit", { id, message, ...options });
 
 /** Calls `handler` with a repo id when its files or refs change outside gitgud. Resolves to an unsubscribe. */
 export const onRepoChanged = (handler: (id: number) => void) => listen<number>("repo-changed", (e) => handler(e.payload));

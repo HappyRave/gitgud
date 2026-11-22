@@ -6,18 +6,20 @@ gitgud is a desktop Git GUI. The repo was wiped on 2026-11-21 for a fresh start;
 prototype is still in git history (`5f1257d` and before). Built so far: locating the system git;
 opening a repo (folder picker, or `GITGUD_OPEN=<path>` at launch); the commit graph in the centre
 (topo order, lanes laid out in Rust, canvas lane column, rows fetched on scroll, WIP row on top);
-a side pane with the working copy (file and hunk stage / unstage, working-copy diffs, commit box)
-or, when a commit row is selected, that commit's message, files and text diff; live refresh on
-outside changes; the op log with Ctrl+Z / Ctrl+Y for every write; discard of files and hunks,
+a side pane with the working copy (file and hunk stage / unstage, working-copy diffs, commit box with `⋯` options for amend / `--signoff` / `--no-verify`)
+or, when a commit row or stash is selected, its message, files and text diff (`CommitDetail` / `StashDetail`); live refresh on
+outside changes; the op log with Ctrl+Z / Ctrl+Y for every local write; discard of files and hunks,
 undoable through work-tree snapshots; the op-log panel (Ctrl+3, from the R1 state 6 mock:
 Undo / Restore per entry, "Restore these files" for discards); a sidebar from the R1-A mock
-(branches in folders with ↑↓ against upstream, remotes, op-log entry; double-click checks a
-branch out, undoable); fetch with progress and cancel; merge (right-click a branch → dialog with
+(branches in folders with ↑↓ against upstream + `+` / create / rename (`F2`) / delete (`Del`, undoable) / set upstream / checkout remote, remotes, stashes section, op-log entry; double-click checks a
+branch out, undoable); fetch, pull (`pull.rebase` / `pull.ff` / divergence strategy dialog), and push (`--force-with-lease`, `--set-upstream`, Done-panel Force-push) with progress and cancel; open / create PR links in browser (GitHub and Bitbucket Cloud URL formats); detached HEAD banner with "Create branch…"; merge (right-click a branch → dialog with
 conflict prediction; a stopped merge shows the R4-A banner and conflict view: list by kind,
 three-column text merge with an arrow per hunk and "use both", pick-a-side for binaries and
 one-sided deletes, summary with the prefilled message; every pick, abort and the commit undoable);
 rebase onto a branch (same menu → dialog predicting each step; a stopped step shows the R1 state 1
 banner with Continue / Skip commit / Abort over the same conflict view; every step undoable);
+cherry-pick and revert commit with conflict prediction and stopped `SequencerBanner` + conflict resolution;
+reset branch (soft / mixed / hard, undoable); stash save / apply / pop / drop with dashed graph rows;
 the image diff (side by side / swipe / onion) for binary images in staging, commits and the
 conflict side picker; the R2-A history plan (Shift+E or right-click a commit → plan in the
 inspector, P/R/E/S/F/D, Alt+↑↓ or drag, fixup!/squash! applied on open, onto chip, "Update
@@ -25,14 +27,12 @@ dependent branches", per-step prediction with "Show the conflict" / "Keep the ol
 anyway", dashed after rows over faded commits in the graph, Done panel; an Edit stop keeps the
 normal layout under the R1 banner) and the single-commit quick edits (R on the tip renames inline,
 R on an older commit opens the plan, F / D apply at once, all undoable); Ctrl+F find in the history (subject, author, hash prefix, ref name); the
-working-copy keys of spec §5 plus Ctrl+2 / F6 / Ctrl+C on a commit; the ultrawide inspector
+working-copy keys of spec §5 plus Ctrl+2 / F6 / Ctrl+C / Ctrl+Shift+L / Ctrl+Shift+P / Ctrl+B; the ultrawide inspector
 split (≥ 2400 px); the strip's upstream / last-fetch line. Styling follows the lab
 mocks (tokens in `src/app.css`, light and dark); the lane colours are the mock's, never given a
-design round. Not yet: pull / push (their dialogs need a design round, O3; so the Done panel has no
-"Force-push with lease" yet), branch create / rename / delete (dialogs not drawn), history
+design round. Not yet: multi-repo Library & tabs (R3-A), command palette (`Ctrl+K`) / shortcut sheet (`?`) / line staging / syntax+intraline diff / plain-English error banner / settings modal, history
 edits over merge commits or the root commit (refused for now, Max 2026-11-22), stacks and PR
-links per level, the faded "still on origin" commits after Done, the Unity property table and Smart Merge setup
-(R4 v1.1 / state 4), stash, locks, proposals, the shortcut sheet.
+links per stack level, the faded "still on origin" commits after Done, Unity Smart Merge / `.meta` guard / LFS locks, proposals.
 Update this file as pieces land.
 
 The approved product spec is `docs/spec.md` (2026-11-21); design verdicts are in `docs/lab/decisions.md`.

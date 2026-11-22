@@ -9,8 +9,13 @@
     onRepoChanged,
     openRepo,
     pickFolder,
-    cancelFetch,
+    cancelTask,
     checkout,
+    checkoutRemote,
+    cherryPick,
+    createBranch,
+    deleteBranch,
+    deleteRemoteBranch,
     discard,
     discardHunk,
     fetchRemotes,
@@ -18,10 +23,25 @@
     mergeAbort,
     mergeCommit,
     mergeState,
+    openExternalUrl,
+    prUrl,
+    pull,
+    push,
     rebase,
     rebaseState,
     rebaseStep,
+    renameBranch,
+    resetRepo,
+    revertCommit,
+    sequencerState,
+    sequencerStep,
+    setUpstream,
+    stashApply,
+    stashDrop,
+    stashPop,
+    stashSave,
     onFetchProgress,
+    onTaskProgress,
     opLog,
     redo,
     refreshRepo,
@@ -43,6 +63,7 @@
     quickEdit,
     rewordHead,
     runPlan,
+    type CommitOptions,
     type HistoryPlan,
     type PlanAction,
     type PlanPrediction,
@@ -53,20 +74,34 @@
     type OpEntry,
     type Opened,
     type Progress,
+    type PullStrategy,
     type RebaseState,
     type RebaseStep,
+    type ResetMode,
     type Row,
+    type SequencerState,
+    type SequencerStep,
     type Side,
     type Status,
+    type TaskOp,
   } from "$lib/api";
+  import BranchDialog from "$lib/components/BranchDialog.svelte";
+  import CherryPickDialog from "$lib/components/CherryPickDialog.svelte";
   import CommitDetail from "$lib/components/CommitDetail.svelte";
   import ConflictView from "$lib/components/ConflictView.svelte";
+  import DeleteBranchDialog from "$lib/components/DeleteBranchDialog.svelte";
   import FindBar from "$lib/components/FindBar.svelte";
   import Graph from "$lib/components/Graph.svelte";
   import MergeBanner from "$lib/components/MergeBanner.svelte";
   import MergeDialog from "$lib/components/MergeDialog.svelte";
+  import PullStrategyDialog from "$lib/components/PullStrategyDialog.svelte";
+  import PushDialog from "$lib/components/PushDialog.svelte";
   import RebaseBanner from "$lib/components/RebaseBanner.svelte";
   import RebaseDialog from "$lib/components/RebaseDialog.svelte";
+  import ResetDialog from "$lib/components/ResetDialog.svelte";
+  import SequencerBanner from "$lib/components/SequencerBanner.svelte";
+  import StashDetail from "$lib/components/StashDetail.svelte";
+  import StashDialog from "$lib/components/StashDialog.svelte";
   import WorkingCopy from "$lib/components/WorkingCopy.svelte";
   import OpLogPanel from "$lib/components/OpLogPanel.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
@@ -74,7 +109,7 @@
   import PlanDone, { type PlanResult } from "$lib/components/PlanDone.svelte";
   import PlanEditor from "$lib/components/PlanEditor.svelte";
   import { describe, steps, type PlanRow } from "$lib/plan/plan";
-  import { inTextField, isFetchKey, isFindKey, isSplitKey, opLogKey, paneKey } from "$lib/keys";
+  import { inTextField, isFetchKey, isFindKey, isNewBranchKey, isPullKey, isPushKey, isSplitKey, opLogKey, paneKey } from "$lib/keys";
   import { toggleSplit } from "$lib/prefs.svelte";
   import { mergeMessage } from "$lib/merge/resolve";
   import { middleTruncate } from "$lib/text";
@@ -88,10 +123,12 @@
   let loading = $state(false);
   /** The commit shown in the side pane; `null` shows the working copy. */
   let selectedCommit = $state<string | null>(null);
+  let selectedStash = $state<number | null>(null);
   let selectedRow = $state<number | null>(null);
 
   function closeDetail() {
     selectedCommit = null;
+    selectedStash = null;
     selectedRow = null;
   }
 
@@ -114,7 +151,9 @@
   let rebasing = $state<RebaseState | null>(null);
   /** The branch the rebase dialog would rebase onto. */
   let rebaseAsk = $state<string | null>(null);
-  /** A merge or a rebase stopped on conflicts: the conflict view replaces graph and inspector. */
+  /** A cherry-pick or revert stopped on conflicts. */
+  let sequencer = $state<SequencerState | null>(null);
+  /** A merge, rebase, cherry-pick or revert stopped on conflicts: the conflict view replaces graph and inspector. */
   const conflicted = $derived<MergeState | null>(
     merging ??
       (rebasing && !rebasing.editing
@@ -123,7 +162,13 @@
             message: "",
             conflicts: rebasing.conflicts,
           }
-        : null),
+        : sequencer
+          ? {
+              theirs: sequencer.shortId,
+              message: sequencer.message,
+              conflicts: sequencer.conflicts,
+            }
+          : null),
   );
 
   /** The history plan being edited (R2-A); the inspector shows it and the graph its preview. */
@@ -135,7 +180,31 @@
   /** The tip row being reworded inline (R on the tip). */
   let renaming = $state<{ index: number; id: string } | null>(null);
   let rowMenu = $state<{ row: Row; x: number; y: number } | null>(null);
-  const dialogOpen = $derived(!!mergeAsk || !!rebaseAsk || !!rowMenu);
+  let pullAsk = $state<{ ahead: number; behind: number; upstream: string } | null>(null);
+  let pushAsk = $state<{ initialForce: boolean } | null>(null);
+  let branchAsk = $state<{
+    mode: "create" | "rename" | "checkoutRemote";
+    currentName?: string;
+    at?: string | null;
+    atLabel?: string | null;
+    remoteBranch?: string | null;
+  } | null>(null);
+  let deleteAsk = $state<{ kind: "remote" | "forceLocal"; branch: string; remote?: string | null } | null>(null);
+  let resetAsk = $state<{ id: string; shortId: string; subject: string } | null>(null);
+  let sequencerAsk = $state<{ kind: "cherryPick" | "revert"; id: string; shortId: string; subject: string } | null>(null);
+  let stashAsk = $state(false);
+  const dialogOpen = $derived(
+    !!mergeAsk ||
+      !!rebaseAsk ||
+      !!rowMenu ||
+      !!pullAsk ||
+      !!pushAsk ||
+      !!branchAsk ||
+      !!deleteAsk ||
+      !!resetAsk ||
+      !!sequencerAsk ||
+      stashAsk,
+  );
 
   const branchName = $derived(
     !status ? "" : status.head.kind === "detached" ? status.head.id.slice(0, 7) : status.head.name,
@@ -198,15 +267,15 @@
   let findHits = $state<ReadonlySet<number> | null>(null);
   let workingCopy = $state<ReturnType<typeof WorkingCopy> | null>(null);
 
-  type RepoState = [Status, MergeState | null, RebaseState | null];
+  type RepoState = [Status, MergeState | null, RebaseState | null, SequencerState | null];
 
-  /** Status, merge and rebase state, read together after every change. */
+  /** Status, merge, rebase and sequencer state, read together after every change. */
   function read(id: number): Promise<RepoState> {
-    return Promise.all([repoStatus(id), mergeState(id), rebaseState(id)]);
+    return Promise.all([repoStatus(id), mergeState(id), rebaseState(id), sequencerState(id)]);
   }
 
   /** Shows a (re)opened repo. A new or rebuilt graph drops the selection with its rows. */
-  function show(next: Opened, [nextStatus, nextMerge, nextRebase]: RepoState) {
+  function show(next: Opened, [nextStatus, nextMerge, nextRebase, nextSequencer]: RepoState) {
     if (next.id !== opened?.id || next.graphVersion !== opened.graphVersion) {
       closeDetail();
     }
@@ -214,7 +283,8 @@
       selectedFile = null;
     }
     const sameRebaseStep = !!nextRebase && nextRebase.step === rebasing?.step;
-    if ((!nextMerge && !sameRebaseStep) || next.id !== opened?.id) {
+    const sameSequencer = !!nextSequencer && nextSequencer.commit === sequencer?.commit;
+    if ((!nextMerge && !sameRebaseStep && !sameSequencer) || next.id !== opened?.id) {
       resolvedHow.clear();
       messageEdit = null;
     }
@@ -225,6 +295,7 @@
     status = nextStatus;
     merging = nextMerge;
     rebasing = nextRebase;
+    sequencer = nextSequencer;
     revision++;
   }
 
@@ -290,15 +361,15 @@
     });
   }
 
-  /** The running fetch: `null` when idle, its latest progress line once git prints one. */
-  let fetching = $state<{ progress: Progress | null } | null>(null);
+  /** The running remote task (fetch / pull / push): `null` when idle. */
+  let fetching = $state<{ op: TaskOp; progress: Progress | null } | null>(null);
 
   async function startFetch() {
     if (!opened || fetching) {
       return;
     }
     const id = opened.id;
-    fetching = { progress: null };
+    fetching = { op: "fetch", progress: null };
     error = null;
     try {
       const next = await fetchRemotes(id);
@@ -309,6 +380,84 @@
     } catch (err) {
       if (String(err) === "cancelled") {
         notice = "Fetch cancelled";
+      } else {
+        error = String(err);
+      }
+    } finally {
+      fetching = null;
+    }
+  }
+
+  async function startPull(strategy: PullStrategy, remember: boolean) {
+    if (!opened || fetching) {
+      return;
+    }
+    pullAsk = null;
+    const id = opened.id;
+    fetching = { op: "pull", progress: null };
+    error = null;
+    try {
+      const res = await pull(id, strategy, remember);
+      if (opened?.id !== id) {
+        return;
+      }
+      show(res.opened, await read(id));
+      switch (res.outcome.kind) {
+        case "upToDate":
+          notice = "Already up to date";
+          break;
+        case "fastForwarded":
+          notice = "Pulled (fast-forward) · Ctrl+Z undoes it";
+          break;
+        case "merged":
+          notice = "Pulled (merged) · Ctrl+Z undoes it";
+          break;
+        case "rebased":
+          notice = "Pulled (rebased) · Ctrl+Z undoes it";
+          break;
+        case "conflicts":
+          notice = "Pull stopped on conflicts";
+          break;
+        case "diverged":
+          pullAsk = { ahead: res.outcome.ahead, behind: res.outcome.behind, upstream: res.outcome.upstream };
+          break;
+      }
+    } catch (err) {
+      if (String(err) === "cancelled") {
+        notice = "Pull cancelled";
+      } else {
+        error = String(err);
+      }
+    } finally {
+      fetching = null;
+    }
+  }
+
+  async function startPush(opts: {
+    remote: string;
+    branch: string;
+    remoteBranch: string;
+    setUpstream: boolean;
+    forceWithLease: boolean;
+  }) {
+    if (!opened || fetching) {
+      return;
+    }
+    pushAsk = null;
+    const id = opened.id;
+    fetching = { op: "push", progress: null };
+    error = null;
+    try {
+      const next = await push(id, opts.remote, opts.branch, opts.remoteBranch, opts.setUpstream, opts.forceWithLease);
+      if (opened?.id === id) {
+        show(next, await read(id));
+        notice = opts.forceWithLease
+          ? `Force-pushed ${opts.branch} to ${opts.remote}/${opts.remoteBranch}`
+          : `Pushed ${opts.branch} to ${opts.remote}/${opts.remoteBranch}`;
+      }
+    } catch (err) {
+      if (String(err) === "cancelled") {
+        notice = "Push cancelled";
       } else {
         error = String(err);
       }
@@ -475,6 +624,27 @@
     { label: isTip(row) ? "Reword" : "Reword…", hint: "R", disabled: busy, run: () => editRow(row, "reword") },
     { label: "Fixup into parent", hint: "F", disabled: busy, run: () => editRow(row, "fixup") },
     { label: "Drop", hint: "D", disabled: busy, run: () => editRow(row, "drop") },
+    {
+      label: "New branch here…",
+      hint: "Ctrl+B",
+      disabled: busy,
+      run: () => (branchAsk = { mode: "create", at: row.id, atLabel: `${row.shortId} "${row.subject}"` }),
+    },
+    {
+      label: "Cherry-pick…",
+      disabled: busy || !!conflicted,
+      run: () => (sequencerAsk = { kind: "cherryPick", id: row.id, shortId: row.shortId, subject: row.subject }),
+    },
+    {
+      label: "Revert commit…",
+      disabled: busy || !!conflicted,
+      run: () => (sequencerAsk = { kind: "revert", id: row.id, shortId: row.shortId, subject: row.subject }),
+    },
+    {
+      label: `Reset ${branchName || "branch"} to here…`,
+      disabled: busy || status?.head.kind !== "branch",
+      run: () => (resetAsk = { id: row.id, shortId: row.shortId, subject: row.subject }),
+    },
     { label: "Copy hash", hint: "Ctrl+C", run: () => copyHash(row) },
   ];
 
@@ -482,6 +652,98 @@
     const done = { continue: "Rebase finished", skip: "Rebase finished", abort: "Rebase aborted · Ctrl+Z brings it back" }[step];
     if ((await write((id) => rebaseStep(id, step))) && !rebasing) {
       notice = done;
+    }
+  }
+
+  async function stepSequencer(step: SequencerStep) {
+    const verb = sequencer?.kind === "revert" ? "Revert" : "Cherry-pick";
+    const done = step === "continue" ? `${verb} finished · Ctrl+Z undoes it` : `${verb} aborted · Ctrl+Z brings it back`;
+    if ((await write((id) => sequencerStep(id, step))) && !sequencer) {
+      notice = done;
+    }
+  }
+
+  async function submitBranch(name: string, checkoutNew: boolean) {
+    const ask = branchAsk;
+    branchAsk = null;
+    if (!ask) {
+      return;
+    }
+    if (ask.mode === "create") {
+      await write((id) => createBranch(id, name, ask.at ?? null, checkoutNew), `Created ${name} · Ctrl+Z undoes it`);
+    } else if (ask.mode === "rename" && ask.currentName) {
+      await write((id) => renameBranch(id, ask.currentName!, name), `Renamed ${ask.currentName} to ${name} · Ctrl+Z undoes it`);
+    } else if (ask.mode === "checkoutRemote" && ask.remoteBranch) {
+      await write((id) => checkoutRemote(id, ask.remoteBranch!, name), `Checked out ${name} · Ctrl+Z undoes it`);
+    }
+  }
+
+  async function onDeleteBranch(branch: string, remote?: string) {
+    if (remote) {
+      deleteAsk = { kind: "remote", branch, remote };
+      return;
+    }
+    const ok = await write((id) => deleteBranch(id, branch, false), `Deleted ${branch} · Ctrl+Z undoes it`);
+    if (!ok && error?.includes("not fully merged")) {
+      error = null;
+      deleteAsk = { kind: "forceLocal", branch };
+    }
+  }
+
+  async function confirmDeleteBranch() {
+    const ask = deleteAsk;
+    deleteAsk = null;
+    if (!ask) {
+      return;
+    }
+    if (ask.kind === "remote" && ask.remote) {
+      await write((id) => deleteRemoteBranch(id, ask.remote!, ask.branch), `Deleted ${ask.remote}/${ask.branch}`);
+    } else {
+      await write((id) => deleteBranch(id, ask.branch, true), `Deleted ${ask.branch} · Ctrl+Z undoes it`);
+    }
+  }
+
+  async function runReset(mode: ResetMode) {
+    const target = resetAsk;
+    resetAsk = null;
+    if (!target) {
+      return;
+    }
+    await write((id) => resetRepo(id, target.id, mode), `Reset (${mode}) to ${target.shortId} · Ctrl+Z undoes it`);
+  }
+
+  async function runSequencer() {
+    const ask = sequencerAsk;
+    sequencerAsk = null;
+    if (!ask) {
+      return;
+    }
+    if (ask.kind === "cherryPick") {
+      const ok = await write((id) => cherryPick(id, ask.id));
+      if (ok && !sequencer) {
+        notice = `Cherry-picked ${ask.shortId} · Ctrl+Z undoes it`;
+      }
+    } else {
+      const ok = await write((id) => revertCommit(id, ask.id));
+      if (ok && !sequencer) {
+        notice = `Reverted ${ask.shortId} · Ctrl+Z undoes it`;
+      }
+    }
+  }
+
+  async function openPrForBranch(branch: string) {
+    if (!opened) {
+      return;
+    }
+    try {
+      const url = await prUrl(opened.id, branch);
+      if (url) {
+        await openExternalUrl(url);
+      } else {
+        notice = "No GitHub or Bitbucket remote found for this branch";
+      }
+    } catch (err) {
+      error = String(err);
     }
   }
 
@@ -509,6 +771,25 @@
       startFetch();
       return;
     }
+    if (isPullKey(event) && opened && !conflicted) {
+      event.preventDefault();
+      startPull("auto", false);
+      return;
+    }
+    if (isPushKey(event) && opened && status?.head.kind === "branch" && !conflicted) {
+      event.preventDefault();
+      pushAsk = { initialForce: false };
+      return;
+    }
+    if (isNewBranchKey(event) && opened && !conflicted) {
+      event.preventDefault();
+      branchAsk = {
+        mode: "create",
+        at: selectedCommit,
+        atLabel: selectedCommit ? selectedCommit.slice(0, 7) : null,
+      };
+      return;
+    }
     if (isSplitKey(event) && opened) {
       event.preventDefault();
       toggleSplit();
@@ -527,7 +808,7 @@
       cyclePanes(event.shiftKey ? -1 : 1);
       return;
     }
-    if (event.key === "Escape" && selectedCommit && !inTextField(event.target)) {
+    if (event.key === "Escape" && (selectedCommit || selectedStash !== null) && !inTextField(event.target)) {
       closeDetail();
       return;
     }
@@ -564,8 +845,8 @@
     );
   }
 
-  async function onCommit(message: string) {
-    if (!(await write((id) => commit(id, message)))) {
+  async function onCommit(message: string, options?: CommitOptions) {
+    if (!(await write((id) => commit(id, message, options)))) {
       throw new Error("commit failed");
     }
   }
@@ -606,7 +887,12 @@
       onRepoChanged(onOutsideChange),
       onFetchProgress((id, progress) => {
         if (fetching && opened?.id === id) {
-          fetching = { progress };
+          fetching = { ...fetching, progress };
+        }
+      }),
+      onTaskProgress((id, op, progress) => {
+        if (fetching && opened?.id === id) {
+          fetching = { op, progress };
         }
       }),
     ];
@@ -670,7 +956,16 @@
           <span class="ab">· rebasing</span>
         </span>
       {:else if status.head.kind === "detached"}
-        <span class="pill warn" title="Commits made here belong to no branch">⚠ Detached HEAD at {branchName}</span>
+        <span class="pill warn" title="Commits made here belong to no branch">
+          ⚠ Detached HEAD at {branchName}
+          <button
+            class="bare link"
+            disabled={busy}
+            onclick={() => (branchAsk = { mode: "create", at: null, atLabel: `detached HEAD (${branchName})` })}
+          >
+            Create branch…
+          </button>
+        </span>
       {:else}
         <span class="pill br" title="Current branch: {branchName}">
           <span aria-hidden="true">⎇</span>
@@ -682,6 +977,27 @@
         </span>
       {/if}
       <button disabled={!!fetching} title="Fetch all remotes (Ctrl+Shift+F)" onclick={startFetch}><span aria-hidden="true">↓</span> Fetch</button>
+      <button
+        disabled={!!fetching || busy || !!conflicted || !currentBranch?.upstream}
+        title={currentBranch?.upstream ? `Pull from ${currentBranch.upstream} (Ctrl+Shift+L)` : "No upstream configured"}
+        onclick={() => startPull("auto", false)}
+      >
+        <span aria-hidden="true">⇣</span> Pull{#if currentBranch?.behind}<span class="ab">↓{currentBranch.behind}</span>{/if}
+      </button>
+      <button
+        disabled={!!fetching || busy || !!conflicted || status.head.kind !== "branch"}
+        title="Push (Ctrl+Shift+P)"
+        onclick={() => (pushAsk = { initialForce: false })}
+      >
+        <span aria-hidden="true">⇡</span> Push{#if currentBranch?.ahead}<span class="ab">↑{currentBranch.ahead}</span>{/if}
+      </button>
+      <button
+        disabled={busy || !!conflicted || status.entries.length === 0}
+        title="Stash uncommitted changes"
+        onclick={() => (stashAsk = true)}
+      >
+        Stash…
+      </button>
       <span class="sp"></span>
       <button class="pill undo" disabled={busy} title="Undo the last action (Ctrl+Z)" onclick={() => revert("undo")}>
         <span aria-hidden="true">↶</span> Undo{lastAction ? `: ${lastAction}` : ""}
@@ -723,6 +1039,13 @@
         onskip={() => stepRebase("skip")}
         onabort={() => stepRebase("abort")}
       />
+    {:else if sequencer}
+      <SequencerBanner
+        {sequencer}
+        {busy}
+        oncontinue={() => stepSequencer("continue")}
+        onabort={() => stepSequencer("abort")}
+      />
     {/if}
     <div class="body" class:merging={!!conflicted}>
       <div class="contents" data-pane="sidebar">
@@ -732,10 +1055,26 @@
         {busy}
         bind:data={branchData}
         merging={!!conflicted}
-        oplogOpen={inspector === "oplog" && !selectedCommit}
+        {selectedStash}
+        oplogOpen={inspector === "oplog" && !selectedCommit && selectedStash === null}
         oncheckout={(branch) => write((id) => checkout(id, branch))}
         onmerge={(branch) => (mergeAsk = branch)}
         onrebase={(branch) => (rebaseAsk = branch)}
+        oncreatebranch={(at) => (branchAsk = { mode: "create", at: at ?? null, atLabel: at ?? null })}
+        onrenamebranch={(branch) => (branchAsk = { mode: "rename", currentName: branch })}
+        ondeletebranch={onDeleteBranch}
+        onsetupstream={(branch, upstream) =>
+          write((id) => setUpstream(id, branch, upstream), upstream ? `Tracking ${upstream}` : `Cleared upstream for ${branch}`)}
+        oncheckoutremote={(remoteBranch) => (branchAsk = { mode: "checkoutRemote", remoteBranch })}
+        onopenpr={openPrForBranch}
+        onstashselect={(idx) => {
+          selectedStash = idx;
+          selectedCommit = null;
+          planDone = null;
+        }}
+        onstashapply={(idx) => write((id) => stashApply(id, idx), `Applied stash@{${idx}} · Ctrl+Z undoes it`)}
+        onstashpop={(idx) => write((id) => stashPop(id, idx), `Popped stash@{${idx}} · Ctrl+Z undoes it`)}
+        onstashdrop={(idx) => write((id) => stashDrop(id, idx), `Dropped stash@{${idx}} · Ctrl+Z undoes it`)}
         onoplog={() => {
           inspector = inspector === "oplog" ? "working" : "oplog";
           closeDetail();
@@ -754,7 +1093,7 @@
       {/snippet}
       {#if conflicted}
         {@const repoId = opened.id}
-        {#snippet continueRebase()}
+        {#snippet continueOp()}
           {#if rebasing}
             <section class="pane" aria-label="Step resolved">
               <div class="ph">Step {rebasing.step} of {rebasing.total} resolved</div>
@@ -762,6 +1101,16 @@
                 <b>Every file of "{rebasing.subject}" is resolved</b>
                 <span>Continue commits it and applies the next {rebasing.total - rebasing.step || "no"} commit{rebasing.total - rebasing.step === 1 ? "" : "s"}.</span>
                 <span><button class="pri" disabled={busy} onclick={() => stepRebase("continue")}>Continue rebase</button></span>
+              </div>
+            </section>
+          {:else if sequencer}
+            {@const verb = sequencer.kind === "cherryPick" ? "cherry-pick" : "revert"}
+            <section class="pane" aria-label="Conflicts resolved">
+              <div class="ph">{sequencer.shortId} resolved</div>
+              <div class="empty">
+                <b>Every file of "{sequencer.subject}" is resolved</b>
+                <span>Continue commits the {verb}.</span>
+                <span><button class="pri" disabled={busy} onclick={() => stepSequencer("continue")}>Continue {verb}</button></span>
               </div>
             </section>
           {/if}
@@ -778,7 +1127,7 @@
           onresolveside={resolvePick}
           oncommit={commitMerge}
           children={inspector === "oplog" ? () => opLog(repoId) : undefined}
-          whenResolved={merging ? undefined : continueRebase}
+          whenResolved={merging ? undefined : continueOp}
         />
       {:else}
         <section class="pane center" aria-label="History" data-pane="graph">
@@ -811,7 +1160,13 @@
               bind:selected={selectedRow}
               onselect={(row) => {
                 if (!planning) {
-                  selectedCommit = row && !row.wip ? row.id : null;
+                  if (row && row.stash != null) {
+                    selectedStash = row.stash;
+                    selectedCommit = null;
+                  } else {
+                    selectedStash = null;
+                    selectedCommit = row && !row.wip ? row.id : null;
+                  }
                   planDone = null;
                 }
               }}
@@ -838,11 +1193,34 @@
                 oncancel={closePlan}
               />
             {/key}
+          {:else if selectedStash !== null}
+            {@const idx = selectedStash}
+            <StashDetail
+              repoId={opened.id}
+              index={idx}
+              {busy}
+              onapply={() => write((id) => stashApply(id, idx), `Applied stash@{${idx}} · Ctrl+Z undoes it`)}
+              onpop={() =>
+                write((id) => stashPop(id, idx), `Popped stash@{${idx}} · Ctrl+Z undoes it`).then((ok) => {
+                  if (ok) closeDetail();
+                })}
+              ondrop={() =>
+                write((id) => stashDrop(id, idx), `Dropped stash@{${idx}} · Ctrl+Z undoes it`).then((ok) => {
+                  if (ok) closeDetail();
+                })}
+              onclose={closeDetail}
+            />
           {:else if selectedCommit}
             <CommitDetail repoId={opened.id} commit={selectedCommit} onclose={closeDetail} />
           {:else if planDone}
             {@const repoId = opened.id}
-            <PlanDone done={planDone} {busy} onundo={() => revert("undo")}>
+            <PlanDone
+              done={planDone}
+              {busy}
+              onundo={() => revert("undo")}
+              onforcepush={() => (pushAsk = { initialForce: true })}
+              onopenpr={() => planDone && openPrForBranch(planDone.branch)}
+            >
               {@render opLog(repoId)}
             </PlanDone>
           {:else if inspector === "oplog"}
@@ -863,6 +1241,7 @@
               ondiscard={(paths) => write((id) => discard(id, paths))}
               onhunk={onHunk}
               oncommit={onCommit}
+              onstash={() => (stashAsk = true)}
             />
           {/if}
         </aside>
@@ -891,6 +1270,83 @@
         oncancel={() => (rebaseAsk = null)}
       />
     {/if}
+    {#if pullAsk}
+      <PullStrategyDialog
+        ahead={pullAsk.ahead}
+        behind={pullAsk.behind}
+        upstream={pullAsk.upstream}
+        {busy}
+        onpull={(strategy, remember) => startPull(strategy, remember)}
+        oncancel={() => (pullAsk = null)}
+      />
+    {/if}
+    {#if pushAsk}
+      <PushDialog
+        repoId={opened.id}
+        initialForce={pushAsk.initialForce}
+        {busy}
+        onpush={startPush}
+        oncancel={() => (pushAsk = null)}
+      />
+    {/if}
+    {#if branchAsk}
+      <BranchDialog
+        mode={branchAsk.mode}
+        currentName={branchAsk.currentName}
+        atLabel={branchAsk.atLabel}
+        remoteBranch={branchAsk.remoteBranch}
+        {busy}
+        onsubmit={submitBranch}
+        oncancel={() => (branchAsk = null)}
+      />
+    {/if}
+    {#if deleteAsk}
+      <DeleteBranchDialog
+        kind={deleteAsk.kind}
+        branch={deleteAsk.branch}
+        remote={deleteAsk.remote}
+        {busy}
+        onconfirm={confirmDeleteBranch}
+        oncancel={() => (deleteAsk = null)}
+      />
+    {/if}
+    {#if resetAsk}
+      <ResetDialog
+        branch={branchName}
+        shortId={resetAsk.shortId}
+        subject={resetAsk.subject}
+        dirty={status.entries.length > 0}
+        {busy}
+        onreset={runReset}
+        oncancel={() => (resetAsk = null)}
+      />
+    {/if}
+    {#if sequencerAsk}
+      <CherryPickDialog
+        repoId={opened.id}
+        commit={sequencerAsk.id}
+        shortId={sequencerAsk.shortId}
+        subject={sequencerAsk.subject}
+        branch={branchName}
+        kind={sequencerAsk.kind}
+        {busy}
+        onconfirm={runSequencer}
+        oncancel={() => (sequencerAsk = null)}
+      />
+    {/if}
+    {#if stashAsk}
+      <StashDialog
+        branch={branchName}
+        hasUntracked={status.entries.some((e) => e.kind === "untracked")}
+        onlyUntracked={status.entries.length > 0 && status.entries.every((e) => e.kind === "untracked")}
+        {busy}
+        onsave={(message, includeUntracked) => {
+          stashAsk = false;
+          write((id) => stashSave(id, message, includeUntracked), "Stashed changes · Ctrl+Z undoes it");
+        }}
+        oncancel={() => (stashAsk = false)}
+      />
+    {/if}
   {:else}
     <div class="start empty">
       {#if loading}
@@ -907,13 +1363,15 @@
     {#if fetching && opened}
       {@const id = opened.id}
       {@const pct = fetching.progress?.percent ?? 0}
-      <span class="task" aria-label="Fetch progress">
-        ↓ Fetching…
+      {@const opLabel = { fetch: "Fetch", pull: "Pull", push: "Push" }[fetching.op]}
+      {@const verb = { fetch: "Fetching", pull: "Pulling", push: "Pushing" }[fetching.op]}
+      <span class="task" aria-label="{opLabel} progress">
+        {fetching.op === "push" ? "↑" : "↓"} {verb}…
         {#if fetching.progress}
           {fetching.progress.phase} {fetching.progress.percent}%
         {/if}
         <span class="bar" aria-hidden="true"><i style:width="{pct}%"></i></span>
-        <button class="bare link" onclick={() => cancelFetch(id)}>Cancel</button>
+        <button class="bare link" onclick={() => cancelTask(id)}>Cancel</button>
       </span>
     {:else if notice}
       <span role="status">{notice}</span>

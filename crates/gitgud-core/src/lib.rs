@@ -8,11 +8,15 @@ pub mod image;
 mod job;
 pub mod merge;
 pub mod oplog;
-mod ops;
+pub mod ops;
 pub mod rebase;
+pub mod remote;
+pub mod remote_url;
 pub mod repo;
+pub mod sequencer;
 pub mod session;
 pub mod snapshot;
+pub mod stash;
 pub mod task;
 #[cfg(any(test, feature = "test-util"))]
 pub mod testing;

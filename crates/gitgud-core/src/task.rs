@@ -150,13 +150,29 @@ impl Repo {
         on_progress: &mut dyn FnMut(Progress),
         cancel: &Cancel,
     ) -> Result<(), Error> {
+        self.fetch_remote(git, None, on_progress, cancel)
+    }
+
+    /// Fetches `remote` (or `--all` when `None`), with progress and cancel.
+    ///
+    /// # Errors
+    /// [`Error::Cancelled`], or [`Error::Command`] with git's message.
+    pub fn fetch_remote(
+        &self,
+        git: &GitCli,
+        remote: Option<&str>,
+        on_progress: &mut dyn FnMut(Progress),
+        cancel: &Cancel,
+    ) -> Result<(), Error> {
         let started = SystemTime::now();
-        let result = git.run_with_progress(
-            self.root(),
-            &["fetch", "--all", "--progress"],
-            on_progress,
-            cancel,
-        );
+        let mut args = vec!["fetch"];
+        if let Some(r) = remote {
+            args.push(r);
+        } else {
+            args.push("--all");
+        }
+        args.push("--progress");
+        let result = git.run_with_progress(self.root(), &args, on_progress, cancel);
         if matches!(result, Err(Error::Cancelled)) {
             self.remove_partial_packs(started)?;
         }

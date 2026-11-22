@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, within } from "@testing-library/svelte";
 import { emit } from "@tauri-apps/api/event";
 import { describe, expect, it, vi } from "vitest";
-import type { Commands, MergeState, RebaseState, Row, Status } from "$lib/api";
+import type { Commands, MergeState, RebaseState, Row, SequencerState, Status } from "$lib/api";
 import { mockCommands } from "$lib/test/ipc";
 import Page from "./+page.svelte";
 
@@ -36,6 +36,7 @@ function app(extra: Handlers = {}) {
     repo_status: () => STATUS,
     merge_state: () => null,
     rebase_state: () => null,
+    sequencer_state: () => null,
     op_log: () => [],
     graph_rows: () => [ROW],
     close_repo: () => null,
@@ -45,6 +46,7 @@ function app(extra: Handlers = {}) {
       remotes: [],
       fetched: null,
     }),
+    stashes: () => [],
     ...extra,
   };
   return mockCommands(handlers);
@@ -505,7 +507,7 @@ describe("start page: fetch", () => {
     const calls = app({
       launch_path: () => "C:/work/repo",
       fetch: () => new Promise((_, r) => (reject = r)),
-      cancel_fetch: () => {
+      cancel_task: () => {
         reject("cancelled");
         return true;
       },
@@ -518,7 +520,7 @@ describe("start page: fetch", () => {
 
     expect(await screen.findByRole("status")).toHaveTextContent("Fetch cancelled");
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(calls.find((c) => c.cmd === "cancel_fetch")?.args).toEqual({ id: 1 });
+    expect(calls.find((c) => c.cmd === "cancel_task")?.args).toEqual({ id: 1 });
   });
 
   it("shows git's error when the fetch fails", async () => {
@@ -1385,5 +1387,363 @@ describe("start page: history edits", () => {
     expect(screen.getByRole("listbox", { name: "Commits" })).toBeInTheDocument();
     await fireEvent.click(within(banner).getByRole("button", { name: "Continue" }));
     await vi.waitFor(() => expect(calls.find((c) => c.cmd === "rebase_step")?.args).toEqual({ id: 1, step: "continue" }));
+  });
+});
+
+describe("start page: Milestone 1 workflows", () => {
+  const OPENED = { id: 1, root: "C:/work/repo", rows: 2, graphVersion: 0 };
+  const TIP: Row = { ...ROW, id: "c".repeat(40), shortId: "ccccccc", subject: "tip commit" };
+  const BASE: Row = { ...ROW, id: "a".repeat(40), shortId: "aaaaaaa", subject: "base commit", labels: [] };
+
+  const BRANCHES = {
+    local: [
+      { name: "main", current: true, upstream: "origin/main", ahead: 1, behind: 2 },
+      { name: "other", current: false, upstream: null, ahead: 0, behind: 0 },
+    ],
+    remotes: [{ name: "origin", branches: ["origin/main", "origin/other"] }],
+    fetched: null,
+  };
+
+  function repo(extra: Handlers = {}) {
+    return app({
+      launch_path: () => "C:/work/repo",
+      open_repo: () => OPENED,
+      repo_status: () => STATUS,
+      branches: () => BRANCHES,
+      graph_rows: () => [TIP, BASE],
+      commit_detail: ({ commit }) => ({
+        id: commit,
+        shortId: commit.slice(0, 7),
+        subject: "tip commit",
+        body: "",
+        author: { name: "Ada", email: "a", time: 0 },
+        committer: { name: "Ada", email: "a", time: 0 },
+        parents: [],
+        files: [],
+      }),
+      ...extra,
+    });
+  }
+
+  it("Pull opens the divergence dialog and sends the chosen strategy", async () => {
+    const calls = repo({
+      pull: ({ strategy }) => ({
+        opened: { ...OPENED, graphVersion: 1 },
+        outcome:
+          strategy === "auto"
+            ? { kind: "diverged", ahead: 1, behind: 2, upstream: "origin/main" }
+            : { kind: "merged" },
+      }),
+    });
+    render(Page);
+    await screen.findByText("tip commit");
+
+    await fireEvent.keyDown(window, { key: "L", ctrlKey: true, shiftKey: true });
+
+    const dialog = await screen.findByRole("dialog", { name: "Branch diverged from origin/main" });
+    await fireEvent.click(within(dialog).getByLabelText(/Merge origin\/main/));
+    await fireEvent.click(within(dialog).getByRole("button", { name: /Pull \(merge\)/ }));
+
+    await vi.waitFor(() =>
+      expect(calls.filter((c) => c.cmd === "pull").map((c) => c.args)).toEqual([
+        { id: 1, strategy: "auto", remember: false },
+        { id: 1, strategy: "merge", remember: true },
+      ]),
+    );
+    expect(await screen.findByRole("status")).toHaveTextContent("Pulled (merged) · Ctrl+Z undoes it");
+  });
+
+  it("Push dialog publishes / pushes and PlanDone offers Force-push with lease and Open PR", async () => {
+    const calls = repo({
+      repo_status: () => ({ ...STATUS, entries: [] }),
+      push_info: () => ({
+        branch: "main",
+        upstream: "origin/main",
+        remote: "origin",
+        remotes: ["origin"],
+        remoteBranch: "main",
+        ahead: 1,
+        behind: 0,
+        needsForce: false,
+        commits: [{ shortId: "ccccccc", subject: "tip commit" }],
+        prUrl: "https://github.com/org/repo/pull/new/main",
+      }),
+      push: () => ({ ...OPENED, graphVersion: 1 }),
+      history_plan: () => ({
+        branch: "main",
+        base: BASE.id,
+        baseShort: "aaaaaaa",
+        baseSubject: "base commit",
+        commits: [
+          { id: TIP.id, shortId: "ccccccc", subject: "tip commit", message: "tip commit", author: "Ada", time: 0, action: "pick" },
+        ],
+        dependents: [],
+        pushed: "origin/main",
+      }),
+      plan_preview: () => ({
+        prediction: { steps: [{ id: TIP.id, step: 1, outcome: { kind: "clean" } }], before: 1, after: 1, changed: 0 },
+        rows: 2,
+      }),
+      run_plan: () => ({ ...OPENED, graphVersion: 1 }),
+      pr_url: () => "https://github.com/org/repo/pull/new/main",
+      open_external_url: () => null,
+    });
+    render(Page);
+    await screen.findByText("tip commit");
+
+    await fireEvent.keyDown(window, { key: "P", ctrlKey: true, shiftKey: true });
+    const pushDlg = await screen.findByRole("dialog", { name: "Push main" });
+    await fireEvent.click(within(pushDlg).getByRole("button", { name: "Push" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Pushed main to origin/main");
+    expect(calls.find((c) => c.cmd === "push")?.args).toEqual({
+      id: 1,
+      remote: "origin",
+      branch: "main",
+      remoteBranch: "main",
+      setUpstream: false,
+      forceWithLease: false,
+    });
+
+    const commits = screen.getByRole("listbox", { name: "Commits" });
+    await fireEvent.click(await within(commits).findByText("tip commit"));
+    await fireEvent.keyDown(commits, { key: "E", shiftKey: true });
+    await fireEvent.click(await screen.findByRole("button", { name: /Start rebase/ }));
+    const done = await screen.findByRole("region", { name: "History edit done" });
+
+    await fireEvent.click(within(done).getByRole("button", { name: "Open Pull Request ↗" }));
+    await vi.waitFor(() =>
+      expect(calls.find((c) => c.cmd === "open_external_url")?.args).toEqual({
+        url: "https://github.com/org/repo/pull/new/main",
+      }),
+    );
+
+    await fireEvent.click(within(done).getByRole("button", { name: "Force-push with lease…" }));
+    const forceDlg = await screen.findByRole("dialog", { name: "Push main" });
+    await fireEvent.click(within(forceDlg).getByRole("button", { name: "Force-push with lease" }));
+    await vi.waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Force-pushed main to origin/main"));
+    const pushes = calls.filter((c): c is { cmd: "push"; args: Commands["push"]["args"] } => c.cmd === "push");
+    expect(pushes.at(-1)?.args.forceWithLease).toBe(true);
+  });
+
+  it("Detached HEAD offers Create branch… and creates it", async () => {
+    const calls = repo({
+      repo_status: () => ({ ...STATUS, head: { kind: "detached", id: "c".repeat(40) } }),
+      create_branch: () => ({ ...OPENED, graphVersion: 1 }),
+    });
+    render(Page);
+
+    const createBtn = await screen.findByRole("button", { name: "Create branch…" });
+    await fireEvent.click(createBtn);
+
+    const dialog = await screen.findByRole("dialog", { name: "New branch" });
+    await fireEvent.input(within(dialog).getByLabelText("Branch name"), { target: { value: "rescue/fix" } });
+    await fireEvent.click(within(dialog).getByRole("button", { name: /Create branch/ }));
+
+    await vi.waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Created rescue/fix"));
+    expect(calls.find((c) => c.cmd === "create_branch")?.args).toEqual({
+      id: 1,
+      name: "rescue/fix",
+      at: null,
+      checkout: true,
+    });
+  });
+
+  it("handles branch create (Ctrl+B), rename (F2), unmerged force-delete, and remote delete", async () => {
+    let deleteTry = 0;
+    const calls = repo({
+      create_branch: () => ({ ...OPENED, graphVersion: 1 }),
+      rename_branch: () => ({ ...OPENED, graphVersion: 2 }),
+      delete_branch: ({ force }) => {
+        deleteTry++;
+        if (!force && deleteTry === 1) {
+          throw "error: The branch 'other' is not fully merged.";
+        }
+        return { ...OPENED, graphVersion: 3 };
+      },
+      delete_remote_branch: () => ({ ...OPENED, graphVersion: 4 }),
+    });
+    render(Page);
+    await screen.findByText("tip commit");
+
+    await fireEvent.keyDown(window, { key: "b", ctrlKey: true });
+    let dialog = await screen.findByRole("dialog", { name: "New branch" });
+    await fireEvent.input(within(dialog).getByLabelText("Branch name"), { target: { value: "topic/one" } });
+    await fireEvent.click(within(dialog).getByRole("button", { name: /Create branch/ }));
+    await vi.waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Created topic/one"));
+    expect(calls.find((c) => c.cmd === "create_branch")?.args).toEqual({
+      id: 1,
+      name: "topic/one",
+      at: null,
+      checkout: true,
+    });
+
+    const sidebarBranches = screen.getByRole("region", { name: "Branches" });
+    await vi.waitFor(() => expect(within(sidebarBranches).getByRole("button", { name: "other" })).toBeEnabled());
+    await fireEvent.keyDown(within(sidebarBranches).getByRole("button", { name: "other" }), { key: "F2" });
+    dialog = await screen.findByRole("dialog", { name: "Rename branch other" });
+    await fireEvent.input(within(dialog).getByLabelText("Branch name"), { target: { value: "other-renamed" } });
+    await fireEvent.click(within(dialog).getByRole("button", { name: /Rename/ }));
+    await vi.waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Renamed other to other-renamed"));
+    expect(calls.find((c) => c.cmd === "rename_branch")?.args).toEqual({
+      id: 1,
+      old: "other",
+      new: "other-renamed",
+    });
+
+    await vi.waitFor(() => expect(within(sidebarBranches).getByRole("button", { name: "other" })).toBeEnabled());
+    await fireEvent.keyDown(within(sidebarBranches).getByRole("button", { name: "other" }), { key: "Delete" });
+    const forceDlg = await screen.findByRole("dialog", { name: "Force-delete unmerged branch other?" });
+    await fireEvent.click(within(forceDlg).getByRole("button", { name: "Force delete" }));
+    await vi.waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Deleted other"));
+    expect(calls.filter((c) => c.cmd === "delete_branch").map((c) => c.args)).toEqual([
+      { id: 1, name: "other", force: false },
+      { id: 1, name: "other", force: true },
+    ]);
+
+    const remotes = screen.getByRole("region", { name: "Remotes" });
+    await fireEvent.click(within(remotes).getByRole("button", { name: /origin/ }));
+    await fireEvent.contextMenu(within(remotes).getByRole("button", { name: /other/ }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Delete origin/other…" }));
+    const remoteDlg = await screen.findByRole("dialog", { name: "Delete remote branch origin/other?" });
+    await fireEvent.click(within(remoteDlg).getByRole("button", { name: "Delete remote branch" }));
+    await vi.waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Deleted origin/other"));
+    expect(calls.find((c) => c.cmd === "delete_remote_branch")?.args).toEqual({
+      id: 1,
+      remote: "origin",
+      branch: "other",
+    });
+  });
+
+  it("handles Reset, Cherry-pick, Revert, and SequencerBanner continue", async () => {
+    let seq: SequencerState | null = null;
+    const calls = repo({
+      reset: () => ({ ...OPENED, graphVersion: 1 }),
+      predict_cherry_pick: () => [],
+      predict_revert: () => ["a.txt"],
+      cherry_pick: () => ({ ...OPENED, graphVersion: 2 }),
+      revert_commit: () => {
+        seq = {
+          kind: "revert",
+          commit: TIP.id,
+          shortId: "ccccccc",
+          subject: "tip commit",
+          message: 'Revert "tip commit"',
+          conflicts: [{ path: "a.txt", kind: "code", resolved: true }],
+        };
+        return { ...OPENED, graphVersion: 3 };
+      },
+      sequencer_state: () => seq,
+      sequencer_step: () => {
+        seq = null;
+        return { ...OPENED, graphVersion: 4 };
+      },
+      conflict_text: () => ({ chunks: [], finalNewline: true }),
+    });
+    render(Page);
+    const commits = await screen.findByRole("listbox", { name: "Commits" });
+
+    await fireEvent.contextMenu(await within(commits).findByText("base commit"), { clientX: 5, clientY: 5 });
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Reset main to here…" }));
+    const resetDlg = await screen.findByRole("dialog", { name: "Reset main to aaaaaaa" });
+    await fireEvent.click(within(resetDlg).getByLabelText(/Hard/));
+    await fireEvent.click(within(resetDlg).getByRole("button", { name: /Reset \(hard\)/ }));
+    await vi.waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Reset (hard) to aaaaaaa"));
+    expect(calls.find((c) => c.cmd === "reset")?.args).toEqual({ id: 1, target: BASE.id, mode: "hard" });
+
+    await fireEvent.contextMenu(await within(screen.getByRole("listbox", { name: "Commits" })).findByText("tip commit"), {
+      clientX: 5,
+      clientY: 5,
+    });
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Cherry-pick…" }));
+    const pickDlg = await screen.findByRole("dialog", { name: "Cherry-pick ccccccc onto main" });
+    await within(pickDlg).findByText(/No conflicts expected/);
+    await fireEvent.click(within(pickDlg).getByRole("button", { name: /Cherry-pick/ }));
+    await vi.waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Cherry-picked ccccccc"));
+    expect(calls.find((c) => c.cmd === "cherry_pick")?.args).toEqual({ id: 1, commit: TIP.id });
+
+    await fireEvent.contextMenu(await within(screen.getByRole("listbox", { name: "Commits" })).findByText("tip commit"), {
+      clientX: 5,
+      clientY: 5,
+    });
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Revert commit…" }));
+    const revDlg = await screen.findByRole("dialog", { name: "Revert ccccccc onto main" });
+    await within(revDlg).findByText("a.txt");
+    await fireEvent.click(within(revDlg).getByRole("button", { name: /Revert/ }));
+
+    const banner = await screen.findByRole("region", { name: "Reverting in progress" });
+    await fireEvent.click(within(banner).getByRole("button", { name: "Continue" }));
+    await vi.waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Revert finished · Ctrl+Z undoes it"));
+    expect(calls.find((c) => c.cmd === "sequencer_step")?.args).toEqual({ id: 1, step: "continue" });
+  });
+
+  it("saves a stash, inspects it in StashDetail, and pops/applies/drops it", async () => {
+    const STASH = {
+      index: 0,
+      shortId: "stash@{0}",
+      id: "s".repeat(40),
+      parentId: BASE.id,
+      baseId: BASE.id,
+      branch: "main",
+      message: "WIP shader",
+      time: 1_700_000_000,
+    };
+    let stashList = [STASH];
+    const calls = repo({
+      stashes: () => stashList,
+      stash_save: () => ({ ...OPENED, graphVersion: 1 }),
+      stash_detail: () => ({
+        id: STASH.id,
+        shortId: "stash@{0}",
+        subject: "WIP shader",
+        body: "",
+        author: { name: "Ada", email: "a", time: 1_700_000_000 },
+        committer: { name: "Ada", email: "a", time: 1_700_000_000 },
+        parents: [BASE.id],
+        files: [{ path: "a.txt", change: "modified" }],
+      }),
+      stash_file_diff: () => ({ path: "a.txt", binary: false, hunks: [] }),
+      stash_apply: () => ({ ...OPENED, graphVersion: 1 }),
+      stash_pop: () => {
+        stashList = [];
+        return { ...OPENED, graphVersion: 3 };
+      },
+      stash_drop: () => ({ ...OPENED, graphVersion: 2 }),
+    });
+    render(Page);
+    await screen.findByText("tip commit");
+
+    await fireEvent.click(within(screen.getByRole("banner")).getByRole("button", { name: "Stash…" }));
+    const stashDlg = await screen.findByRole("dialog", { name: "Stash changes on main" });
+    await fireEvent.input(within(stashDlg).getByLabelText("Stash message"), { target: { value: "WIP shader" } });
+    await fireEvent.click(within(stashDlg).getByRole("button", { name: /Stash changes/ }));
+    await vi.waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Stashed changes"));
+    expect(calls.find((c) => c.cmd === "stash_save")?.args).toEqual({
+      id: 1,
+      message: "WIP shader",
+      includeUntracked: false,
+    });
+
+    const stashesSec = await screen.findByRole("region", { name: "Stashes" });
+    await fireEvent.click(within(stashesSec).getByRole("button", { name: /WIP shader/ }));
+    const detail = await screen.findByRole("region", { name: "Stash" });
+    await within(detail).findByRole("button", { name: /a\.txt/ });
+
+    await vi.waitFor(() => expect(within(detail).getByRole("button", { name: "Apply" })).toBeEnabled());
+    await fireEvent.click(within(detail).getByRole("button", { name: "Apply" }));
+    await vi.waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Applied stash@{0}"));
+    expect(calls.find((c) => c.cmd === "stash_apply")?.args).toEqual({ id: 1, index: 0 });
+
+    await vi.waitFor(() => expect(within(detail).getByRole("button", { name: "Drop" })).toBeEnabled());
+    await fireEvent.click(within(detail).getByRole("button", { name: "Drop" }));
+    await vi.waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Dropped stash@{0}"));
+    expect(calls.find((c) => c.cmd === "stash_drop")?.args).toEqual({ id: 1, index: 0 });
+
+    await fireEvent.click(within(screen.getByRole("region", { name: "Stashes" })).getByRole("button", { name: /WIP shader/ }));
+    const detail2 = await screen.findByRole("region", { name: "Stash" });
+    await within(detail2).findByRole("button", { name: "Pop" });
+    await vi.waitFor(() => expect(within(detail2).getByRole("button", { name: "Pop" })).toBeEnabled());
+    await fireEvent.click(within(detail2).getByRole("button", { name: "Pop" }));
+    await vi.waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Popped stash@{0}"));
+    expect(calls.find((c) => c.cmd === "stash_pop")?.args).toEqual({ id: 1, index: 0 });
   });
 });

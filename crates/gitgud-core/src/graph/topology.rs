@@ -23,6 +23,9 @@ pub enum RefLabel {
     Tag {
         name: String,
     },
+    Stash {
+        name: String,
+    },
 }
 
 /// Every commit reachable from branches, remote branches, tags and HEAD, in
@@ -36,10 +39,14 @@ pub struct Topology {
     wip: bool,
     asked_wip: bool,
     refs: RefSnapshot,
-    /// Rows drawn other than solid: a history plan's preview.
+    /// Rows drawn other than solid: a history plan's preview or stash links.
     strokes: HashMap<u32, Stroke>,
     /// Planned commits of a preview, which exist in no repository.
     ghosts: HashMap<u32, Ghost>,
+    /// Stash rows (`row -> stash@{index}`), spliced above their base commit.
+    stashes: HashMap<u32, usize>,
+    /// Ordered stash commit OIDs at walk time, so `is_current` spots stash changes.
+    stash_refs: Vec<ObjectId>,
 }
 
 /// A commit a history plan would create, drawn as a dashed "after" row.
@@ -64,12 +71,16 @@ fn snapshot(labels_by_id: &HashMap<ObjectId, Vec<RefLabel>>) -> RefSnapshot {
 
 impl Topology {
     /// Whether walking `repo` with `wip` now would give this same topology: no
-    /// ref, tag or HEAD has moved, and the WIP row is still wanted (or not).
+    /// ref, tag, stash or HEAD has moved, and the WIP row is still wanted (or not).
     ///
     /// # Errors
     /// [`Error::Read`] when refs can't be read.
     pub fn is_current(&self, repo: &Repo, wip: bool) -> Result<bool, Error> {
         if wip != self.asked_wip {
+            return Ok(false);
+        }
+        let stash_refs = current_stash_ids(repo)?;
+        if stash_refs != self.stash_refs {
             return Ok(false);
         }
         let (_, labels_by_id) = tips(&repo.gix())?;
@@ -78,11 +89,12 @@ impl Topology {
 
     /// Walks the whole history of `repo`, using its commit-graph file if present.
     /// With `wip`, row 0 is the working copy, on top of HEAD; it is left out when
-    /// HEAD has no commit yet.
+    /// HEAD has no commit yet. Stashes sit directly above their base commit.
     ///
     /// # Errors
     /// [`Error::Read`] when refs or commits can't be read.
     pub fn walk(repo: &Repo, wip: bool) -> Result<Self, Error> {
+        let stash_list = repo.stashes()?;
         let repo = repo.gix();
         let (tips, mut labels_by_id) = tips(&repo)?;
         let wip_parent = if wip {
@@ -102,14 +114,62 @@ impl Topology {
             let info = info.map_err(read_err)?;
             commits.push((info.id, info.parent_ids));
         }
+
+        let mut stash_refs = Vec::with_capacity(stash_list.len());
+        let expanded: Vec<(ObjectId, Vec<ObjectId>, Option<usize>)> = if stash_list.is_empty() {
+            commits
+                .into_iter()
+                .map(|(id, ps)| (id, ps.into_vec(), None))
+                .collect()
+        } else {
+            let index_of: HashMap<ObjectId, usize> = commits
+                .iter()
+                .enumerate()
+                .map(|(i, (id, _))| (*id, i))
+                .collect();
+            let mut before: HashMap<usize, Vec<(ObjectId, Vec<ObjectId>, usize)>> = HashMap::new();
+            let mut at_top = Vec::new();
+            for s in stash_list {
+                let Ok(oid) = ObjectId::from_hex(s.id.as_bytes()) else {
+                    continue;
+                };
+                stash_refs.push(oid);
+                let parents: Vec<ObjectId> = ObjectId::from_hex(s.parent_id.as_bytes())
+                    .ok()
+                    .filter(|p| index_of.contains_key(p))
+                    .into_iter()
+                    .collect();
+                if let Some(&pos) = parents.first().and_then(|p| index_of.get(p)) {
+                    before.entry(pos).or_default().push((oid, parents, s.index));
+                } else {
+                    at_top.push((oid, parents, s.index));
+                }
+            }
+            let mut out = Vec::with_capacity(commits.len() + stash_refs.len());
+            for (oid, ps, idx) in at_top {
+                out.push((oid, ps, Some(idx)));
+            }
+            for (i, (id, ps)) in commits.into_iter().enumerate() {
+                if let Some(list) = before.remove(&i) {
+                    for (oid, sp, idx) in list {
+                        out.push((oid, sp, Some(idx)));
+                    }
+                }
+                out.push((id, ps.into_vec(), None));
+            }
+            out
+        };
+
         let offset = usize::from(wip_parent.is_some());
-        let row_of: HashMap<ObjectId, u32> = commits
+        let row_of: HashMap<ObjectId, u32> = expanded
             .iter()
             .enumerate()
-            .map(|(row, (id, _))| (*id, to_u32(row + offset)))
+            .filter_map(|(row, (id, _, stash))| {
+                stash.is_none().then_some((*id, to_u32(row + offset)))
+            })
             .collect();
 
-        let rows = commits.len() + offset;
+        let rows = expanded.len() + offset;
         let mut topology = Self {
             ids: Vec::with_capacity(rows),
             parent_start: Vec::with_capacity(rows + 1),
@@ -120,20 +180,32 @@ impl Topology {
             refs: snapshot(&labels_by_id),
             strokes: HashMap::new(),
             ghosts: HashMap::new(),
+            stashes: HashMap::new(),
+            stash_refs,
         };
         if let Some(head) = wip_parent {
             topology.parent_start.push(0);
             topology.parents.push(row_of[&head]);
             topology.ids.push(ObjectId::null(repo.object_hash()));
         }
-        for (i, (id, parent_ids)) in commits.into_iter().enumerate() {
+        for (i, (id, parent_ids, stash_index)) in expanded.into_iter().enumerate() {
             let row = i + offset;
             topology.parent_start.push(to_u32(topology.parents.len()));
             // A parent missing from the walk is cut off by a shallow clone.
             topology
                 .parents
                 .extend(parent_ids.iter().filter_map(|p| row_of.get(p).copied()));
-            if let Some(mut labels) = labels_by_id.remove(&id) {
+            if let Some(idx) = stash_index {
+                let r = to_u32(row);
+                topology.stashes.insert(r, idx);
+                topology.strokes.insert(r, Stroke::Dashed);
+                topology.labels.insert(
+                    r,
+                    vec![RefLabel::Stash {
+                        name: format!("stash@{{{idx}}}"),
+                    }],
+                );
+            } else if let Some(mut labels) = labels_by_id.remove(&id) {
                 labels.sort_by_key(label_order);
                 topology.labels.insert(to_u32(row), labels);
             }
@@ -186,12 +258,18 @@ impl Topology {
         self.ghosts.get(&to_u32(row))
     }
 
+    /// The stash index (`stash@{index}`) if `row` is a stash row.
+    pub fn stash(&self, row: usize) -> Option<usize> {
+        self.stashes.get(&to_u32(row)).copied()
+    }
+
     /// The row of commit `id`, if it is in the graph.
     pub fn row_of(&self, id: ObjectId) -> Option<usize> {
         let first = usize::from(self.wip);
         self.ids[first..]
             .iter()
-            .position(|i| *i == id)
+            .enumerate()
+            .position(|(r, i)| *i == id && !self.stashes.contains_key(&to_u32(r + first)))
             .map(|r| r + first)
     }
 
@@ -215,6 +293,16 @@ impl Topology {
         );
         let k = ghosts.len();
         let moved = |r: usize| if r < at { r } else { r + k };
+        let mut strokes: HashMap<u32, Stroke> = HashMap::new();
+        let stashes: HashMap<u32, usize> = self
+            .stashes
+            .iter()
+            .map(|(&r, &idx)| {
+                let nr = to_u32(moved(r as usize));
+                strokes.insert(nr, Stroke::Dashed);
+                (nr, idx)
+            })
+            .collect();
         let mut t = Self {
             ids: Vec::with_capacity(self.len() + k),
             parent_start: Vec::with_capacity(self.len() + k + 1),
@@ -227,8 +315,10 @@ impl Topology {
             wip: self.wip,
             asked_wip: self.asked_wip,
             refs: self.refs.clone(),
-            strokes: HashMap::new(),
+            strokes,
             ghosts: HashMap::new(),
+            stashes,
+            stash_refs: self.stash_refs.clone(),
         };
         let null = ObjectId::null(self.ids.first().map_or(gix::hash::Kind::Sha1, |i| i.kind()));
         let push_old = |t: &mut Self, row: usize| {
@@ -275,6 +365,8 @@ impl Topology {
             refs: Vec::new(),
             strokes: HashMap::new(),
             ghosts: HashMap::new(),
+            stashes: HashMap::new(),
+            stash_refs: Vec::new(),
         };
         for (row, ps) in parents.iter().enumerate() {
             assert!(
@@ -288,6 +380,14 @@ impl Topology {
         t.parent_start.push(to_u32(t.parents.len()));
         t
     }
+}
+
+fn current_stash_ids(repo: &Repo) -> Result<Vec<ObjectId>, Error> {
+    Ok(repo
+        .stashes()?
+        .into_iter()
+        .filter_map(|s| ObjectId::from_hex(s.id.as_bytes()).ok())
+        .collect())
 }
 
 fn to_u32(n: usize) -> u32 {
@@ -304,6 +404,7 @@ fn label_order(label: &RefLabel) -> (u8, String) {
         RefLabel::Branch { name, .. } => (1, name.clone()),
         RefLabel::Remote { name } => (2, name.clone()),
         RefLabel::Tag { name } => (3, name.clone()),
+        RefLabel::Stash { name } => (4, name.clone()),
     }
 }
 

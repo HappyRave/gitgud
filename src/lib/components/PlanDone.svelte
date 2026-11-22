@@ -18,7 +18,21 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
 
-  let { done, busy = false, onundo, children }: { done: PlanResult; busy?: boolean; onundo: () => void; children?: Snippet } = $props();
+  let {
+    done,
+    busy = false,
+    onundo,
+    onforcepush,
+    onopenpr,
+    children,
+  }: {
+    done: PlanResult;
+    busy?: boolean;
+    onundo: () => void;
+    onforcepush?: () => void;
+    onopenpr?: () => void;
+    children?: Snippet;
+  } = $props();
 
   const clock = $derived(new Date(done.time * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }));
 </script>
@@ -38,6 +52,12 @@
         <div class="flag">{done.pushed} still has the old {done.before} commit{done.before === 1 ? "" : "s"}. Push replaces them.</div>
       {/if}
       <div class="btns">
+        {#if done.pushed && onforcepush}
+          <button class="pri" disabled={busy} onclick={onforcepush}>Force-push with lease…</button>
+        {/if}
+        {#if done.pushed && onopenpr}
+          <button disabled={busy} onclick={onopenpr}>Open Pull Request ↗</button>
+        {/if}
         <button disabled={busy} onclick={onundo}>Undo rebase <span class="k">Ctrl+Z</span></button>
       </div>
     </div>

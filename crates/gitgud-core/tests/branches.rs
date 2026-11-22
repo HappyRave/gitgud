@@ -259,3 +259,82 @@ fn checkout_refuses_to_overwrite_local_changes_and_records_nothing() {
     assert_eq!(read(&repo, "a.txt").unwrap(), "uncommitted\n");
     assert!(session.op_log(id).unwrap().is_empty());
 }
+
+#[test]
+fn create_rename_delete_and_undo_branches_including_from_detached_head() {
+    let (repo, session, id) = two_branches();
+
+    // Create + checkout at HEAD~0, then undo and redo.
+    session
+        .create_branch(id, "feature/new", None, true)
+        .unwrap();
+    assert_eq!(
+        repo.git(&["branch", "--show-current"]).trim(),
+        "feature/new"
+    );
+    session.undo(id).unwrap();
+    assert_eq!(repo.git(&["branch", "--show-current"]).trim(), "main");
+    assert!(!repo.git_ok(&["rev-parse", "--verify", "-q", "refs/heads/feature/new"]));
+    session.redo(id).unwrap();
+    assert_eq!(
+        repo.git(&["branch", "--show-current"]).trim(),
+        "feature/new"
+    );
+
+    // Rename current branch and undo/redo it.
+    session
+        .rename_branch(id, "feature/new", "feature/renamed")
+        .unwrap();
+    assert_eq!(
+        repo.git(&["branch", "--show-current"]).trim(),
+        "feature/renamed"
+    );
+    assert!(!repo.git_ok(&["rev-parse", "--verify", "-q", "refs/heads/feature/new"]));
+    session.undo(id).unwrap();
+    assert_eq!(
+        repo.git(&["branch", "--show-current"]).trim(),
+        "feature/new"
+    );
+    assert!(!repo.git_ok(&["rev-parse", "--verify", "-q", "refs/heads/feature/renamed"]));
+
+    // Switch back to main, verify safe delete refuses unmerged, force deletes, and undo restores it.
+    session.checkout(id, "main").unwrap();
+    assert!(session.delete_branch(id, "other", false).is_err());
+    session.delete_branch(id, "other", true).unwrap();
+    assert!(!repo.git_ok(&["rev-parse", "--verify", "-q", "refs/heads/other"]));
+    session.undo(id).unwrap();
+    assert!(repo.git_ok(&["rev-parse", "--verify", "-q", "refs/heads/other"]));
+
+    // Detached HEAD: create branch here and undo back to detached.
+    let detached_id = repo.git(&["rev-parse", "HEAD"]).trim().to_owned();
+    repo.git(&["checkout", "-q", "--detach"]);
+    session
+        .create_branch(id, "rescued", Some(&detached_id), true)
+        .unwrap();
+    assert_eq!(repo.git(&["branch", "--show-current"]).trim(), "rescued");
+    session.undo(id).unwrap();
+    assert_eq!(repo.git(&["branch", "--show-current"]).trim(), "");
+    assert_eq!(repo.git(&["rev-parse", "HEAD"]).trim(), detached_id);
+}
+
+#[test]
+fn checkout_remote_creates_tracking_branch_and_undoes() {
+    let (repo, _origin) = with_upstream();
+    repo.git(&["update-ref", "refs/remotes/origin/topic", "HEAD"]);
+    let session = Session::default();
+    let id = session.open(repo.path()).unwrap().id;
+
+    session
+        .checkout_remote(id, "origin/topic", "topic")
+        .unwrap();
+    assert_eq!(repo.git(&["branch", "--show-current"]).trim(), "topic");
+    let up = repo
+        .git(&["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])
+        .trim()
+        .to_owned();
+    assert_eq!(up, "origin/topic");
+
+    session.undo(id).unwrap();
+    assert_eq!(repo.git(&["branch", "--show-current"]).trim(), "main");
+    assert!(!repo.git_ok(&["rev-parse", "--verify", "-q", "refs/heads/topic"]));
+}

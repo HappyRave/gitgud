@@ -73,6 +73,21 @@ export function isFetchKey(event: KeyboardEvent): boolean {
   return event.ctrlKey && event.shiftKey && !event.altKey && !event.metaKey && event.key.toLowerCase() === "f";
 }
 
+/** Ctrl+Shift+L pulls (spec §5). */
+export function isPullKey(event: KeyboardEvent): boolean {
+  return event.ctrlKey && event.shiftKey && !event.altKey && !event.metaKey && event.key.toLowerCase() === "l";
+}
+
+/** Ctrl+Shift+P pushes (spec §5). */
+export function isPushKey(event: KeyboardEvent): boolean {
+  return event.ctrlKey && event.shiftKey && !event.altKey && !event.metaKey && event.key.toLowerCase() === "p";
+}
+
+/** Ctrl+B creates a branch at the selected commit or HEAD (spec §5). */
+export function isNewBranchKey(event: KeyboardEvent): boolean {
+  return event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey && event.key.toLowerCase() === "b" && !inTextField(event.target);
+}
+
 export type ConflictAction = "yours" | "theirs" | "both" | "edit" | "next" | "prev" | "resolve";
 
 /**

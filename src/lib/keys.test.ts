@@ -1,5 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { conflictKey, graphEditKey, planKey, isFetchKey, isFindKey, isSplitKey, opLogKey, paneKey, sideKey, workingKey } from "./keys";
+import {
+  conflictKey,
+  graphEditKey,
+  isFetchKey,
+  isFindKey,
+  isNewBranchKey,
+  isPullKey,
+  isPushKey,
+  isSplitKey,
+  opLogKey,
+  paneKey,
+  planKey,
+  sideKey,
+  workingKey,
+} from "./keys";
 
 describe("paneKey", () => {
   it("maps Ctrl+1, Ctrl+2 and Ctrl+3", () => {
@@ -168,5 +182,20 @@ describe("sideKey", () => {
     expect(sideKey(event({ key: "2" }))).toBe("theirs");
     expect(sideKey(event({ key: "2", ctrlKey: true }))).toBeNull();
     expect(sideKey(event({ key: "1" }, document.createElement("input")))).toBeNull();
+  });
+});
+
+describe("pull, push, and new-branch keys", () => {
+  it("maps Ctrl+Shift+L to pull and Ctrl+Shift+P to push", () => {
+    expect(isPullKey(event({ key: "l", ctrlKey: true, shiftKey: true }))).toBe(true);
+    expect(isPullKey(event({ key: "l", ctrlKey: true }))).toBe(false);
+    expect(isPushKey(event({ key: "P", ctrlKey: true, shiftKey: true }))).toBe(true);
+    expect(isPushKey(event({ key: "p", ctrlKey: true }))).toBe(false);
+  });
+
+  it("maps Ctrl+B outside text fields to new branch", () => {
+    expect(isNewBranchKey(event({ key: "b", ctrlKey: true }))).toBe(true);
+    expect(isNewBranchKey(event({ key: "b", ctrlKey: true, shiftKey: true }))).toBe(false);
+    expect(isNewBranchKey(event({ key: "b", ctrlKey: true }, document.createElement("textarea")))).toBe(false);
   });
 });

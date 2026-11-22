@@ -78,27 +78,25 @@ struct State {
     #[serde(default)]
     rebasing: Option<(String, Option<String>)>,
     /// Every local branch (full ref) and its tip, sorted, so actions that move
-    /// other branches (`rebase --update-refs`) undo them too.
+    /// other branches (`rebase --update-refs`, rename, create) undo them too.
     #[serde(default)]
     branches: Vec<(String, String)>,
+    /// `refs/stash` tip OID, saved when present.
+    #[serde(default)]
+    stash_ref: Option<String>,
+    /// Contents of `.git/logs/refs/stash` so stash stack entries survive undo/redo.
+    #[serde(default)]
+    stash_log: Option<String>,
 }
 
-/// Branches an entry moved, created or deleted, other than the ones HEAD and
-/// the rebase state already cover.
+/// Branches an entry moved, created or deleted.
 fn moved_branches(entry: &Entry) -> Vec<String> {
-    let covered = |name: &str| {
-        [&entry.before, &entry.after].iter().any(|s| {
-            matches!(&s.head, HeadState::Branch { name: n, .. } if n == name)
-                || s.rebasing.as_ref().is_some_and(|(n, _)| n == name)
-        })
-    };
     let mut names: Vec<String> = entry
         .before
         .branches
         .iter()
         .chain(&entry.after.branches)
         .map(|(n, _)| n.clone())
-        .filter(|n| !covered(n))
         .collect();
     names.sort();
     names.dedup();
@@ -114,13 +112,16 @@ fn tip_in<'a>(state: &'a State, name: &str) -> Option<&'a str> {
         .map(|(_, t)| t.as_str())
 }
 
-/// The files that make a merge "in progress", relative to the git dir.
-const MERGE_FILES: [&str; 5] = [
+/// The files that make a merge or sequencer op "in progress", relative to the git dir.
+const MERGE_FILES: [&str; 8] = [
     "MERGE_HEAD",
     "MERGE_MSG",
     "MERGE_MODE",
+    "CHERRY_PICK_HEAD",
+    "REVERT_HEAD",
     "gitgud/merge.json",
     "gitgud/rebase.json",
+    "gitgud/sequencer.json",
 ];
 
 /// git's folder for a rebase in progress; its files are kept like [`MERGE_FILES`].
@@ -260,13 +261,15 @@ impl OpLog {
         };
         let entry = &entries[pos];
         let moved = moved_branches(entry);
-        self.ensure_at(repo, git, entry, &entry.after, &moved, "undo")?;
+        let stash_moved = stash_changed(entry);
+        self.ensure_at(repo, git, entry, &entry.after, &moved, stash_moved, "undo")?;
         self.restore(
             repo,
             git,
             &entry.before,
             &entry.paths,
             &moved,
+            stash_moved,
             &format!("gitgud: undo {}", entry.action),
         )?;
         entries[pos].undone = true;
@@ -286,13 +289,15 @@ impl OpLog {
         };
         let entry = &entries[pos];
         let moved = moved_branches(entry);
-        self.ensure_at(repo, git, entry, &entry.before, &moved, "redo")?;
+        let stash_moved = stash_changed(entry);
+        self.ensure_at(repo, git, entry, &entry.before, &moved, stash_moved, "redo")?;
         self.restore(
             repo,
             git,
             &entry.after,
             &entry.paths,
             &moved,
+            stash_moved,
             &format!("gitgud: redo {}", entry.action),
         )?;
         entries[pos].undone = false;
@@ -336,6 +341,8 @@ impl OpLog {
             merge,
             rebasing,
             branches: branch_tips(repo)?,
+            stash_ref: branch_tip(repo, "refs/stash")?,
+            stash_log: read_optional(&repo.gix().common_dir().join("logs/refs/stash"))?,
         })
     }
 
@@ -404,6 +411,7 @@ impl OpLog {
     /// touched files differ from `expected`, one side of `entry`: something
     /// happened outside gitgud that the op log didn't see, and undoing over it
     /// would lose it.
+    #[allow(clippy::too_many_arguments)]
     fn ensure_at(
         &self,
         repo: &Repo,
@@ -411,6 +419,7 @@ impl OpLog {
         entry: &Entry,
         expected: &State,
         moved: &[String],
+        stash_moved: bool,
         verb: &str,
     ) -> Result<(), Error> {
         let (paths, action) = (&entry.paths, &entry.action);
@@ -430,7 +439,11 @@ impl OpLog {
             files
                 .iter()
                 .filter(|(n, _)| {
-                    n == "MERGE_HEAD" || n == "rebase-merge/msgnum" || n == "rebase-merge/orig-head"
+                    n == "MERGE_HEAD"
+                        || n == "CHERRY_PICK_HEAD"
+                        || n == "REVERT_HEAD"
+                        || n == "rebase-merge/msgnum"
+                        || n == "rebase-merge/orig-head"
                 })
                 .map(|(n, t)| (n.clone(), t.trim().to_owned()))
                 .collect()
@@ -444,7 +457,20 @@ impl OpLog {
         for name in moved {
             same_branches &= branch_tip(repo, name)?.as_deref() == tip_in(expected, name);
         }
-        if here != expected.head || !same_index || !same_merge || !same_rebasing || !same_branches {
+        let same_stash = if stash_moved {
+            branch_tip(repo, "refs/stash")? == expected.stash_ref
+                && read_optional(&repo.gix().common_dir().join("logs/refs/stash"))?
+                    == expected.stash_log
+        } else {
+            true
+        };
+        if here != expected.head
+            || !same_index
+            || !same_merge
+            || !same_rebasing
+            || !same_branches
+            || !same_stash
+        {
             return Err(refused());
         }
         if let (Some(tree), false) = (&expected.worktree, paths.is_empty()) {
@@ -458,6 +484,7 @@ impl OpLog {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn restore(
         &self,
         repo: &Repo,
@@ -465,6 +492,7 @@ impl OpLog {
         to: &State,
         paths: &[String],
         moved: &[String],
+        stash_moved: bool,
         message: &str,
     ) -> Result<(), Error> {
         self.restore_refs_and_index(repo, git, to, message)?;
@@ -479,10 +507,49 @@ impl OpLog {
                 _ => {}
             }
         }
+        if stash_moved {
+            self.restore_stash(repo, git, to, message)?;
+        }
         if let (Some(tree), false) = (&to.worktree, paths.is_empty()) {
             restore_files(repo, git, tree, paths)?;
         }
         self.restore_merge_files(to)
+    }
+
+    fn restore_stash(
+        &self,
+        repo: &Repo,
+        git: &GitCli,
+        to: &State,
+        message: &str,
+    ) -> Result<(), Error> {
+        match (&to.stash_ref, branch_tip(repo, "refs/stash")?) {
+            (Some(t), now) if now.as_deref() != Some(t) => {
+                git.run(
+                    repo.root(),
+                    &["update-ref", "--no-deref", "-m", message, "refs/stash", t],
+                    None,
+                )?;
+            }
+            (None, Some(now)) => {
+                git.run(repo.root(), &["update-ref", "-d", "refs/stash", &now], None)?;
+            }
+            _ => {}
+        }
+        let log_path = repo.gix().common_dir().join("logs/refs/stash");
+        match &to.stash_log {
+            Some(log) => {
+                if let Some(parent) = log_path.parent() {
+                    fs::create_dir_all(parent).map_err(read_err)?;
+                }
+                fs::write(&log_path, log).map_err(read_err)?;
+            }
+            None => match fs::remove_file(&log_path) {
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(read_err(e)),
+                _ => {}
+            },
+        }
+        Ok(())
     }
 
     fn restore_refs_and_index(
@@ -612,6 +679,15 @@ pub fn label_paths(verb: &str, paths: &[String]) -> String {
 
 /// An op-log label for a commit: its subject, cut at 60 characters.
 pub fn label_commit(message: &str) -> String {
+    label_with_subject("Commit", message)
+}
+
+/// An op-log label for amending a commit: its subject, cut at 60 characters.
+pub fn label_amend(message: &str) -> String {
+    label_with_subject("Amend", message)
+}
+
+fn label_with_subject(verb: &str, message: &str) -> String {
     let subject = message.lines().next().unwrap_or("").trim();
     let short: String = subject.chars().take(60).collect();
     let cut = if short.len() < subject.len() {
@@ -619,7 +695,7 @@ pub fn label_commit(message: &str) -> String {
     } else {
         ""
     };
-    format!("Commit \"{short}{cut}\"")
+    format!("{verb} \"{short}{cut}\"")
 }
 
 /// The blob `path` has in snapshot `tree`, `None` when the file wasn't there.
@@ -727,6 +803,19 @@ fn index_entries(path: &Path) -> Result<Vec<(String, String, u32, u32)>, Error> 
         .collect())
 }
 
+fn stash_changed(entry: &Entry) -> bool {
+    entry.before.stash_ref != entry.after.stash_ref
+        || entry.before.stash_log != entry.after.stash_log
+}
+
+fn read_optional(path: &Path) -> Result<Option<String>, Error> {
+    match fs::read_to_string(path) {
+        Ok(text) => Ok(Some(text)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(read_err(e)),
+    }
+}
+
 fn now() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -747,6 +836,8 @@ mod tests {
             merge: Vec::new(),
             rebasing: None,
             branches: Vec::new(),
+            stash_ref: None,
+            stash_log: None,
         };
         Entry {
             id,

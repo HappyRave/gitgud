@@ -181,7 +181,7 @@ fn remote_branches_without_their_symbolic_head() {
 }
 
 #[test]
-fn ignores_stash_and_non_commit_tags() {
+fn includes_stashes_and_ignores_non_commit_tags() {
     let repo = TestRepo::init();
     commit(&repo, "a.txt", "base");
     repo.write("a.txt", "dirty");
@@ -189,9 +189,18 @@ fn ignores_stash_and_non_commit_tags() {
     let tree = repo.git(&["rev-parse", "HEAD^{tree}"]);
     repo.git(&["tag", "tree-tag", tree.trim()]);
 
-    let t = topology(&repo);
-    assert_eq!(t.len(), 1);
-    assert_eq!(t.labels(0), [branch("main", true)]);
+    let t = Topology::walk(&repo::open(repo.path()).unwrap(), false).unwrap();
+    assert_eq!(t.len(), 2);
+    assert_eq!(
+        t.labels(0),
+        [RefLabel::Stash {
+            name: "stash@{0}".into()
+        }]
+    );
+    assert_eq!(t.parents(0), [1]);
+    assert_eq!(t.labels(1), [branch("main", true)]);
+    let non_stash = vec![(t.id(1).to_string(), Vec::<String>::new())];
+    assert_eq!(non_stash, repo.cli_topo());
 }
 
 #[test]

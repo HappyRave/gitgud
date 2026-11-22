@@ -305,3 +305,70 @@ fn stage_reports_a_missing_path() {
         .unwrap_err();
     assert!(err.to_string().contains("nope.txt"), "{err}");
 }
+
+#[test]
+fn commit_options_amend_signoff_no_verify_and_reset_undo() {
+    use gitgud_core::ops::{CommitOptions, ResetMode};
+    use gitgud_core::session::Session;
+
+    let repo = committed();
+    hook(&repo, "pre-commit", "echo 'blocked by hook' >&2\nexit 1");
+    repo.write("a.txt", "v2\n");
+    let session = Session::default();
+    let id = session.open(repo.path()).unwrap().id;
+    session
+        .write(id, "Stage a.txt", |r, g| r.stage(g, &paths(&["a.txt"])))
+        .unwrap();
+
+    // No-verify + signoff commits despite pre-commit hook.
+    session
+        .commit_with(
+            id,
+            "second",
+            CommitOptions {
+                amend: false,
+                signoff: true,
+                no_verify: true,
+            },
+        )
+        .unwrap();
+    let body = repo.git(&["log", "-1", "--format=%B"]);
+    assert!(body.contains("Signed-off-by: gitgud tests"), "{body}");
+
+    // Amend rewrites commit and undo brings original back.
+    session
+        .commit_with(
+            id,
+            "second amended",
+            CommitOptions {
+                amend: true,
+                signoff: false,
+                no_verify: true,
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        repo.git(&["log", "-1", "--format=%s"]).trim(),
+        "second amended"
+    );
+    session.undo(id).unwrap();
+    assert_eq!(repo.git(&["log", "-1", "--format=%s"]).trim(), "second");
+
+    // Hard reset wipes dirty work-tree changes, and Ctrl+Z brings everything back.
+    repo.write("a.txt", "dirty local edit\n");
+    let tip = repo.git(&["rev-parse", "HEAD"]).trim().to_owned();
+    let prev = repo.git(&["rev-parse", "HEAD~1"]).trim().to_owned();
+    session.reset(id, &prev, ResetMode::Hard).unwrap();
+    assert_eq!(repo.git(&["rev-parse", "HEAD"]).trim(), prev);
+    assert_eq!(
+        std::fs::read_to_string(repo.path().join("a.txt")).unwrap(),
+        "a\n"
+    );
+
+    session.undo(id).unwrap();
+    assert_eq!(repo.git(&["rev-parse", "HEAD"]).trim(), tip);
+    assert_eq!(
+        std::fs::read_to_string(repo.path().join("a.txt")).unwrap(),
+        "dirty local edit\n"
+    );
+}

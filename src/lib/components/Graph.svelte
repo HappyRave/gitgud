@@ -95,7 +95,14 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     drawGraph(
       ctx,
-      visible.map(({ index, row }) => ({ index, layout: row.layout, wip: row.wip, ghost: row.after != null, faded: row.faded })),
+      visible.map(({ index, row }) => ({
+        index,
+        layout: row.layout,
+        wip: row.wip,
+        ghost: row.after != null,
+        faded: row.faded,
+        stash: row.stash != null,
+      })),
       scrollTop,
       graphWidth,
       height,
@@ -160,8 +167,8 @@
     }
   }
 
-  /** A row edits can act on: a real commit. */
-  const editable = (row: Row | undefined): row is Row => !!row && !row.wip && row.after == null;
+  /** A row edits can act on: a real commit (not WIP, ghost, or stash). */
+  const editable = (row: Row | undefined): row is Row => !!row && !row.wip && row.after == null && row.stash == null;
 
   function onContextMenu(event: MouseEvent) {
     const li = (event.target as HTMLElement).closest<HTMLElement>("li[data-index]");
@@ -440,5 +447,9 @@
     background: var(--warn);
     color: var(--warn-ink);
     border-color: transparent;
+  }
+  .label.stash {
+    border-style: dashed;
+    color: var(--l3);
   }
 </style>

@@ -188,7 +188,10 @@ impl Repo {
     /// [`Error::Refused`] while a merge or rebase is in progress; git's error
     /// otherwise (local changes in the way...).
     pub fn rebase(&self, git: &GitCli, onto: &str) -> Result<RebaseOutcome, Error> {
-        if self.rebasing() || self.git_dir().join("MERGE_HEAD").exists() {
+        if self.rebasing()
+            || self.git_dir().join("MERGE_HEAD").exists()
+            || self.sequencer_head()?.is_some()
+        {
             return Err(Error::Refused(
                 "finish or abort the operation in progress first".into(),
             ));

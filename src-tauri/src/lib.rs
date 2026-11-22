@@ -4,10 +4,14 @@ use gitgud_core::git::{self, GitInfo};
 use gitgud_core::graph::Row;
 use gitgud_core::history::{Action, HistoryPlan, Step};
 use gitgud_core::merge::{ConflictSides, ConflictText, MergeState, Side as MergeSide};
-use gitgud_core::oplog::{OpEntry, label_commit, label_paths};
+use gitgud_core::oplog::{OpEntry, label_paths};
+use gitgud_core::ops::{CommitOptions, ResetMode};
 use gitgud_core::rebase::{RebasePlan, RebaseState, RebaseStep};
+use gitgud_core::remote::{PullStrategy, PushInfo};
 use gitgud_core::repo::{Error, Status};
-use gitgud_core::session::{Opened, PlanPreview, Reverted, Session};
+use gitgud_core::sequencer::{SequencerState, SequencerStep};
+use gitgud_core::session::{Opened, PlanPreview, PullResult, Reverted, Session};
+use gitgud_core::stash::StashEntry;
 use gitgud_core::task::Progress;
 use gitgud_core::worktree::{HunkHeader, Side};
 use tauri::{AppHandle, Builder, Emitter, Manager, Runtime, State};
@@ -172,9 +176,38 @@ async fn unstage(
 }
 
 #[tauri::command]
-async fn commit(session: State<'_, Session>, id: u32, message: String) -> Result<Opened, Error> {
-    let action = label_commit(&message);
-    session.write(id, &action, |repo, git| repo.commit(git, &message))
+async fn commit(
+    session: State<'_, Session>,
+    id: u32,
+    message: String,
+    amend: Option<bool>,
+    signoff: Option<bool>,
+    no_verify: Option<bool>,
+) -> Result<Opened, Error> {
+    let options = CommitOptions {
+        amend: amend.unwrap_or(false),
+        signoff: signoff.unwrap_or(false),
+        no_verify: no_verify.unwrap_or(false),
+    };
+    session.commit_with(id, &message, options)
+}
+
+#[tauri::command]
+async fn head_commit_message(
+    session: State<'_, Session>,
+    id: u32,
+) -> Result<Option<String>, Error> {
+    session.get(id)?.repo.head_commit_message()
+}
+
+#[tauri::command]
+async fn reset(
+    session: State<'_, Session>,
+    id: u32,
+    target: String,
+    mode: ResetMode,
+) -> Result<Opened, Error> {
+    session.reset(id, &target, mode)
 }
 
 #[tauri::command]
@@ -185,6 +218,57 @@ async fn branches(session: State<'_, Session>, id: u32) -> Result<Branches, Erro
 #[tauri::command]
 async fn checkout(session: State<'_, Session>, id: u32, branch: String) -> Result<Opened, Error> {
     session.checkout(id, &branch)
+}
+
+#[tauri::command]
+async fn create_branch(
+    session: State<'_, Session>,
+    id: u32,
+    name: String,
+    at: Option<String>,
+    checkout: bool,
+) -> Result<Opened, Error> {
+    session.create_branch(id, &name, at.as_deref(), checkout)
+}
+
+#[tauri::command]
+async fn rename_branch(
+    session: State<'_, Session>,
+    id: u32,
+    old: String,
+    new: String,
+) -> Result<Opened, Error> {
+    session.rename_branch(id, &old, &new)
+}
+
+#[tauri::command]
+async fn delete_branch(
+    session: State<'_, Session>,
+    id: u32,
+    name: String,
+    force: bool,
+) -> Result<Opened, Error> {
+    session.delete_branch(id, &name, force)
+}
+
+#[tauri::command]
+async fn set_upstream(
+    session: State<'_, Session>,
+    id: u32,
+    branch: String,
+    upstream: Option<String>,
+) -> Result<Opened, Error> {
+    session.set_upstream(id, &branch, upstream.as_deref())
+}
+
+#[tauri::command]
+async fn checkout_remote(
+    session: State<'_, Session>,
+    id: u32,
+    remote_branch: String,
+    local_name: String,
+) -> Result<Opened, Error> {
+    session.checkout_remote(id, &remote_branch, &local_name)
 }
 
 #[tauri::command]
@@ -378,11 +462,42 @@ async fn restore_files(session: State<'_, Session>, id: u32, entry: u64) -> Resu
 
 /// Emitted while a fetch runs: `{ id, progress }`.
 const FETCH_PROGRESS: &str = "fetch-progress";
+/// Emitted while fetch, pull or push runs: `{ id, op, progress }`.
+const TASK_PROGRESS: &str = "task-progress";
 
 #[derive(Clone, serde::Serialize)]
 struct FetchProgress {
     id: u32,
     progress: Progress,
+}
+
+#[derive(Clone, serde::Serialize)]
+struct TaskProgress {
+    id: u32,
+    op: &'static str,
+    progress: Progress,
+}
+
+fn emit_task_progress<R: Runtime>(
+    app: &AppHandle<R>,
+    id: u32,
+    op: &'static str,
+    progress: Progress,
+) {
+    if op == "fetch"
+        && let Err(e) = app.emit(
+            FETCH_PROGRESS,
+            FetchProgress {
+                id,
+                progress: progress.clone(),
+            },
+        )
+    {
+        eprintln!("gitgud: cannot emit {FETCH_PROGRESS}: {e}");
+    }
+    if let Err(e) = app.emit(TASK_PROGRESS, TaskProgress { id, op, progress }) {
+        eprintln!("gitgud: cannot emit {TASK_PROGRESS}: {e}");
+    }
 }
 
 #[tauri::command]
@@ -392,9 +507,7 @@ async fn fetch<R: Runtime>(
     id: u32,
 ) -> Result<Opened, Error> {
     session.fetch(id, |progress| {
-        if let Err(e) = app.emit(FETCH_PROGRESS, FetchProgress { id, progress }) {
-            eprintln!("gitgud: cannot emit {FETCH_PROGRESS}: {e}");
-        }
+        emit_task_progress(&app, id, "fetch", progress)
     })
 }
 
@@ -402,6 +515,227 @@ async fn fetch<R: Runtime>(
 #[tauri::command]
 async fn cancel_fetch(session: State<'_, Session>, id: u32) -> Result<bool, Error> {
     Ok(session.cancel(id))
+}
+
+/// Cancels any running remote task (fetch, pull, push) on repo `id`.
+#[tauri::command]
+async fn cancel_task(session: State<'_, Session>, id: u32) -> Result<bool, Error> {
+    Ok(session.cancel(id))
+}
+
+#[tauri::command]
+async fn pull<R: Runtime>(
+    app: AppHandle<R>,
+    session: State<'_, Session>,
+    id: u32,
+    strategy: PullStrategy,
+    remember: Option<bool>,
+) -> Result<PullResult, Error> {
+    session.pull(id, strategy, remember.unwrap_or(false), |progress| {
+        emit_task_progress(&app, id, "pull", progress);
+    })
+}
+
+#[tauri::command]
+async fn push_info(
+    session: State<'_, Session>,
+    id: u32,
+    remote: Option<String>,
+) -> Result<PushInfo, Error> {
+    session.get(id)?.repo.push_info(remote.as_deref())
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn push<R: Runtime>(
+    app: AppHandle<R>,
+    session: State<'_, Session>,
+    id: u32,
+    remote: String,
+    branch: String,
+    remote_branch: Option<String>,
+    set_upstream: bool,
+    force_with_lease: bool,
+) -> Result<Opened, Error> {
+    let target = remote_branch.as_deref().unwrap_or(&branch);
+    session.push(
+        id,
+        &remote,
+        &branch,
+        target,
+        set_upstream,
+        force_with_lease,
+        |progress| emit_task_progress(&app, id, "push", progress),
+    )
+}
+
+#[tauri::command]
+async fn delete_remote_branch(
+    session: State<'_, Session>,
+    id: u32,
+    remote: String,
+    branch: String,
+) -> Result<Opened, Error> {
+    session.delete_remote_branch(id, &remote, &branch)
+}
+
+#[tauri::command]
+async fn predict_cherry_pick(
+    session: State<'_, Session>,
+    id: u32,
+    commit: String,
+) -> Result<Vec<String>, Error> {
+    session
+        .get(id)?
+        .repo
+        .predict_cherry_pick(session.git()?, &commit)
+}
+
+#[tauri::command]
+async fn predict_revert(
+    session: State<'_, Session>,
+    id: u32,
+    commit: String,
+) -> Result<Vec<String>, Error> {
+    session
+        .get(id)?
+        .repo
+        .predict_revert(session.git()?, &commit)
+}
+
+#[tauri::command]
+async fn cherry_pick(
+    session: State<'_, Session>,
+    id: u32,
+    commit: String,
+) -> Result<Opened, Error> {
+    session.cherry_pick(id, &commit)
+}
+
+#[tauri::command]
+async fn revert_commit(
+    session: State<'_, Session>,
+    id: u32,
+    commit: String,
+) -> Result<Opened, Error> {
+    session.revert_commit(id, &commit)
+}
+
+#[tauri::command]
+async fn sequencer_state(
+    session: State<'_, Session>,
+    id: u32,
+) -> Result<Option<SequencerState>, Error> {
+    session.sequencer_state(id)
+}
+
+#[tauri::command]
+async fn sequencer_step(
+    session: State<'_, Session>,
+    id: u32,
+    step: SequencerStep,
+) -> Result<Opened, Error> {
+    session.sequencer_step(id, step)
+}
+
+#[tauri::command]
+async fn stashes(session: State<'_, Session>, id: u32) -> Result<Vec<StashEntry>, Error> {
+    session.get(id)?.repo.stashes()
+}
+
+#[tauri::command]
+async fn stash_detail(
+    session: State<'_, Session>,
+    id: u32,
+    index: usize,
+) -> Result<CommitDetail, Error> {
+    session.get(id)?.repo.stash_detail(index)
+}
+
+#[tauri::command]
+async fn stash_file_diff(
+    session: State<'_, Session>,
+    id: u32,
+    index: usize,
+    path: String,
+) -> Result<FileDiff, Error> {
+    session.get(id)?.repo.stash_file_diff(index, &path)
+}
+
+#[tauri::command]
+async fn stash_save(
+    session: State<'_, Session>,
+    id: u32,
+    message: Option<String>,
+    include_untracked: bool,
+) -> Result<Opened, Error> {
+    session.stash_save(id, message.as_deref(), include_untracked)
+}
+
+#[tauri::command]
+async fn stash_apply(session: State<'_, Session>, id: u32, index: usize) -> Result<Opened, Error> {
+    session.stash_apply(id, index)
+}
+
+#[tauri::command]
+async fn stash_pop(session: State<'_, Session>, id: u32, index: usize) -> Result<Opened, Error> {
+    session.stash_pop(id, index)
+}
+
+#[tauri::command]
+async fn stash_drop(session: State<'_, Session>, id: u32, index: usize) -> Result<Opened, Error> {
+    session.stash_drop(id, index)
+}
+
+#[tauri::command]
+async fn pr_url(
+    session: State<'_, Session>,
+    id: u32,
+    branch: String,
+) -> Result<Option<String>, Error> {
+    session.get(id)?.repo.pr_url(&branch)
+}
+
+fn validate_external_url(url: &str) -> Result<&str, Error> {
+    let trimmed = url.trim();
+    if !(trimmed.starts_with("https://") || trimmed.starts_with("http://")) {
+        return Err(Error::Refused(
+            "only http and https URLs can be opened".into(),
+        ));
+    }
+    if trimmed
+        .chars()
+        .any(|c| c.is_control() || c.is_whitespace() || matches!(c, '"' | '\'' | '`'))
+    {
+        return Err(Error::Refused("URL contains invalid characters".into()));
+    }
+    Ok(trimmed)
+}
+
+#[tauri::command]
+async fn open_external_url(url: String) -> Result<(), Error> {
+    let valid = validate_external_url(&url)?;
+    #[cfg(target_os = "windows")]
+    let mut cmd = {
+        let mut c = std::process::Command::new("rundll32.exe");
+        c.args(["url.dll,FileProtocolHandler", valid]);
+        c
+    };
+    #[cfg(target_os = "macos")]
+    let mut cmd = {
+        let mut c = std::process::Command::new("open");
+        c.arg(valid);
+        c
+    };
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    let mut cmd = {
+        let mut c = std::process::Command::new("xdg-open");
+        c.arg(valid);
+        c
+    };
+    cmd.spawn()
+        .map(drop)
+        .map_err(|e| Error::Read(format!("cannot open browser: {e}")))
 }
 
 #[tauri::command]
@@ -443,15 +777,27 @@ fn app<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             stage,
             unstage,
             commit,
+            head_commit_message,
+            reset,
             undo,
             redo,
             fetch,
             cancel_fetch,
+            cancel_task,
+            pull,
+            push_info,
+            push,
+            delete_remote_branch,
             op_log,
             restore_to,
             restore_files,
             branches,
             checkout,
+            create_branch,
+            rename_branch,
+            delete_branch,
+            set_upstream,
+            checkout_remote,
             predict_merge,
             merge,
             merge_state,
@@ -465,6 +811,21 @@ fn app<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             rebase,
             rebase_state,
             rebase_step,
+            predict_cherry_pick,
+            predict_revert,
+            cherry_pick,
+            revert_commit,
+            sequencer_state,
+            sequencer_step,
+            stashes,
+            stash_detail,
+            stash_file_diff,
+            stash_save,
+            stash_apply,
+            stash_pop,
+            stash_drop,
+            pr_url,
+            open_external_url,
             history_plan,
             plan_preview,
             preview_rows,
@@ -1216,6 +1577,151 @@ mod tests {
     fn launch_path_is_null_without_gitgud_open() {
         assert_eq!(
             Ipc::new().call("launch_path", json!({})).unwrap(),
+            Value::Null
+        );
+    }
+
+    #[test]
+    fn branch_ops_commit_options_reset_and_stash_through_ipc() {
+        let ipc = Ipc::new();
+        let repo = history();
+        let id = open(&ipc, &repo)["id"].clone();
+
+        ipc.call(
+            "create_branch",
+            json!({ "id": id, "name": "feat/a", "at": null, "checkout": true }),
+        )
+        .unwrap();
+        ipc.call(
+            "rename_branch",
+            json!({ "id": id, "old": "feat/a", "new": "feat/b" }),
+        )
+        .unwrap();
+        assert_eq!(repo.git(&["branch", "--show-current"]).trim(), "feat/b");
+
+        repo.write("a.txt", "stash me");
+        ipc.call(
+            "stash_save",
+            json!({ "id": id, "message": "wip", "includeUntracked": false }),
+        )
+        .unwrap();
+        let list = ipc.call("stashes", json!({ "id": id })).unwrap();
+        assert_eq!(list.as_array().unwrap().len(), 1);
+        assert_eq!(list[0]["message"], "wip");
+        let detail = ipc
+            .call("stash_detail", json!({ "id": id, "index": 0 }))
+            .unwrap();
+        assert_eq!(detail["files"][0]["path"], "a.txt");
+        let diff = ipc
+            .call(
+                "stash_file_diff",
+                json!({ "id": id, "index": 0, "path": "a.txt" }),
+            )
+            .unwrap();
+        assert!(!diff["hunks"].as_array().unwrap().is_empty());
+        ipc.call("stash_pop", json!({ "id": id, "index": 0 }))
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(repo.path().join("a.txt")).unwrap(),
+            "stash me"
+        );
+
+        ipc.call("stage", json!({ "id": id, "paths": ["a.txt"] }))
+            .unwrap();
+        ipc.call(
+            "commit",
+            json!({ "id": id, "message": "signed", "amend": false, "signoff": true, "noVerify": true }),
+        )
+        .unwrap();
+        assert!(
+            ipc.call("head_commit_message", json!({ "id": id }))
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .contains("Signed-off-by:")
+        );
+        let prev = repo.git(&["rev-parse", "HEAD~1"]).trim().to_owned();
+        ipc.call("reset", json!({ "id": id, "target": prev, "mode": "hard" }))
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(repo.path().join("a.txt")).unwrap(),
+            "b"
+        );
+
+        ipc.call("checkout", json!({ "id": id, "branch": "main" }))
+            .unwrap();
+        ipc.call(
+            "delete_branch",
+            json!({ "id": id, "name": "feat/b", "force": false }),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn pull_push_sequencer_and_pr_url_through_ipc() {
+        let ipc = Ipc::new();
+        let local = history();
+        let origin = tempfile::tempdir().unwrap();
+        let bare = origin.path().join("o.git");
+        local.git(&["clone", "-q", "--bare", ".", bare.to_str().unwrap()]);
+        local.git(&["remote", "add", "origin", bare.to_str().unwrap()]);
+        local.git(&["fetch", "-q", "origin"]);
+        local.git(&["branch", "-q", "--set-upstream-to=origin/main", "main"]);
+        local.git(&["remote", "add", "gh", "git@github.com:HappyRave/gitgud.git"]);
+        let id = open(&ipc, &local)["id"].clone();
+
+        let pulled = ipc
+            .call(
+                "pull",
+                json!({ "id": id, "strategy": "auto", "remember": false }),
+            )
+            .unwrap();
+        assert_eq!(pulled["outcome"]["kind"], "upToDate");
+
+        let info = ipc
+            .call("push_info", json!({ "id": id, "remote": "origin" }))
+            .unwrap();
+        assert_eq!(info["branch"], "main");
+        assert_eq!(info["remote"], "origin");
+
+        local.write("p.txt", "p").commit_all("pushable");
+        ipc.call(
+            "push",
+            json!({ "id": id, "remote": "origin", "branch": "main", "remoteBranch": "main", "setUpstream": false, "forceWithLease": false }),
+        )
+        .unwrap();
+        assert_eq!(
+            ipc.call("push_info", json!({ "id": id, "remote": "gh" }))
+                .unwrap()["prUrl"],
+            "https://github.com/HappyRave/gitgud/pull/new/main"
+        );
+        assert!(validate_external_url("https://github.com/a/b").is_ok());
+        assert!(validate_external_url("javascript:alert(1)").is_err());
+
+        // Sequencer IPC: conflicting cherry-pick -> resolve -> continue.
+        local.git(&["checkout", "-q", "-b", "other"]);
+        local.write("a.txt", "theirs\n").commit_all("theirs");
+        let target = local.git(&["rev-parse", "HEAD"]).trim().to_owned();
+        local.git(&["checkout", "-q", "main"]);
+        local.write("a.txt", "ours\n").commit_all("ours");
+        assert_eq!(
+            ipc.call("predict_cherry_pick", json!({ "id": id, "commit": target }))
+                .unwrap(),
+            json!(["a.txt"])
+        );
+        ipc.call("cherry_pick", json!({ "id": id, "commit": target }))
+            .unwrap();
+        let state = ipc.call("sequencer_state", json!({ "id": id })).unwrap();
+        assert_eq!(state["kind"], "cherryPick");
+        ipc.call(
+            "resolve_with",
+            json!({ "id": id, "path": "a.txt", "content": "merged\n", "how": "edit" }),
+        )
+        .unwrap();
+        ipc.call("sequencer_step", json!({ "id": id, "step": "continue" }))
+            .unwrap();
+        assert_eq!(
+            ipc.call("sequencer_state", json!({ "id": id })).unwrap(),
             Value::Null
         );
     }

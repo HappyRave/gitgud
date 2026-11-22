@@ -31,6 +31,9 @@ pub struct Row {
     pub after: Option<String>,
     /// On a plan preview: a commit the plan replaces.
     pub faded: bool,
+    /// Stash index (`stash@{n}`) when this row represents a stash.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stash: Option<usize>,
     pub layout: RowLayout,
 }
 
@@ -109,7 +112,8 @@ impl Graph {
             let label_hit = self.topology.labels(row).iter().any(|l| match l {
                 RefLabel::Branch { name, .. }
                 | RefLabel::Remote { name }
-                | RefLabel::Tag { name } => name.to_lowercase().contains(&needle),
+                | RefLabel::Tag { name }
+                | RefLabel::Stash { name } => name.to_lowercase().contains(&needle),
                 RefLabel::Head => false,
             });
             if label_hit || id.to_string().starts_with(&needle) {
@@ -148,6 +152,7 @@ impl Graph {
                         wip: true,
                         after: None,
                         faded: false,
+                        stash: None,
                         layout,
                     });
                 }
@@ -162,6 +167,7 @@ impl Graph {
                         wip: false,
                         after: Some(ghost.tag.clone()),
                         faded: false,
+                        stash: None,
                         layout,
                     });
                 }
@@ -179,6 +185,7 @@ impl Graph {
                     wip: false,
                     after: None,
                     faded: self.topology.stroke(row) == Stroke::Faded,
+                    stash: self.topology.stash(row),
                     layout,
                 })
             })

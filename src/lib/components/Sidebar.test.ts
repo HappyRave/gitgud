@@ -15,7 +15,7 @@ const DATA: Branches = {
 };
 
 function setup(props: { busy?: boolean; oplogOpen?: boolean; merging?: boolean } = {}) {
-  const calls = mockCommands({ branches: () => DATA });
+  const calls = mockCommands({ branches: () => DATA, stashes: () => [] });
   const oncheckout = vi.fn();
   const onmerge = vi.fn();
   const onrebase = vi.fn();
@@ -35,7 +35,10 @@ describe("Sidebar", () => {
     await screen.findByText("stack");
 
     expect(branchRows()).toEqual(["✓master↑1", "▾conflict/", "ours", "▾feature/", "stack↑3 ↓2"]);
-    expect(calls).toEqual([{ cmd: "branches", args: { id: 4 } }]);
+    expect(calls).toEqual([
+      { cmd: "branches", args: { id: 4 } },
+      { cmd: "stashes", args: { id: 4 } },
+    ]);
   });
 
   it("folds a folder", async () => {
@@ -83,7 +86,7 @@ describe("Sidebar", () => {
 
     await view.rerender({ repoId: 4, revision: 1, oncheckout: vi.fn(), onmerge: vi.fn(), onrebase: vi.fn(), onoplog: vi.fn() });
 
-    await vi.waitFor(() => expect(calls).toHaveLength(2));
+    await vi.waitFor(() => expect(calls.filter((c) => c.cmd === "branches")).toHaveLength(2));
   });
 
   it("right-click on a branch offers check out, merge into and rebase onto it", async () => {
@@ -135,5 +138,114 @@ describe("Sidebar", () => {
     for (const item of screen.getAllByRole("menuitem")) {
       expect(item).toBeDisabled();
     }
+  });
+
+  it("wires + button, F2/Delete keys, upstream, remote checkout, and PR links", async () => {
+    const oncreatebranch = vi.fn();
+    const onrenamebranch = vi.fn();
+    const ondeletebranch = vi.fn();
+    const onsetupstream = vi.fn();
+    const oncheckoutremote = vi.fn();
+    const onopenpr = vi.fn();
+    mockCommands({
+      branches: () => ({
+        local: [
+          { name: "master", current: true, upstream: "origin/master", ahead: 1, behind: 0 },
+          { name: "feature/stack", current: false, upstream: null, ahead: 0, behind: 0 },
+        ],
+        remotes: [{ name: "origin", branches: ["origin/master", "origin/feature/stack"] }],
+        fetched: null,
+      }),
+      stashes: () => [],
+    });
+    render(Sidebar, {
+      repoId: 4,
+      revision: 0,
+      oncheckout: vi.fn(),
+      onmerge: vi.fn(),
+      onrebase: vi.fn(),
+      onoplog: vi.fn(),
+      oncreatebranch,
+      onrenamebranch,
+      ondeletebranch,
+      onsetupstream,
+      oncheckoutremote,
+      onopenpr,
+    });
+    await screen.findByText("stack");
+
+    await fireEvent.click(screen.getByRole("button", { name: "New branch" }));
+    expect(oncreatebranch).toHaveBeenCalledWith();
+
+    const stackBtn = screen.getByRole("button", { name: /stack/ });
+    await fireEvent.keyDown(stackBtn, { key: "F2" });
+    expect(onrenamebranch).toHaveBeenCalledWith("feature/stack");
+    await fireEvent.keyDown(stackBtn, { key: "Delete" });
+    expect(ondeletebranch).toHaveBeenCalledWith("feature/stack");
+    await fireEvent.keyDown(screen.getByRole("button", { name: /master/ }), { key: "Delete" });
+    expect(ondeletebranch).toHaveBeenCalledTimes(1);
+
+    await fireEvent.contextMenu(stackBtn);
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Set upstream to origin/feature/stack" }));
+    expect(onsetupstream).toHaveBeenCalledWith("feature/stack", "origin/feature/stack");
+
+    await fireEvent.contextMenu(screen.getByRole("button", { name: /master/ }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Unset upstream (origin/master)" }));
+    expect(onsetupstream).toHaveBeenCalledWith("master", null);
+
+    await fireEvent.contextMenu(stackBtn);
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Open Pull Request ↗" }));
+    expect(onopenpr).toHaveBeenCalledWith("feature/stack");
+
+    const remotes = screen.getByRole("region", { name: "Remotes" });
+    await fireEvent.click(within(remotes).getByRole("button", { name: /origin/ }));
+    const remoteBranch = within(remotes).getByRole("button", { name: /feature\/stack/ });
+    await fireEvent.contextMenu(remoteBranch);
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Check out origin/feature/stack…" }));
+    expect(oncheckoutremote).toHaveBeenCalledWith("origin/feature/stack");
+
+    await fireEvent.contextMenu(remoteBranch);
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Delete origin/feature/stack…" }));
+    expect(ondeletebranch).toHaveBeenCalledWith("feature/stack", "origin");
+  });
+
+  it("shows stashes section and handles select, pop, apply and drop", async () => {
+    const onstashselect = vi.fn();
+    const onstashpop = vi.fn();
+    const onstashapply = vi.fn();
+    const onstashdrop = vi.fn();
+    mockCommands({
+      branches: () => DATA,
+      stashes: () => [{ index: 0, shortId: "stash@{0}", id: "s0".repeat(20), parentId: "b0".repeat(20), baseId: "b0".repeat(20), branch: "master", message: "WIP lighting", time: 1_700_000_000 }],
+    });
+    render(Sidebar, {
+      repoId: 4,
+      revision: 0,
+      oncheckout: vi.fn(),
+      onmerge: vi.fn(),
+      onrebase: vi.fn(),
+      onoplog: vi.fn(),
+      onstashselect,
+      onstashpop,
+      onstashapply,
+      onstashdrop,
+    });
+
+    const stashes = await screen.findByRole("region", { name: "Stashes" });
+    const row = within(stashes).getByRole("button", { name: /WIP lighting/ });
+    await fireEvent.click(row);
+    expect(onstashselect).toHaveBeenCalledWith(0);
+
+    await fireEvent.contextMenu(row);
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Pop stash" }));
+    expect(onstashpop).toHaveBeenCalledWith(0);
+
+    await fireEvent.contextMenu(row);
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Apply stash" }));
+    expect(onstashapply).toHaveBeenCalledWith(0);
+
+    await fireEvent.contextMenu(row);
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Drop stash" }));
+    expect(onstashdrop).toHaveBeenCalledWith(0);
   });
 });

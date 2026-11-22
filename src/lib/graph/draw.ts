@@ -75,6 +75,8 @@ export interface DrawRow {
   ghost?: boolean;
   /** A commit the plan replaces. */
   faded?: boolean;
+  /** A stash entry: drawn as a hollow square so it stands out in grayscale too. */
+  stash?: boolean;
 }
 
 const DASH = [3, 2];
@@ -108,23 +110,31 @@ export function drawGraph(
     ctx.globalAlpha = row.faded ? FADED_ALPHA : 1;
     const cx = laneX(row.layout.node);
     const cy = y + ROW_HEIGHT / 2;
-    ctx.beginPath();
-    ctx.arc(cx, cy, DOT_RADIUS, 0, Math.PI * 2);
-    if (row.ghost) {
+    if (row.stash) {
+      const s = DOT_RADIUS * 1.7;
       ctx.fillStyle = theme.panel;
-      ctx.fill();
-      ctx.setLineDash([2, 2]);
+      ctx.fillRect(cx - s / 2, cy - s / 2, s, s);
       ctx.strokeStyle = laneColor(row.layout.node, theme);
-      ctx.stroke();
-      ctx.setLineDash([]);
-    } else if (row.wip) {
-      ctx.fillStyle = theme.panel;
-      ctx.fill();
-      ctx.strokeStyle = laneColor(row.layout.node, theme);
-      ctx.stroke();
+      ctx.strokeRect(cx - s / 2, cy - s / 2, s, s);
     } else {
-      ctx.fillStyle = laneColor(row.layout.node, theme);
-      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(cx, cy, DOT_RADIUS, 0, Math.PI * 2);
+      if (row.ghost) {
+        ctx.fillStyle = theme.panel;
+        ctx.fill();
+        ctx.setLineDash([2, 2]);
+        ctx.strokeStyle = laneColor(row.layout.node, theme);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      } else if (row.wip) {
+        ctx.fillStyle = theme.panel;
+        ctx.fill();
+        ctx.strokeStyle = laneColor(row.layout.node, theme);
+        ctx.stroke();
+      } else {
+        ctx.fillStyle = laneColor(row.layout.node, theme);
+        ctx.fill();
+      }
     }
     ctx.globalAlpha = 1;
     if (row.layout.overflow) {

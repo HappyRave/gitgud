@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Hunk, Status } from "$lib/api";
+  import type { CommitOptions, Hunk, Status } from "$lib/api";
   import { workingKey } from "$lib/keys";
   import { fileOrder, stepFile, type FileRef } from "$lib/working";
   import CommitBox from "./CommitBox.svelte";
@@ -20,6 +20,7 @@
     ondiscard,
     onhunk,
     oncommit,
+    onstash,
   }: {
     repoId: number;
     status: Status;
@@ -35,7 +36,8 @@
     onunstage: (paths: string[]) => void;
     ondiscard: (paths: string[]) => void;
     onhunk: (path: string, action: "stage" | "unstage" | "discard", hunk: Hunk) => void;
-    oncommit: (message: string) => Promise<void>;
+    oncommit: (message: string, options?: CommitOptions) => Promise<void>;
+    onstash?: () => void;
   } = $props();
 
   let pane = $state<HTMLElement | null>(null);
@@ -140,9 +142,14 @@
       />
     </div>
   {:else if status.entries.length}
-    <p class="hint ab">↑↓ files · Space stage / unstage · A stage all · Shift+⌫ discard · C message</p>
+    <p class="hint ab">
+      ↑↓ files · Space stage / unstage · A stage all · Shift+⌫ discard · C message
+      {#if onstash}
+        <button class="stashbtn" disabled={busy} onclick={onstash}>Stash…</button>
+      {/if}
+    </p>
   {/if}
-  <CommitBox bind:this={commitBox} staged={stagedCount} {branch} {busy} {oncommit} />
+  <CommitBox bind:this={commitBox} {repoId} staged={stagedCount} {branch} {busy} {oncommit} />
 </div>
 
 <style>
@@ -181,6 +188,15 @@
     margin: 0;
     padding: 8px 10px;
     border-top: 1px solid var(--line);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .stashbtn {
+    margin-left: auto;
+    height: 20px;
+    padding: 0 7px;
+    font-size: 11px;
   }
   /* Ultrawide (R1, decided): file lists and commit box | diff. */
   @media (min-width: 2400px) {
