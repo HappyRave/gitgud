@@ -1,3 +1,4 @@
+pub mod ai;
 pub mod blame;
 pub mod branches;
 pub mod cli;
@@ -22,6 +23,7 @@ pub mod repo;
 pub mod sequencer;
 pub mod session;
 pub mod snapshot;
+pub mod stacks;
 pub mod stash;
 pub mod tags;
 pub mod task;

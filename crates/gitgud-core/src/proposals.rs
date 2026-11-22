@@ -856,3 +856,46 @@ fn now_secs() -> i64 {
     )
     .unwrap_or(0)
 }
+
+/// Relative file path for writing coding agent instructions for `target`.
+#[must_use]
+pub fn agent_setup_rel_path(target: &str) -> &'static str {
+    match target {
+        "claude" => ".claude/skills/gitgud/SKILL.md",
+        "codex" => ".codex/skills/gitgud/SKILL.md",
+        "cursor" => ".cursor/rules/gitgud.mdc",
+        _ => "GITGUD_AGENT.md",
+    }
+}
+
+/// Canonical instructions teaching external coding agents the safe gitgud proposal workflow.
+#[must_use]
+pub fn agent_setup_text() -> &'static str {
+    "\
+# gitgud Agent Workflow Instructions
+
+Never commit, checkout, merge, rebase, or push directly with `git` when working in a `gitgud` repository.
+Instead, stage and propose changes cleanly for human review inside gitgud:
+
+1. Inspect status & stable hunk IDs: `gitgud-cli status --json` (or MCP `status`).
+2. Propose logical commits without modifying the user's index:
+   `gitgud-cli propose -m \"<commit message>\" --why \"<why & test evidence>\" --agent <name> --json`
+3. Check human feedback or approval status:
+   `gitgud-cli proposal <id> --json` (or MCP `proposal`).
+4. For Unity binary/LFS assets, acquire locks via `gitgud-cli locks lock <path>`.
+"
+}
+
+/// Writes coding agent instructions for `target` inside `repo_root` and returns the relative path written.
+///
+/// # Errors
+/// [`Error::Read`] if creating parent folders or writing the file fails.
+pub fn write_agent_setup(repo_root: &Path, target: &str) -> Result<String, Error> {
+    let rel = agent_setup_rel_path(target);
+    let dest = repo_root.join(rel);
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent).map_err(read_err)?;
+    }
+    fs::write(&dest, agent_setup_text()).map_err(read_err)?;
+    Ok(rel.to_owned())
+}

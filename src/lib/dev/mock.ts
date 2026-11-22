@@ -727,6 +727,47 @@ export function installMock(scenario: string) {
       return opened();
     },
     pr_url: ({ branch }) => `https://github.com/Max/boat/pull/new/${branch}`,
+    pr_url_with_base: ({ branch, base }) =>
+      base ? `https://github.com/Max/boat/compare/${base}...${branch}?expand=1` : `https://github.com/Max/boat/pull/new/${branch}`,
+    branch_stacks: () => [
+      {
+        root: "master",
+        levels: [
+          {
+            branch: "feature/camera-rig",
+            base: "master",
+            commits: 1,
+            current: false,
+            needsRestack: true,
+            prUrl: "https://github.com/Max/boat/compare/master...feature/camera-rig?expand=1",
+          },
+          {
+            branch: "feature/stack",
+            base: "feature/camera-rig",
+            commits: 2,
+            current: false,
+            needsRestack: true,
+            prUrl: "https://github.com/Max/boat/compare/feature/camera-rig...feature/stack?expand=1",
+          },
+        ],
+      },
+    ],
+    restack: () => {
+      graphVersion += 1;
+      return opened();
+    },
+    lfs_cache_stats: () => ({ objectCount: 4, totalBytes: 12_500_000, prunableCount: 2, prunableBytes: 4_200_000 }),
+    lfs_prune: () => ({ objectCount: 2, totalBytes: 8_300_000, prunableCount: 0, prunableBytes: 0 }),
+    ai_providers: () => ({ cliAvailable: ["claude"], configuredEnvKey: false }),
+    ai_draft_commit_message: () => "Tune engine torque curve for rough waves",
+    agent_setup: ({ target }) =>
+      target === "claude"
+        ? ".claude/skills/gitgud/SKILL.md"
+        : target === "codex"
+          ? ".codex/skills/gitgud/SKILL.md"
+          : target === "cursor"
+            ? ".cursor/rules/gitgud.mdc"
+            : "GITGUD_AGENT.md",
     open_external_url: () => null,
     library_load: () => mockLib,
     library_summaries: () => mockLib.repos.map((r) => r.cached!).filter(Boolean),

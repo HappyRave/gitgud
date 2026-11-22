@@ -29,29 +29,57 @@ pub fn detect_host(url: &str) -> HostKind {
 /// supporting GitHub and Bitbucket Cloud.
 #[must_use]
 pub fn pr_url_for(url: &str, branch: &str) -> Option<String> {
+    pr_url_for_base(url, branch, None)
+}
+
+/// Builds the browser URL to open or create a pull request for `branch` targeting
+/// `base` (when given) on `url`.
+#[must_use]
+pub fn pr_url_for_base(url: &str, branch: &str, base: Option<&str>) -> Option<String> {
     let parsed = parse_remote(url)?;
     if parsed.repo_path.is_empty() || branch.trim().is_empty() {
         return None;
     }
+    let clean_base = base.map(str::trim).filter(|b| !b.is_empty());
     match parsed.host_kind {
         HostKind::GitHub => {
-            let encoded_path = branch
-                .split('/')
-                .map(percent_encode)
-                .collect::<Vec<_>>()
-                .join("/");
-            Some(format!(
-                "https://github.com/{}/pull/new/{encoded_path}",
-                parsed.repo_path
-            ))
+            let encoded_branch = encode_branch_path(branch);
+            if let Some(target) = clean_base {
+                let encoded_base = encode_branch_path(target);
+                Some(format!(
+                    "https://github.com/{}/compare/{encoded_base}...{encoded_branch}?expand=1",
+                    parsed.repo_path
+                ))
+            } else {
+                Some(format!(
+                    "https://github.com/{}/pull/new/{encoded_branch}",
+                    parsed.repo_path
+                ))
+            }
         }
-        HostKind::Bitbucket => Some(format!(
-            "https://bitbucket.org/{}/pull-requests/new?source={}&t=1",
-            parsed.repo_path,
-            percent_encode(branch)
-        )),
+        HostKind::Bitbucket => {
+            let mut pr = format!(
+                "https://bitbucket.org/{}/pull-requests/new?source={}",
+                parsed.repo_path,
+                percent_encode(branch)
+            );
+            if let Some(target) = clean_base {
+                pr.push_str("&dest=");
+                pr.push_str(&percent_encode(target));
+            }
+            pr.push_str("&t=1");
+            Some(pr)
+        }
         HostKind::Other | HostKind::None => None,
     }
+}
+
+fn encode_branch_path(branch: &str) -> String {
+    branch
+        .split('/')
+        .map(percent_encode)
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 impl Repo {
@@ -67,6 +95,18 @@ impl Repo {
     /// # Errors
     /// [`Error::Read`] when git config can't be read.
     pub fn pr_url(&self, branch: &str) -> Result<Option<String>, Error> {
+        self.pr_url_with_base(branch, None)
+    }
+
+    /// Pull request creation URL for `branch` targeting optional `base` branch.
+    ///
+    /// # Errors
+    /// [`Error::Read`] when git config can't be read.
+    pub fn pr_url_with_base(
+        &self,
+        branch: &str,
+        base: Option<&str>,
+    ) -> Result<Option<String>, Error> {
         let repo = self.gix();
         let remote_name = repo
             .try_find_reference(&format!("refs/heads/{branch}"))
@@ -80,7 +120,7 @@ impl Repo {
             Some(name) => self.remote_url(&name),
             None => self.primary_remote_url(),
         };
-        Ok(url.and_then(|u| pr_url_for(&u, branch)))
+        Ok(url.and_then(|u| pr_url_for_base(&u, branch, base)))
     }
 
     pub(crate) fn remote_url(&self, name: &str) -> Option<String> {
@@ -213,6 +253,29 @@ mod tests {
         assert_eq!(
             pr_url_for("https://github.com/o/r.git", "fix/bug #1"),
             Some("https://github.com/o/r/pull/new/fix/bug%20%231".into())
+        );
+    }
+
+    #[test]
+    fn builds_stacked_pr_urls_with_base() {
+        assert_eq!(
+            pr_url_for_base(
+                "https://github.com/Max/boat.git",
+                "stack/part2",
+                Some("stack/part1")
+            ),
+            Some("https://github.com/Max/boat/compare/stack/part1...stack/part2?expand=1".into())
+        );
+        assert_eq!(
+            pr_url_for_base(
+                "git@bitbucket.org:studio/arcade.git",
+                "stack/part2",
+                Some("stack/part1")
+            ),
+            Some(
+                "https://bitbucket.org/studio/arcade/pull-requests/new?source=stack%2Fpart2&dest=stack%2Fpart1&t=1"
+                    .into()
+            )
         );
     }
 }

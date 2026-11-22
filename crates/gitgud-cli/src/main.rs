@@ -1,6 +1,5 @@
 mod mcp;
 
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -286,32 +285,12 @@ fn handle_agent(repo_root: &Path, args: &[String], json_out: bool) -> Result<(),
         i += 1;
     }
 
-    let skill_text = "\
-# gitgud Agent Workflow Instructions
-
-Never commit, checkout, merge, rebase, or push directly with `git` when working in a `gitgud` repository.
-Instead, stage and propose changes cleanly for human review inside gitgud:
-
-1. Inspect status & stable hunk IDs: `gitgud-cli status --json` (or MCP `status`).
-2. Propose logical commits without modifying the user's index:
-   `gitgud-cli propose -m \"<commit message>\" --why \"<why & test evidence>\" --agent <name> --json`
-3. Check human feedback or approval status:
-   `gitgud-cli proposal <id> --json` (or MCP `proposal`).
-4. For Unity binary/LFS assets, acquire locks via `gitgud-cli locks lock <path>`.
-";
-
-    let dest = match target {
-        "claude" => repo_root.join(".claude/skills/gitgud/SKILL.md"),
-        "codex" => repo_root.join(".codex/skills/gitgud/SKILL.md"),
-        "cursor" => repo_root.join(".cursor/rules/gitgud.mdc"),
-        _ => repo_root.join("GITGUD_AGENT.md"),
-    };
+    let skill_text = gitgud_core::proposals::agent_setup_text();
+    let rel = gitgud_core::proposals::agent_setup_rel_path(target);
+    let dest = repo_root.join(rel);
 
     if write_file {
-        if let Some(parent) = dest.parent() {
-            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-        }
-        fs::write(&dest, skill_text).map_err(|e| e.to_string())?;
+        gitgud_core::proposals::write_agent_setup(repo_root, target).map_err(|e| e.to_string())?;
     }
 
     if json_out {

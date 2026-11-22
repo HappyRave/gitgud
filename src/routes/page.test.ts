@@ -170,6 +170,14 @@ function app(extra: Handlers = {}) {
       headMoved: false,
     }),
     proposal_reject: () => ({ id: 1, root: "C:/work/repo", rows: 1, graphVersion: 0 }),
+    branch_stacks: () => [],
+    restack: () => ({ id: 1, root: "C:/work/repo", rows: 1, graphVersion: 0 }),
+    pr_url_with_base: () => null,
+    lfs_cache_stats: () => ({ objectCount: 0, totalBytes: 0, prunableCount: 0, prunableBytes: 0 }),
+    lfs_prune: () => ({ objectCount: 0, totalBytes: 0, prunableCount: 0, prunableBytes: 0 }),
+    ai_providers: () => ({ cliAvailable: [], configuredEnvKey: false }),
+    ai_draft_commit_message: () => "Drafted commit",
+    agent_setup: () => "GITGUD_AGENT.md",
     ...extra,
   };
   return mockCommands(handlers);
@@ -2676,5 +2684,98 @@ describe("Unity, LFS locks, Smart Merge verify, and open-editor guard", () => {
       message: "Tune steering damper",
       selectedPaths: ["Assets/Scripts/Engine.cs"],
     });
+  });
+
+  it("shows stacked branches in the sidebar, opens stacked PR URLs, and restacks", async () => {
+    const calls = app({
+      launch_path: () => "C:/work/repo",
+      branch_stacks: () => [
+        {
+          root: "main",
+          levels: [
+            {
+              branch: "stack/part1",
+              base: "main",
+              commits: 1,
+              current: false,
+              needsRestack: true,
+              prUrl: "https://github.com/Max/boat/compare/main...stack/part1?expand=1",
+            },
+            {
+              branch: "stack/part2",
+              base: "stack/part1",
+              commits: 2,
+              current: true,
+              needsRestack: true,
+              prUrl: "https://github.com/Max/boat/compare/stack/part1...stack/part2?expand=1",
+            },
+          ],
+        },
+      ],
+      restack: () => ({ id: 1, root: "C:/work/repo", rows: 1, graphVersion: 1 }),
+      open_external_url: () => null,
+    });
+    render(Page);
+
+    const stacksRegion = await screen.findByRole("region", { name: "Stacks" });
+    expect(within(stacksRegion).getByText("stack/part1")).toBeInTheDocument();
+    expect(within(stacksRegion).getByText("stack/part2")).toBeInTheDocument();
+
+    await fireEvent.click(within(stacksRegion).getByRole("button", { name: "Open PR for stack/part2" }));
+    expect(calls.find((c) => c.cmd === "open_external_url")?.args).toEqual({
+      url: "https://github.com/Max/boat/compare/stack/part1...stack/part2?expand=1",
+    });
+
+    await fireEvent.click(within(stacksRegion).getByRole("button", { name: "Restack" }));
+    expect(calls.find((c) => c.cmd === "restack")?.args).toEqual({
+      id: 1,
+      topBranch: "stack/part2",
+      onto: "main",
+    });
+  });
+
+  it("drafts a commit message with AI from staged changes", async () => {
+    const calls = app({
+      launch_path: () => "C:/work/repo",
+      repo_status: () => ({
+        root: "C:/work/repo",
+        head: { kind: "branch", name: "main" },
+        entries: [{ path: "a.txt", kind: "tracked", index: "modified", worktree: null }],
+      }),
+      ai_draft_commit_message: () => "Improve steering responsiveness",
+    });
+    render(Page);
+
+    const draftBtn = await screen.findByRole("button", { name: "✦ Draft" });
+    await fireEvent.click(draftBtn);
+
+    await vi.waitFor(() => expect(calls.some((c) => c.cmd === "ai_draft_commit_message")).toBe(true));
+    await vi.waitFor(() =>
+      expect(screen.getByRole("textbox", { name: "Commit message" })).toHaveValue("Improve steering responsiveness"),
+    );
+  });
+
+  it("offers Force-push with lease after quick-editing a pushed branch", async () => {
+    const calls = app({
+      launch_path: () => "C:/work/repo",
+      branches: () => ({
+        local: [{ name: "feat/boat", current: true, upstream: "origin/feat/boat", ahead: 1, behind: 0 }],
+        remotes: [{ name: "origin", branches: ["origin/feat/boat"] }],
+        fetched: null,
+      }),
+      quick_edit: () => ({ id: 1, root: "C:/work/repo", rows: 1, graphVersion: 1 }),
+    });
+    render(Page);
+
+    const commits = await screen.findByRole("listbox", { name: "Commits" });
+    await fireEvent.click(await within(commits).findByText("first commit"));
+    await fireEvent.keyDown(commits, { key: "d" });
+
+    expect(calls.find((c) => c.cmd === "quick_edit")?.args).toEqual({
+      id: 1,
+      commit: "a".repeat(40),
+      action: "drop",
+    });
+    expect(await screen.findByRole("button", { name: "Force-push with lease…" })).toBeInTheDocument();
   });
 });

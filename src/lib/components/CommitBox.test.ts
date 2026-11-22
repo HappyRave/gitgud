@@ -121,4 +121,15 @@ describe("CommitBox", () => {
       noVerify: true,
     });
   });
+
+  it("drafts a commit message via ondraft when staged files exist", async () => {
+    const ondraft = vi.fn(async () => "Tune steering curve");
+    render(CommitBox, { staged: 2, oncommit: vi.fn(async () => {}), ondraft });
+
+    const btn = screen.getByRole("button", { name: "✦ Draft" });
+    await fireEvent.click(btn);
+
+    expect(ondraft).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(box()).toHaveValue("Tune steering curve"));
+  });
 });

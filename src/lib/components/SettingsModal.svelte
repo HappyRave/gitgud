@@ -1,13 +1,19 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import {
+    agentSetup,
+    aiProviders,
     configGetIdentity,
     configSetIdentity,
     hasCommitGraph,
+    lfsCacheStats,
+    lfsPrune,
     toolDiagnostics,
     unityApplyRepoSetup,
     unityRepoSetupStatus,
     writeCommitGraph,
+    type AiProviderStatus,
+    type LfsCacheStats,
     type ToolDiagnostics,
     type UnityRepoSetupStatus,
   } from "$lib/api";
@@ -43,6 +49,53 @@
   let optimizingGraph = $state(false);
   let unitySetup = $state<UnityRepoSetupStatus | null>(null);
   let fixingUnitySetup = $state(false);
+  let lfsStats = $state<LfsCacheStats | null>(null);
+  let pruningLfs = $state(false);
+  let aiStatus = $state<AiProviderStatus | null>(null);
+  let agentTarget = $state<"claude" | "codex" | "cursor" | "generic">("claude");
+  let writingAgentSetup = $state(false);
+  let agentSetupPath = $state<string | null>(null);
+
+  function formatBytes(bytes: number) {
+    if (bytes >= 1024 * 1024) {
+      return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    }
+    if (bytes >= 1024) {
+      return `${(bytes / 1024).toFixed(1)} KB`;
+    }
+    return `${bytes} B`;
+  }
+
+  async function pruneLfs() {
+    if (activeRepoId == null || pruningLfs) {
+      return;
+    }
+    pruningLfs = true;
+    error = null;
+    try {
+      lfsStats = await lfsPrune(activeRepoId);
+    } catch (err) {
+      error = String(err);
+    } finally {
+      pruningLfs = false;
+    }
+  }
+
+  async function writeAgentConfig() {
+    if (activeRepoId == null || writingAgentSetup) {
+      return;
+    }
+    writingAgentSetup = true;
+    error = null;
+    agentSetupPath = null;
+    try {
+      agentSetupPath = await agentSetup(activeRepoId, agentTarget);
+    } catch (err) {
+      error = String(err);
+    } finally {
+      writingAgentSetup = false;
+    }
+  }
 
   async function fixUnitySetup() {
     if (activeRepoId == null || fixingUnitySetup || !unitySetup) {
@@ -113,10 +166,17 @@
       (d) => (diag = d),
       (err) => (error = String(err)),
     );
+    aiProviders()
+      .then((a) => (aiStatus = a))
+      .catch(() => (aiStatus = null));
     if (activeRepoId != null) {
       hasCommitGraph(activeRepoId).then(
         (built) => (commitGraph = built),
         () => (commitGraph = null),
+      );
+      lfsCacheStats(activeRepoId).then(
+        (s) => (lfsStats = s),
+        () => (lfsStats = null),
       );
       unityRepoSetupStatus(activeRepoId).then(
         (s) => (unitySetup = s),
@@ -224,6 +284,18 @@
           <dd class="mono">{diag.gitPath}</dd>
           <dt>Git LFS</dt>
           <dd>{diag.lfsVersion ?? "Not installed"}</dd>
+          <dt>AI CLIs</dt>
+          <dd>
+            {#if aiStatus === null}
+              Checking…
+            {:else if aiStatus.cliAvailable.length > 0}
+              {aiStatus.cliAvailable.join(", ")}
+            {:else if aiStatus.configuredEnvKey}
+              API key env var detected
+            {:else}
+              None detected on PATH
+            {/if}
+          </dd>
           {#if activeRepoId != null}
             <dt>Commit graph</dt>
             <dd class="gcache">
@@ -232,6 +304,20 @@
                 {optimizingGraph ? "Building…" : commitGraph ? "Rebuild graph cache" : "Optimize graph cache"}
               </button>
             </dd>
+            {#if lfsStats && (lfsStats.objectCount > 0 || diag.lfsVersion)}
+              <dt>LFS cache</dt>
+              <dd class="gcache">
+                <span>
+                  {lfsStats.objectCount} object{lfsStats.objectCount === 1 ? "" : "s"} · {formatBytes(lfsStats.totalBytes)}
+                  {#if lfsStats.prunableCount > 0}
+                    · {lfsStats.prunableCount} prunable ({formatBytes(lfsStats.prunableBytes)})
+                  {/if}
+                </span>
+                <button type="button" disabled={pruningLfs || lfsStats.prunableCount === 0} onclick={pruneLfs}>
+                  {pruningLfs ? "Pruning…" : "Prune LFS cache"}
+                </button>
+              </dd>
+            {/if}
           {/if}
         </dl>
       {:else}
@@ -269,6 +355,30 @@
             </button>
           </div>
         {/if}
+      </section>
+    {/if}
+
+    {#if activeRepoId != null}
+      <section class="sec" aria-label="Coding Agents">
+        <h3>Coding Agents (CLI / MCP)</h3>
+        <div class="agent-row">
+          <label class="agent-lbl">
+            <span>Target</span>
+            <select aria-label="Agent target" bind:value={agentTarget}>
+              <option value="claude">Claude Code</option>
+              <option value="codex">Codex</option>
+              <option value="cursor">Cursor</option>
+              <option value="generic">Generic</option>
+            </select>
+          </label>
+          <button type="button" disabled={writingAgentSetup} onclick={writeAgentConfig}>
+            {writingAgentSetup ? "Writing…" : "Write agent instructions"}
+          </button>
+          {#if agentSetupPath}
+            <span class="ok">Wrote {agentSetupPath}</span>
+          {/if}
+        </div>
+        <p class="mcp-hint">MCP server: <code class="mono">gitgud-cli mcp</code></p>
       </section>
     {/if}
   </div>
@@ -421,6 +531,23 @@
   }
   .usetup-act {
     margin-top: 8px;
+  }
+  .agent-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .agent-lbl {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+  }
+  .mcp-hint {
+    margin: 8px 0 0;
+    font-size: 11.5px;
+    color: var(--muted);
   }
   .x {
     padding: 2px 6px;

@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 
@@ -30,6 +30,16 @@ pub struct LfsLock {
     pub owner: String,
     pub locked_at: String,
     pub ours: bool,
+}
+
+/// Local Git LFS object cache statistics and dry-run prune preview.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LfsCacheStats {
+    pub object_count: u64,
+    pub total_bytes: u64,
+    pub prunable_count: u64,
+    pub prunable_bytes: u64,
 }
 
 #[derive(Deserialize)]
@@ -218,6 +228,101 @@ pub fn locks_in_push(
         .collect())
 }
 
+/// Measures `.git/lfs/objects` size and previews prunable objects via `git lfs prune --dry-run --verbose`.
+///
+/// # Errors
+/// [`Error::Read`] or [`Error::Command`] if inspecting the LFS cache fails.
+pub fn lfs_cache_stats(git: &GitCli, repo: &Repo) -> Result<LfsCacheStats, Error> {
+    let mut oid_sizes = HashMap::new();
+    collect_lfs_objects(&repo.git_dir().join("lfs/objects"), &mut oid_sizes);
+    let object_count = oid_sizes.len() as u64;
+    let total_bytes: u64 = oid_sizes.values().copied().sum();
+    if object_count == 0 {
+        return Ok(LfsCacheStats::default());
+    }
+
+    let (prunable_count, prunable_bytes) = match git.run_status(
+        repo.root(),
+        &["lfs", "prune", "--dry-run", "--verbose"],
+        None,
+    ) {
+        Ok((0, stdout, _)) => parse_lfs_prune_dry_run(&stdout, &oid_sizes),
+        _ => (0, 0),
+    };
+    Ok(LfsCacheStats {
+        object_count,
+        total_bytes,
+        prunable_count,
+        prunable_bytes,
+    })
+}
+
+/// Prunes unreferenced local Git LFS cache objects via `git lfs prune` and returns updated stats.
+///
+/// # Errors
+/// [`Error::Command`] when `git lfs prune` fails.
+pub fn lfs_prune(git: &GitCli, repo: &Repo) -> Result<LfsCacheStats, Error> {
+    git.run(repo.root(), &["lfs", "prune"], None)?;
+    lfs_cache_stats(git, repo)
+}
+
+fn collect_lfs_objects(dir: &Path, oid_sizes: &mut HashMap<String, u64>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(meta) = entry.metadata() else {
+            continue;
+        };
+        if meta.is_dir() {
+            collect_lfs_objects(&path, oid_sizes);
+        } else if meta.is_file()
+            && let Some(name) = path.file_name().and_then(|n| n.to_str())
+            && is_sha256_hex(name)
+        {
+            oid_sizes.insert(name.to_ascii_lowercase(), meta.len());
+        }
+    }
+}
+
+fn is_sha256_hex(s: &str) -> bool {
+    s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// Extracts prunable `(count, bytes)` from `git lfs prune --dry-run --verbose` output.
+#[must_use]
+pub fn parse_lfs_prune_dry_run(stdout: &str, oid_sizes: &HashMap<String, u64>) -> (u64, u64) {
+    let mut matched_oids = HashSet::new();
+    for token in stdout.split(|c: char| !c.is_ascii_hexdigit()) {
+        if is_sha256_hex(token) {
+            let key = token.to_ascii_lowercase();
+            if oid_sizes.contains_key(&key) {
+                matched_oids.insert(key);
+            }
+        }
+    }
+    if !matched_oids.is_empty() {
+        let bytes: u64 = matched_oids
+            .iter()
+            .filter_map(|k| oid_sizes.get(k))
+            .copied()
+            .sum();
+        return (matched_oids.len() as u64, bytes);
+    }
+
+    for line in stdout.lines() {
+        let lower = line.to_ascii_lowercase();
+        if let Some(rest) = lower.split("local object").next()
+            && let Some(num) = rest.split_whitespace().last()
+            && let Ok(n) = num.parse::<u64>()
+        {
+            return (n, 0);
+        }
+    }
+    (0, 0)
+}
+
 fn collect_lfs_patterns(attr_file: &Path, out: &mut BTreeSet<String>) {
     let Ok(content) = fs::read_to_string(attr_file) else {
         return;
@@ -269,5 +374,29 @@ mod tests {
             b"version https://git-lfs.github.com/spec/v1\noid sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\nsize 4096\n"
         ));
         assert!(!is_lfs_pointer(b"\x89PNG\r\n\x1a\n"));
+    }
+
+    #[test]
+    fn collects_lfs_cache_dir_and_parses_prune_dry_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let oid_a = "a".repeat(64);
+        let oid_b = "b".repeat(64);
+        let subdir = dir.path().join("aa/aa");
+        fs::create_dir_all(&subdir).unwrap();
+        fs::write(subdir.join(&oid_a), vec![1u8; 1200]).unwrap();
+        fs::write(subdir.join(&oid_b), vec![2u8; 800]).unwrap();
+
+        let mut map = HashMap::new();
+        collect_lfs_objects(dir.path(), &mut map);
+        assert_eq!(map.len(), 2);
+        assert_eq!(map[&oid_a], 1200);
+        assert_eq!(map[&oid_b], 800);
+
+        let dry_run = format!("prune: 1 local objects, 1 retained, done.\n* {oid_b} (800 B)\n");
+        assert_eq!(parse_lfs_prune_dry_run(&dry_run, &map), (1, 800));
+        assert_eq!(
+            parse_lfs_prune_dry_run("prune: 3 local objects, 1 retained", &map),
+            (3, 0)
+        );
     }
 }

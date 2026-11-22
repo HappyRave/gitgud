@@ -4,6 +4,7 @@
     branches as loadBranches,
     stashes as loadStashes,
     type Branch,
+    type BranchStack,
     type Branches,
     type LfsInfo,
     type LfsLock,
@@ -49,6 +50,9 @@
     proposals = [],
     selectedProposal = null,
     onselectproposal,
+    stacks = [],
+    onrestack,
+    onopenstackpr,
   }: {
     /** "Rebase current onto" from a branch's context menu. */
     onrebase: (branch: string) => void;
@@ -90,6 +94,9 @@
     proposals?: ProposalSummary[];
     selectedProposal?: string | null;
     onselectproposal?: (id: string) => void;
+    stacks?: BranchStack[];
+    onrestack?: (topBranch: string, onto: string) => void;
+    onopenstackpr?: (url: string) => void;
   } = $props();
 
   let error = $state<string | null>(null);
@@ -341,6 +348,50 @@
     </ul>
   </section>
 
+  {#if stacks.length > 0}
+    <section aria-label="Stacks">
+      <h3>Stacks <span class="ct">{stacks.length}</span></h3>
+      {#each stacks as stack (stack.levels.map((l) => l.branch).join(">"))}
+        {@const top = stack.levels[stack.levels.length - 1]}
+        {@const stale = stack.levels.some((l) => l.needsRestack)}
+        <div class="stack-grp">
+          <div class="stack-head">
+            <span class="nm">on {stack.root}</span>
+            {#if stale && onrestack && top}
+              <button
+                type="button"
+                class="sact"
+                disabled={busy || merging}
+                title="Rebase this entire stack onto {stack.root}"
+                onclick={() => onrestack(top.branch, stack.root)}>Restack</button
+              >
+            {/if}
+          </div>
+          <ul>
+            {#each stack.levels as lvl (lvl.branch)}
+              <li>
+                <div class="it" class:cur={lvl.current} title="{lvl.branch} → {lvl.base}">
+                  <span class="ic">{lvl.needsRestack ? "↻" : lvl.current ? "✓" : "├"}</span>
+                  <span class="nm">{lvl.branch}</span>
+                  <span class="r">{lvl.commits}c</span>
+                  {#if lvl.prUrl && onopenstackpr}
+                    <button
+                      type="button"
+                      class="sact"
+                      aria-label="Open PR for {lvl.branch}"
+                      title="Open PR: {lvl.branch} → {lvl.base}"
+                      onclick={() => lvl.prUrl && onopenstackpr(lvl.prUrl)}>PR ↗</button
+                    >
+                  {/if}
+                </div>
+              </li>
+            {/each}
+          </ul>
+        </div>
+      {/each}
+    </section>
+  {/if}
+
   <section aria-label="Remotes">
     <h3>Remotes</h3>
     <ul>
@@ -565,6 +616,33 @@
   }
   .warn-ct {
     color: var(--warn-ink);
+  }
+  .stack-grp {
+    margin-bottom: 4px;
+  }
+  .stack-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 10px;
+    font: 600 10.5px var(--mono);
+    color: var(--muted);
+  }
+  .sact {
+    all: unset;
+    margin-left: auto;
+    padding: 0 5px;
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    font: 600 10px/16px var(--mono);
+    color: var(--l0);
+    cursor: default;
+  }
+  .sact:hover:not(:disabled) {
+    background: var(--hover);
+  }
+  .sact:disabled {
+    opacity: 0.5;
   }
   .leaf {
     color: var(--muted);

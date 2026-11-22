@@ -2,6 +2,7 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use gitgud_core::ai::AiProviderStatus;
 use gitgud_core::blame::{BlameLine, FileCommit};
 use gitgud_core::branches::Branches;
 use gitgud_core::clone::{CloneProgress, clone_repo as core_clone_repo};
@@ -10,7 +11,7 @@ use gitgud_core::diff::{CommitDetail, FileDiff};
 use gitgud_core::git::{self, GitInfo};
 use gitgud_core::graph::Row;
 use gitgud_core::history::{Action, HistoryPlan, Step};
-use gitgud_core::lfs::{LfsInfo, LfsLock};
+use gitgud_core::lfs::{LfsCacheStats, LfsInfo, LfsLock};
 use gitgud_core::library::{
     AddRepoEntry, DEFAULT_SCAN_DEPTH, LibrarySnapshot, LibraryStore, OpenTabState, RepoSummary,
     ScanResult, display_path, scan_folder as core_scan_folder,
@@ -24,6 +25,7 @@ use gitgud_core::remote::{PullStrategy, PushInfo};
 use gitgud_core::repo::{self, Error, Status};
 use gitgud_core::sequencer::{SequencerState, SequencerStep};
 use gitgud_core::session::{Opened, PlanPreview, PullResult, Reverted, Session};
+use gitgud_core::stacks::BranchStack;
 use gitgud_core::stash::StashEntry;
 use gitgud_core::tags::TagInfo;
 use gitgud_core::task::{Cancel, Progress};
@@ -1402,6 +1404,64 @@ async fn proposal_reject(
 }
 
 #[tauri::command]
+async fn branch_stacks(session: State<'_, Session>, id: u32) -> Result<Vec<BranchStack>, Error> {
+    session.branch_stacks(id)
+}
+
+#[tauri::command]
+async fn restack(
+    session: State<'_, Session>,
+    id: u32,
+    top_branch: String,
+    onto: String,
+) -> Result<Opened, Error> {
+    session.restack(id, &top_branch, &onto)
+}
+
+#[tauri::command]
+async fn pr_url_with_base(
+    session: State<'_, Session>,
+    id: u32,
+    branch: String,
+    base: Option<String>,
+) -> Result<Option<String>, Error> {
+    session.pr_url_with_base(id, &branch, base.as_deref())
+}
+
+#[tauri::command]
+async fn lfs_cache_stats(session: State<'_, Session>, id: u32) -> Result<LfsCacheStats, Error> {
+    session.lfs_cache_stats(id)
+}
+
+#[tauri::command]
+async fn lfs_prune(session: State<'_, Session>, id: u32) -> Result<LfsCacheStats, Error> {
+    session.lfs_prune(id)
+}
+
+#[tauri::command]
+async fn ai_providers(session: State<'_, Session>) -> Result<AiProviderStatus, Error> {
+    Ok(session.ai_providers())
+}
+
+#[tauri::command]
+async fn ai_draft_commit_message(
+    session: State<'_, Session>,
+    id: u32,
+    provider: Option<String>,
+) -> Result<String, Error> {
+    session.ai_draft_commit_message(id, provider.as_deref())
+}
+
+#[tauri::command]
+async fn agent_setup(
+    session: State<'_, Session>,
+    id: u32,
+    target: String,
+) -> Result<String, Error> {
+    session.agent_setup(id, &target)
+}
+
+#[tauri::command]
 async fn background_refresh(
     session: State<'_, Session>,
     id: u32,
@@ -1560,7 +1620,15 @@ fn app_with_library<R: Runtime>(builder: Builder<R>, library: Option<LibraryStor
             proposal_file_diff,
             proposal_approve,
             proposal_request_changes,
-            proposal_reject
+            proposal_reject,
+            branch_stacks,
+            restack,
+            pr_url_with_base,
+            lfs_cache_stats,
+            lfs_prune,
+            ai_providers,
+            ai_draft_commit_message,
+            agent_setup
         ])
 }
 
@@ -3069,5 +3137,63 @@ mod tests {
                 .iter()
                 .any(|x| x["id"] == p2.id && x["status"] == "rejected")
         );
+    }
+
+    #[test]
+    fn stacks_lfs_cache_ai_and_agent_setup_through_ipc() {
+        let ipc = Ipc::new();
+        let repo = TestRepo::init();
+        repo.write("base.txt", "base\n").commit_all("base");
+        repo.git(&["remote", "add", "origin", "https://github.com/Max/boat.git"]);
+        repo.git(&["branch", "-M", "main"]);
+        repo.git(&["checkout", "-b", "stack/part1"]);
+        repo.write("p1.txt", "one\n").commit_all("part1");
+        repo.git(&["checkout", "-b", "stack/part2"]);
+        repo.write("p2.txt", "two\n").commit_all("part2");
+        repo.git(&["checkout", "main"]);
+        repo.write("up.txt", "up\n").commit_all("advance main");
+        repo.git(&["checkout", "stack/part2"]);
+
+        let id = open(&ipc, &repo)["id"].clone();
+
+        let stacks = ipc.call("branch_stacks", json!({ "id": id })).unwrap();
+        let arr = stacks.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["levels"][0]["needsRestack"], true);
+        assert_eq!(
+            arr[0]["levels"][1]["prUrl"],
+            "https://github.com/Max/boat/compare/stack/part1...stack/part2?expand=1"
+        );
+
+        let compare_url = ipc
+            .call(
+                "pr_url_with_base",
+                json!({ "id": id, "branch": "stack/part2", "base": "stack/part1" }),
+            )
+            .unwrap();
+        assert_eq!(
+            compare_url,
+            "https://github.com/Max/boat/compare/stack/part1...stack/part2?expand=1"
+        );
+
+        ipc.call(
+            "restack",
+            json!({ "id": id, "topBranch": "stack/part2", "onto": "main" }),
+        )
+        .unwrap();
+        let after_restack = ipc.call("branch_stacks", json!({ "id": id })).unwrap();
+        assert_eq!(after_restack[0]["levels"][0]["needsRestack"], false);
+
+        let lfs_stats = ipc.call("lfs_cache_stats", json!({ "id": id })).unwrap();
+        assert_eq!(lfs_stats["objectCount"], 0);
+
+        let ai = ipc.call("ai_providers", json!({})).unwrap();
+        assert!(ai["cliAvailable"].is_array());
+
+        let written = ipc
+            .call("agent_setup", json!({ "id": id, "target": "generic" }))
+            .unwrap();
+        assert_eq!(written, "GITGUD_AGENT.md");
+        assert!(repo.path().join("GITGUD_AGENT.md").is_file());
     }
 }

@@ -167,7 +167,12 @@ impl Repo {
         self.paths_between(git, &orig, &onto)
     }
 
-    fn paths_between(&self, git: &GitCli, a: &str, b: &str) -> Result<Vec<String>, Error> {
+    pub(crate) fn paths_between(
+        &self,
+        git: &GitCli,
+        a: &str,
+        b: &str,
+    ) -> Result<Vec<String>, Error> {
         let mut paths = Vec::new();
         for range in [format!("{a}...{b}"), format!("{b}...{a}")] {
             let out = git.run(

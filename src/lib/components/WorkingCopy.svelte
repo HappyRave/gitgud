@@ -30,6 +30,7 @@
     onlock,
     onunlock,
     oncommit,
+    ondraft,
     onstash,
   }: {
     repoId: number;
@@ -56,6 +57,7 @@
     onlock?: (path: string) => void;
     onunlock?: (path: string, force: boolean) => void;
     oncommit: (message: string, options?: CommitOptions) => Promise<void>;
+    ondraft?: () => Promise<string | null>;
     onstash?: () => void;
   } = $props();
 
@@ -189,7 +191,7 @@
       {/if}
     </p>
   {/if}
-  <CommitBox bind:this={commitBox} {repoId} staged={stagedCount} {branch} {busy} {oncommit} />
+  <CommitBox bind:this={commitBox} {repoId} staged={stagedCount} {branch} {busy} {oncommit} {ondraft} />
 </div>
 
 <style>

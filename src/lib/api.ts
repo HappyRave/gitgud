@@ -698,6 +698,32 @@ export interface ProposalSummary {
   headMoved: boolean;
 }
 
+export interface StackLevel {
+  branch: string;
+  base: string;
+  commits: number;
+  current: boolean;
+  needsRestack: boolean;
+  prUrl: string | null;
+}
+
+export interface BranchStack {
+  root: string;
+  levels: StackLevel[];
+}
+
+export interface LfsCacheStats {
+  objectCount: number;
+  totalBytes: number;
+  prunableCount: number;
+  prunableBytes: number;
+}
+
+export interface AiProviderStatus {
+  cliAvailable: string[];
+  configuredEnvKey: boolean;
+}
+
 /** Every command the frontend invokes: its arguments and its Ok value. Errors arrive as strings. */
 export interface Commands {
   git_info: { args: Record<string, never>; result: GitInfo };
@@ -816,6 +842,14 @@ export interface Commands {
     result: ProposalSummary;
   };
   proposal_reject: { args: { id: number; proposalId: string; reason?: string | null }; result: Opened };
+  branch_stacks: { args: { id: number }; result: BranchStack[] };
+  restack: { args: { id: number; topBranch: string; onto: string }; result: Opened };
+  pr_url_with_base: { args: { id: number; branch: string; base?: string | null }; result: string | null };
+  lfs_cache_stats: { args: { id: number }; result: LfsCacheStats };
+  lfs_prune: { args: { id: number }; result: LfsCacheStats };
+  ai_providers: { args: Record<string, never>; result: AiProviderStatus };
+  ai_draft_commit_message: { args: { id: number; provider?: string | null }; result: string };
+  agent_setup: { args: { id: number; target: string }; result: string };
   pr_url: { args: { id: number; branch: string }; result: string | null };
   open_external_url: { args: { url: string }; result: null };
   predict_merge: { args: { id: number; branch: string }; result: string[] };
@@ -1094,6 +1128,16 @@ export const proposalRequestChanges = (
 ) => call("proposal_request_changes", { id, proposalId, comment, path });
 export const proposalReject = (id: number, proposalId: string, reason: string | null = null) =>
   call("proposal_reject", { id, proposalId, reason });
+export const branchStacks = (id: number) => call("branch_stacks", { id });
+export const restack = (id: number, topBranch: string, onto: string) => call("restack", { id, topBranch, onto });
+export const prUrlWithBase = (id: number, branch: string, base: string | null = null) =>
+  call("pr_url_with_base", { id, branch, base });
+export const lfsCacheStats = (id: number) => call("lfs_cache_stats", { id });
+export const lfsPrune = (id: number) => call("lfs_prune", { id });
+export const aiProviders = () => call("ai_providers", {});
+export const aiDraftCommitMessage = (id: number, provider: string | null = null) =>
+  call("ai_draft_commit_message", { id, provider });
+export const agentSetup = (id: number, target: string) => call("agent_setup", { id, target });
 
 export const onCloneProgress = (handler: (progress: CloneProgress) => void) =>
   listen<CloneProgress>("clone-progress", (e) => handler(e.payload));

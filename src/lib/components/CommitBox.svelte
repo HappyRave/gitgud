@@ -7,6 +7,7 @@
     branch = "",
     busy = false,
     oncommit,
+    ondraft,
   }: {
     repoId?: number;
     /** Number of staged entries. */
@@ -16,6 +17,8 @@
     busy?: boolean;
     /** Resolves when the commit landed; rejects to keep the message. */
     oncommit: (message: string, options?: CommitOptions) => Promise<void>;
+    /** Drafts a commit message from the staged diff. */
+    ondraft?: () => Promise<string | null>;
   } = $props();
 
   let message = $state("");
@@ -23,6 +26,7 @@
   let signoff = $state(false);
   let noVerify = $state(false);
   let showOptions = $state(false);
+  let drafting = $state(false);
   let box = $state<HTMLTextAreaElement | null>(null);
 
   /** Puts the cursor in the message (C in the working copy). */
@@ -82,6 +86,22 @@
     }
   }
 
+  async function runDraft() {
+    if (!ondraft || busy || drafting || staged === 0) {
+      return;
+    }
+    drafting = true;
+    try {
+      const drafted = await ondraft();
+      if (drafted && drafted.trim() !== "") {
+        message = drafted;
+        box?.focus();
+      }
+    } finally {
+      drafting = false;
+    }
+  }
+
   function onKey(event: KeyboardEvent) {
     if (event.key === "Enter" && event.ctrlKey) {
       event.preventDefault();
@@ -122,6 +142,14 @@
     {#if signoff}<span class="badge">sign-off</span>{/if}
     {#if noVerify}<span class="badge warn">no-verify</span>{/if}
     <span class="sp"></span>
+    {#if ondraft}
+      <button
+        type="button"
+        disabled={busy || drafting || staged === 0}
+        title="Draft commit message from staged diff"
+        onclick={runDraft}>{drafting ? "Drafting…" : "✦ Draft"}</button
+      >
+    {/if}
     <button
       type="button"
       class:on={showOptions || amend || signoff || noVerify}

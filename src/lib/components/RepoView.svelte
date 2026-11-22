@@ -70,6 +70,7 @@
     unstageHunk,
     unstageLines,
     type Branches,
+    type BranchStack,
     type CommitOptions,
     type HistoryPlan,
     type Hunk,
@@ -102,6 +103,8 @@
     type UnityPropertyPick,
   } from "$lib/api";
   import {
+    aiDraftCommitMessage,
+    branchStacks,
     createTag,
     deleteRemoteTag,
     deleteTag,
@@ -114,6 +117,7 @@
     proposalsList,
     pushTag,
     resolveUnityConflict,
+    restack,
     tags,
     unityCheckOpenAssets,
     unityConfigureSmartMerge,
@@ -265,6 +269,7 @@
   let lfs = $state<LfsInfo | null>(null);
   let locks = $state<LfsLock[]>([]);
   let tagList = $state<TagInfo[]>([]);
+  let stackList = $state<BranchStack[]>([]);
   let proposalList = $state<ProposalSummary[]>([]);
   const activeProposals = $derived(
     proposalList.filter((p) => p.status === "pending" || p.status === "changesRequested"),
@@ -342,6 +347,7 @@
   $effect(() => {
     if (!opened) {
       tagList = [];
+      stackList = [];
       proposalList = [];
       selectedProposal = null;
       fileInspect = null;
@@ -356,6 +362,13 @@
       .then((list) => {
         if (!stale && opened?.id === id && revision === rev) {
           tagList = list;
+        }
+      })
+      .catch(() => {});
+    branchStacks(id)
+      .then((list) => {
+        if (!stale && opened?.id === id && revision === rev) {
+          stackList = list;
         }
       })
       .catch(() => {});
@@ -953,7 +966,7 @@
 
   const isTip = (row: Row) => row.labels.some((l) => l.kind === "branch" && l.current);
 
-  function editRow(row: Row, edit: "reword" | "fixup" | "drop" | "plan") {
+  async function editRow(row: Row, edit: "reword" | "fixup" | "drop" | "plan") {
     if (busy || planning) {
       return;
     }
@@ -967,7 +980,19 @@
       }
     } else {
       const done = edit === "fixup" ? `Folded "${row.subject}" into its parent` : `Dropped "${row.subject}"`;
-      write((id) => quickEdit(id, row.id, edit), `${done} · Ctrl+Z undoes it`);
+      const branch = currentBranch;
+      const ok = await write((id) => quickEdit(id, row.id, edit), `${done} · Ctrl+Z undoes it`);
+      if (ok && branch?.upstream) {
+        planDone = {
+          branch: branch.name,
+          time: Math.floor(Date.now() / 1000),
+          before: 2,
+          after: edit === "drop" ? 0 : 1,
+          changed: null,
+          summary: done,
+          pushed: branch.upstream,
+        };
+      }
     }
   }
 
@@ -987,7 +1012,19 @@
         return;
       }
       const message = detail.body ? `${subject}\n\n${detail.body}` : subject;
-      await write((id) => rewordHead(id, message), "Reworded · Ctrl+Z undoes it");
+      const branch = currentBranch;
+      const ok = await write((id) => rewordHead(id, message), "Reworded · Ctrl+Z undoes it");
+      if (ok && branch?.upstream) {
+        planDone = {
+          branch: branch.name,
+          time: Math.floor(Date.now() / 1000),
+          before: 1,
+          after: 1,
+          changed: null,
+          summary: `Reworded "${detail.subject}" → "${subject}"`,
+          pushed: branch.upstream,
+        };
+      }
     } catch (err) {
       error = String(err);
     }
@@ -1176,6 +1213,27 @@
     const ok = await write((id) => proposalReject(id, proposalId), "Proposal rejected");
     if (ok) {
       selectedProposal = null;
+    }
+  }
+
+  function runRestack(topBranch: string, onto: string) {
+    return write((id) => restack(id, topBranch, onto), `Restacked ${topBranch} onto ${onto} · Ctrl+Z undoes it`);
+  }
+
+  function openStackPr(url: string) {
+    openExternalUrl(url).catch((err) => (error = String(err)));
+  }
+
+  async function draftCommitMessage(): Promise<string | null> {
+    if (!opened) {
+      return null;
+    }
+    error = null;
+    try {
+      return await aiDraftCommitMessage(opened.id);
+    } catch (err) {
+      error = String(err);
+      return null;
     }
   }
 
@@ -1555,6 +1613,7 @@
           merging={!!conflicted}
           {selectedStash}
           proposals={activeProposals}
+          stacks={stackList}
           {selectedProposal}
           oplogOpen={inspector === "oplog" && !selectedCommit && selectedStash === null && !selectedProposal && !fileInspect}
           lfsInfo={lfs}
@@ -1587,6 +1646,8 @@
             inspector = "working";
             selectedProposal = id;
           }}
+          onrestack={runRestack}
+          onopenstackpr={openStackPr}
           onstashselect={(idx) => {
             selectedStash = idx;
             selectedProposal = null;
@@ -1812,6 +1873,7 @@
               onlock={onLockFile}
               onunlock={onUnlockFile}
               oncommit={onCommit}
+              ondraft={draftCommitMessage}
               onstash={() => (stashAsk = true)}
               onhistory={(p) => openFileInspect(p, "history", null)}
               onblame={(p) => openFileInspect(p, "blame", null)}

@@ -30,9 +30,8 @@ R on an older commit opens the plan, F / D apply at once, all undoable); Ctrl+F 
 working-copy keys of spec §5 plus Ctrl+2 / F6 / Ctrl+C / Ctrl+Shift+L / Ctrl+Shift+P / Ctrl+B; the ultrawide inspector
 split (≥ 2400 px); the strip's upstream / last-fetch line. Styling follows the lab
 mocks (tokens in `src/app.css`, light and dark); the lane colours are the mock's, never given a
-design round. Landed in M1–M6: command palette (`Ctrl+K`), shortcut sheet (`?`), line staging, syntax+intraline diff, plain-English error banner, settings modal, Unity Smart Merge / `.meta` guard / LFS locks / TGA+PSD previews, tags, file history & blame, op-log pruning + outside reflog recovery, commit-graph optimization, Unity YAML structural prefab/scene diff, R4-A property table resolver, post-merge integrity check, Unity repo setup, and agent proposals (CLI / MCP / review inbox / ghost graph rows). Not yet: history
-edits over merge commits or the root commit (refused for now, Max 2026-11-22), stacks and PR
-links per stack level, the faded "still on origin" commits after Done.
+design round. Landed in M1–M6: command palette (`Ctrl+K`), shortcut sheet (`?`), line staging, syntax+intraline diff, plain-English error banner, settings modal, Unity Smart Merge / `.meta` guard / LFS locks / TGA+PSD previews, tags, file history & blame, op-log pruning + outside reflog recovery, commit-graph optimization, Unity YAML structural prefab/scene diff, R4-A property table resolver, post-merge integrity check, Unity repo setup, agent proposals (CLI / MCP / review inbox / ghost graph rows), stacked branches with `--update-refs` restack & per-level PR links, quick-edit force-push offer, LFS cache prune, AI commit message drafting, and coding agent setup in Settings. Not yet: history
+edits over merge commits or the root commit (refused for now, Max 2026-11-22), and the faded "still on origin" commits after Done.
 Update this file as pieces land.
 
 The approved product spec is `docs/spec.md` (2026-11-21); design verdicts are in `docs/lab/decisions.md`.
@@ -145,6 +144,13 @@ replaying at most 255 rows (spike 4.3).
   (`CommandPalette.svelte`), `?` shortcut sheet (`keymap.ts`, `ShortcutSheet.svelte`), `Ctrl+,`
   settings (`SettingsModal.svelte` for identity/theme/density/diff/commit-graph cache), and
   plain-English git error explanations (`errors.ts`, `ErrorBanner.svelte`).
+- **Stacks, LFS Cache, AI Drafting & Agent Setup** (`stacks.rs`, `lfs.rs`, `ai.rs`, `remote_url.rs`):
+  detects stacked branch chains rooted on trunk (`depth >= 2`), builds per-level GitHub/Bitbucket
+  compare PR URLs (`pr_url_with_base`), and restacks chains undoably via `git rebase --update-refs`;
+  inspects `.git/lfs/objects` size and runs `git lfs prune`; detects installed coding CLIs
+  (`claude`, `codex`, `gemini`) to draft commit messages from `--cached` diffs without reading API
+  key values; writes agent setup instructions (`SKILL.md` / `gitgud.mdc` / `GITGUD_AGENT.md`) from
+  both CLI and Settings.
 - **Tags, File History & Blame, Reflog & Commit-Graph** (`tags.rs`, `blame.rs`, `oplog.rs`,
   `ops.rs`): lightweight/annotated tags with create/delete/push (`TagDialog.svelte`, `Sidebar.svelte`),
   `--follow` file commit history and porcelain blame annotations (`FileHistoryBlame.svelte`), op log

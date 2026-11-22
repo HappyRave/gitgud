@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
+use crate::ai::{self, AiProviderStatus};
 use crate::blame::{BlameLine, FileCommit};
 use crate::cli::GitCli;
 use crate::config;
@@ -13,7 +14,7 @@ use crate::diff::is_binary;
 use crate::git;
 use crate::graph::{Graph, Row};
 use crate::history::{Action, HistoryPlan, PlanPrediction, Step};
-use crate::lfs::{self, LfsInfo, LfsLock};
+use crate::lfs::{self, LfsCacheStats, LfsInfo, LfsLock};
 use crate::merge::{MergeOutcome, MergeState, Side};
 use crate::oplog::{OpEntry, OpLog, OpLogStats, ReflogEntry, label_amend, label_commit};
 use crate::ops::{CommitOptions, ResetMode};
@@ -22,6 +23,7 @@ use crate::rebase::{RebaseOutcome, RebaseState, RebaseStep};
 use crate::remote::{PullOutcome, PullStrategy};
 use crate::repo::{self, Error, Repo};
 use crate::sequencer::{SequencerKind, SequencerState, SequencerStep};
+use crate::stacks::BranchStack;
 use crate::tags::TagInfo;
 use crate::task::{Cancel, Progress};
 use crate::unity::{self, MetaIssue, UnityInfo};
@@ -1631,6 +1633,90 @@ impl Session {
             proposals::reject_proposal(&open.repo, git, proposal_id, reason).map(drop)
         })?;
         self.refresh(id)
+    }
+
+    /// Detects stacked branch chains (depth >= 2) rooted on trunk in repo `id`.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`] or [`Error::Read`].
+    pub fn branch_stacks(&self, id: u32) -> Result<Vec<BranchStack>, Error> {
+        let open = self.get(id)?;
+        open.repo.branch_stacks()
+    }
+
+    /// Rebases a stacked branch chain ending at `top_branch` onto `onto` using `--update-refs` (undoable via Ctrl+Z).
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`], [`Error::Refused`], or [`Error::Command`].
+    pub fn restack(&self, id: u32, top_branch: &str, onto: &str) -> Result<Opened, Error> {
+        let paths = {
+            let open = self.get(id)?;
+            let git = self.git()?;
+            open.repo.restack_paths(git, top_branch, onto)?
+        };
+        let label = format!("Restack {top_branch} onto {onto}");
+        self.write_destructive(id, &label, &paths, |repo, git| {
+            repo.restack(git, top_branch, onto).map(drop)
+        })
+    }
+
+    /// Returns the host PR / compare URL for `branch` targeting optional `base`.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`] or [`Error::Read`].
+    pub fn pr_url_with_base(
+        &self,
+        id: u32,
+        branch: &str,
+        base: Option<&str>,
+    ) -> Result<Option<String>, Error> {
+        let open = self.get(id)?;
+        open.repo.pr_url_with_base(branch, base)
+    }
+
+    /// Measures local Git LFS cache footprint and dry-run prunable objects in repo `id`.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`], [`Error::Read`], or [`Error::Command`].
+    pub fn lfs_cache_stats(&self, id: u32) -> Result<LfsCacheStats, Error> {
+        let open = self.get(id)?;
+        lfs::lfs_cache_stats(self.git()?, &open.repo)
+    }
+
+    /// Prunes unreferenced local Git LFS objects in repo `id` and returns updated cache stats.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`] or [`Error::Command`].
+    pub fn lfs_prune(&self, id: u32) -> Result<LfsCacheStats, Error> {
+        self.exclusive(id, |open, git| lfs::lfs_prune(git, &open.repo))
+    }
+
+    /// Detects available local AI CLIs and env key presence (never reads key values).
+    #[must_use]
+    pub fn ai_providers(&self) -> AiProviderStatus {
+        ai::detect_ai_providers()
+    }
+
+    /// Drafts a commit message from staged changes using an available local AI CLI.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`], [`Error::Refused`], or [`Error::Command`].
+    pub fn ai_draft_commit_message(
+        &self,
+        id: u32,
+        provider: Option<&str>,
+    ) -> Result<String, Error> {
+        let open = self.get(id)?;
+        ai::draft_commit_message(self.git()?, &open.repo, provider)
+    }
+
+    /// Writes agent instructions (`claude`, `codex`, `cursor`, `generic`) into repo `id`.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`] or [`Error::Read`].
+    pub fn agent_setup(&self, id: u32, target: &str) -> Result<String, Error> {
+        let open = self.get(id)?;
+        proposals::write_agent_setup(open.repo.root(), target)
     }
 
     /// Runs `f` as the only write on repo `id`, with its watcher paused.
