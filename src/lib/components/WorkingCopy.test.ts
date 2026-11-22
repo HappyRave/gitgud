@@ -79,11 +79,13 @@ describe("WorkingCopy keys", () => {
     expect(screen.getByRole("textbox", { name: "Commit message" })).toHaveFocus();
   });
 
+  const diffLine = (text: string) => (_: string, el: Element | null) => el?.tagName === "TD" && el.textContent === text;
+
   it("Alt+↓ moves to the next hunk, S stages it, ⌫ discards it", async () => {
     const { onhunk } = setup();
     await key({ key: "ArrowDown" });
     await key({ key: "ArrowDown" });
-    await screen.findByText("new 20");
+    await screen.findByText(diffLine("+new 20"));
 
     await key({ key: "ArrowDown", altKey: true });
     await key({ key: "s" });
@@ -99,7 +101,7 @@ describe("WorkingCopy keys", () => {
   it("U unstages the hunk on the staged side", async () => {
     const { onhunk } = setup();
     await key({ key: "ArrowDown" });
-    await screen.findByText("new 1");
+    await screen.findByText(diffLine("+new 1"));
 
     await key({ key: "s" });
     await key({ key: "u" });

@@ -14,6 +14,7 @@
     deleteRemoteBranch,
     discard,
     discardHunk,
+    discardLines,
     fetchRemotes,
     gitInfo,
     historyPlan,
@@ -54,6 +55,7 @@
     setWindowTitle,
     stage,
     stageHunk,
+    stageLines,
     stashApply,
     stashDrop,
     stashPop,
@@ -61,10 +63,12 @@
     undo,
     unstage,
     unstageHunk,
+    unstageLines,
     type Branches,
     type CommitOptions,
     type HistoryPlan,
     type Hunk,
+    type LineSelect,
     type MergeSide,
     type MergeState,
     type Opened,
@@ -84,11 +88,13 @@
     type TaskOp,
   } from "$lib/api";
   import BranchDialog from "$lib/components/BranchDialog.svelte";
+  import type { PaletteRepoActions } from "$lib/components/CommandPalette.svelte";
   import CherryPickDialog from "$lib/components/CherryPickDialog.svelte";
   import CommitDetail from "$lib/components/CommitDetail.svelte";
   import ConflictView from "$lib/components/ConflictView.svelte";
   import ContextMenu, { type MenuItem } from "$lib/components/ContextMenu.svelte";
   import DeleteBranchDialog from "$lib/components/DeleteBranchDialog.svelte";
+  import ErrorBanner from "$lib/components/ErrorBanner.svelte";
   import FindBar from "$lib/components/FindBar.svelte";
   import Graph from "$lib/components/Graph.svelte";
   import MergeBanner from "$lib/components/MergeBanner.svelte";
@@ -118,6 +124,7 @@
     paneKey,
   } from "$lib/keys";
   import { mergeMessage } from "$lib/merge/resolve";
+  import type { FixId } from "$lib/errors";
   import { describe, steps, type PlanRow } from "$lib/plan/plan";
   import { toggleSplit } from "$lib/prefs.svelte";
   import { middleTruncate } from "$lib/text";
@@ -131,6 +138,7 @@
     onopenother,
     onstatuschange,
     onopenfail,
+    onopensettings,
   }: {
     path: string;
     active?: boolean;
@@ -139,6 +147,7 @@
     onopenother: () => void;
     onstatuschange?: (dirtyCount: number) => void;
     onopenfail?: (message: string) => void;
+    onopensettings?: () => void;
   } = $props();
 
   let rootEl = $state<HTMLElement | null>(null);
@@ -318,6 +327,74 @@
     const header = hunkHeader(hunk);
     const run = { stage: stageHunk, unstage: unstageHunk, discard: discardHunk }[action];
     write((id) => run(id, filePath, header));
+  }
+
+  function onLines(filePath: string, action: "stage" | "unstage" | "discard", select: LineSelect) {
+    const run = { stage: stageLines, unstage: unstageLines, discard: discardLines }[action];
+    write((id) => run(id, filePath, select));
+  }
+
+  function handleErrorFix(fix: FixId) {
+    if (!opened) {
+      return;
+    }
+    if (fix === "fetch") {
+      startFetch();
+    } else if (fix === "pull") {
+      startPull("auto", false);
+    } else if (fix === "stash") {
+      stashAsk = true;
+    } else if (fix === "settings") {
+      onopensettings?.();
+    } else if (fix === "forcePush") {
+      pushAsk = { initialForce: true };
+    } else if (fix === "abortMerge") {
+      write((id) => mergeAbort(id), "Merge aborted · Ctrl+Z brings it back");
+    }
+  }
+
+  export function getPaletteContext(): { repoId: number; repoName: string; actions: PaletteRepoActions } | null {
+    if (!opened || !status) {
+      return null;
+    }
+    const name = repoName(opened.root);
+    return {
+      repoId: opened.id,
+      repoName: name,
+      actions: {
+        repoName: name,
+        branches: branchData?.local ?? [],
+        canPull: !conflicted && !!currentBranch?.upstream,
+        canPush: !conflicted && status.head.kind === "branch",
+        canStash: !conflicted && status.entries.length > 0,
+        canUndo: !!lastAction,
+        canRedo: !!nextRedo,
+        onfetch: startFetch,
+        onpull: () => startPull("auto", false),
+        onpush: () => (pushAsk = { initialForce: false }),
+        onstash: () => (stashAsk = true),
+        onundo: () => revert("undo"),
+        onredo: () => revert("redo"),
+        onnewbranch: () =>
+          (branchAsk = {
+            mode: "create",
+            at: selectedCommit,
+            atLabel: selectedCommit ? selectedCommit.slice(0, 7) : null,
+          }),
+        oncheckout: (b) => write((id) => checkout(id, b)),
+        onmerge: (b) => (mergeAsk = b),
+        onrebase: (b) => (rebaseAsk = b),
+        ondeletebranch: (b) => onDeleteBranch(b),
+        onfind: () => {
+          finding = true;
+          tick().then(() => findBar?.focus());
+        },
+        onoplog: () => {
+          inspector = inspector === "oplog" ? "working" : "oplog";
+          closeDetail();
+        },
+      },
+    };
   }
 
   let queue: Promise<unknown> = Promise.resolve();
@@ -1005,10 +1082,7 @@
   </header>
 
   {#if error}
-    <div class="errbar" role="alert">
-      <span class="msg">{error}</span>
-      <button class="bare x" aria-label="Dismiss" title="Dismiss" onclick={() => (error = null)}>✕</button>
-    </div>
+    <ErrorBanner message={error} onfix={handleErrorFix} ondismiss={() => (error = null)} />
   {/if}
 
   {#if opened && status}
@@ -1237,6 +1311,7 @@
               onunstage={(paths) => write((id) => unstage(id, paths))}
               ondiscard={(paths) => write((id) => discard(id, paths))}
               onhunk={onHunk}
+              onlines={onLines}
               oncommit={onCommit}
               onstash={() => (stashAsk = true)}
             />
@@ -1469,33 +1544,6 @@
     font-weight: 500;
     white-space: nowrap;
     flex: none;
-  }
-  .errbar {
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
-    padding: 6px 12px;
-    background: var(--bad);
-    color: var(--bad-ink);
-    border-bottom: 1px solid var(--line);
-    flex: none;
-  }
-  .errbar .msg {
-    flex: 1;
-    white-space: pre-wrap;
-    font-family: var(--mono);
-    font-size: 11.5px;
-    max-height: 6.5em;
-    overflow-y: auto;
-  }
-  .x {
-    all: unset;
-    cursor: default;
-    padding: 0 4px;
-    border-radius: 3px;
-  }
-  .x:hover {
-    background: color-mix(in srgb, currentColor 15%, transparent);
   }
   .body {
     flex: 1;

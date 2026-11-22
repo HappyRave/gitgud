@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { worktreeFileDiff, type FileDiff, type Hunk, type Side } from "$lib/api";
+  import { onMount } from "svelte";
+  import { worktreeFileDiff, type FileDiff, type Hunk, type LineSelect, type Side } from "$lib/api";
   import { imageUrl, isImage } from "$lib/images";
-  import { prefs, toggleSplit } from "$lib/prefs.svelte";
-  import DiffView from "./DiffView.svelte";
+  import { prefs, setDiffLayout, toggleIgnoreWhitespace } from "$lib/prefs.svelte";
+  import DiffView, { type LineAction } from "./DiffView.svelte";
 
   let {
     repoId,
@@ -12,6 +13,7 @@
     perHunk,
     busy = false,
     onhunk,
+    onlines,
   }: {
     repoId: number;
     path: string;
@@ -22,7 +24,13 @@
     perHunk: boolean;
     busy?: boolean;
     onhunk: (action: "stage" | "unstage" | "discard", hunk: Hunk) => void;
+    onlines?: (action: "stage" | "unstage" | "discard", select: LineSelect) => void;
   } = $props();
+
+  let container = $state<HTMLElement | null>(null);
+  let width = $state(0);
+
+  const effectiveSplit = $derived(prefs.diffLayout === "auto" ? width >= 1400 : prefs.split);
 
   const actions = $derived(
     !perHunk
@@ -32,6 +40,19 @@
         : [
             { label: "Discard hunk", key: "⌫", run: (h: Hunk) => onhunk("discard", h) },
             { label: "Stage hunk", key: "S", run: (h: Hunk) => onhunk("stage", h) },
+          ],
+  );
+
+  const pluralLines = (verb: string) => (n: number) => `${verb} ${n} ${n === 1 ? "line" : "lines"}`;
+
+  const lineActions = $derived<LineAction[]>(
+    !perHunk || !onlines
+      ? []
+      : side === "staged"
+        ? [{ label: pluralLines("Unstage"), run: (s: LineSelect) => onlines("unstage", s) }]
+        : [
+            { label: pluralLines("Discard"), run: (s: LineSelect) => onlines("discard", s) },
+            { label: pluralLines("Stage"), run: (s: LineSelect) => onlines("stage", s) },
           ],
   );
 
@@ -54,12 +75,27 @@
   /** The hunk Alt+↑↓ moved to; S / U / ⌫ act on it. */
   let focused = $state(0);
 
+  onMount(() => {
+    if (!container || typeof ResizeObserver === "undefined") {
+      return;
+    }
+    width = container.clientWidth;
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        width = entry.contentRect.width;
+      }
+    });
+    ro.observe(container);
+    return () => ro.disconnect();
+  });
+
   $effect(() => {
-    const key = `${repoId}:${path}:${side}:${revision}`;
+    const ws = prefs.ignoreWhitespace;
+    const key = `${repoId}:${path}:${side}:${revision}:${ws}`;
     error = null;
-    worktreeFileDiff(repoId, path, side).then(
+    worktreeFileDiff(repoId, path, side, ws).then(
       (d) => {
-        if (key === `${repoId}:${path}:${side}:${revision}`) {
+        if (key === `${repoId}:${path}:${side}:${revision}:${prefs.ignoreWhitespace}`) {
           diff = d;
           focused = Math.min(focused, Math.max(0, d.hunks.length - 1));
         }
@@ -93,18 +129,41 @@
   }
 </script>
 
-<section class="working-diff" aria-label="{side === 'staged' ? 'Staged' : 'Unstaged'} changes in {path}">
+<section
+  bind:this={container}
+  class="working-diff"
+  aria-label="{side === 'staged' ? 'Staged' : 'Unstaged'} changes in {path}"
+>
   <h3 class="dh">
     <span class="name">{path}</span> <span class="side">{side === "staged" ? "staged" : "unstaged"}</span>
     <span class="keys">
       {#if perHunk && (diff?.hunks.length ?? 0) > 1}Alt+↑↓ hunks ·{/if}
-      <button class="bare mode" title="Ctrl+D" onclick={toggleSplit}>{prefs.split ? "split" : "unified"} · Ctrl+D</button>
+      <button
+        type="button"
+        class="bare mode"
+        class:active={prefs.ignoreWhitespace}
+        aria-pressed={prefs.ignoreWhitespace}
+        title="Ignore whitespace changes"
+        onclick={toggleIgnoreWhitespace}>±ws</button
+      >
+      ·
+      <button type="button" class="bare mode" title="Ctrl+D" onclick={() => setDiffLayout(effectiveSplit ? "unified" : "split")}
+        >{effectiveSplit ? "split" : "unified"} · Ctrl+D</button
+      >
     </span>
   </h3>
   {#if error}
     <p role="alert">{error}</p>
   {:else if diff}
-    <DiffView {diff} {busy} hunkActions={actions} focused={perHunk ? focused : null} {images} split={prefs.split} />
+    <DiffView
+      {diff}
+      {busy}
+      hunkActions={actions}
+      {lineActions}
+      focused={perHunk ? focused : null}
+      {images}
+      split={effectiveSplit}
+    />
   {/if}
 </section>
 
@@ -147,6 +206,10 @@
   .mode:hover {
     color: var(--fg);
     text-decoration: underline;
+  }
+  .mode.active {
+    color: var(--l0);
+    font-weight: 700;
   }
   p {
     padding: 0 10px;

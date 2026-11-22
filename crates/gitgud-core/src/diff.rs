@@ -129,6 +129,19 @@ impl Repo {
     /// # Errors
     /// [`Error::Read`] when `id` isn't a commit or `path` didn't change in it.
     pub fn commit_file_diff(&self, id: &str, path: &str) -> Result<FileDiff, Error> {
+        self.commit_file_diff_with(id, path, false)
+    }
+
+    /// As [`Repo::commit_file_diff`], optionally ignoring whitespace differences.
+    ///
+    /// # Errors
+    /// [`Error::Read`] when `id` isn't a commit or `path` didn't change in it.
+    pub fn commit_file_diff_with(
+        &self,
+        id: &str,
+        path: &str,
+        ignore_whitespace: bool,
+    ) -> Result<FileDiff, Error> {
         let repo = self.gix();
         let commit = find_commit(&repo, id)?;
         let new = blob_at(&repo, &commit, path)?;
@@ -141,16 +154,22 @@ impl Repo {
                 "{path} is not in commit {id} or its parent"
             )));
         }
-        Ok(file_diff(
+        Ok(file_diff_with(
             path,
             &old.unwrap_or_default(),
             &new.unwrap_or_default(),
+            ignore_whitespace,
         ))
     }
 }
 
-/// The diff of two versions of `path`, or a binary marker.
-pub(crate) fn file_diff(path: &str, old: &[u8], new: &[u8]) -> FileDiff {
+/// As [`file_diff`], optionally ignoring whitespace differences.
+pub(crate) fn file_diff_with(
+    path: &str,
+    old: &[u8],
+    new: &[u8],
+    ignore_whitespace: bool,
+) -> FileDiff {
     if is_binary(old) || is_binary(new) {
         return FileDiff {
             path: path.to_owned(),
@@ -161,7 +180,11 @@ pub(crate) fn file_diff(path: &str, old: &[u8], new: &[u8]) -> FileDiff {
     FileDiff {
         path: path.to_owned(),
         binary: false,
-        hunks: text_hunks(&String::from_utf8_lossy(old), &String::from_utf8_lossy(new)),
+        hunks: text_hunks_with(
+            &String::from_utf8_lossy(old),
+            &String::from_utf8_lossy(new),
+            ignore_whitespace,
+        ),
     }
 }
 
@@ -235,21 +258,52 @@ pub(crate) fn is_binary(data: &[u8]) -> bool {
 /// Unified hunks with [`CONTEXT`] lines, merging changes closer than twice that,
 /// like `git diff --diff-algorithm=histogram`. Line texts have no line ending.
 pub fn text_hunks(old: &str, new: &str) -> Vec<Hunk> {
-    hunks(old, new, false)
+    text_hunks_with(old, new, false)
+}
+
+/// As [`text_hunks`], optionally ignoring whitespace differences.
+#[must_use]
+pub fn text_hunks_with(old: &str, new: &str, ignore_whitespace: bool) -> Vec<Hunk> {
+    hunks(old, new, false, ignore_whitespace)
 }
 
 /// As [`text_hunks`], but every line keeps its exact ending (`\n`, `\r\n`, or
 /// none on a last line without one), so the hunk can be written back as a patch.
 pub(crate) fn hunks_keeping_eol(old: &str, new: &str) -> Vec<Hunk> {
-    hunks(old, new, true)
+    hunks(old, new, true, false)
 }
 
-fn hunks(old: &str, new: &str, keep_eol: bool) -> Vec<Hunk> {
-    let input = InternedInput::new(old, new);
+fn hunks(old: &str, new: &str, keep_eol: bool, ignore_whitespace: bool) -> Vec<Hunk> {
+    let norm_pair = if ignore_whitespace {
+        let old_raw: Vec<&str> = old.split_inclusive('\n').collect();
+        let new_raw: Vec<&str> = new.split_inclusive('\n').collect();
+        let norm_old = normalize_ws(&old_raw);
+        let norm_new = normalize_ws(&new_raw);
+        Some((old_raw, new_raw, norm_old, norm_new))
+    } else {
+        None
+    };
+
+    let input = match &norm_pair {
+        Some((_, _, norm_old, norm_new)) => {
+            InternedInput::new(norm_old.as_str(), norm_new.as_str())
+        }
+        None => InternedInput::new(old, new),
+    };
     let diff = diff_with_slider_heuristics(Algorithm::Histogram, &input);
     let changes: Vec<_> = diff.hunks().collect();
-    let text = |token| {
-        let raw: &str = input.interner[token];
+    let raw_before = |idx: usize| -> &str {
+        let raw = match &norm_pair {
+            Some((old_raw, _, _, _)) => old_raw[idx],
+            None => input.interner[input.before[idx]],
+        };
+        if keep_eol { raw } else { strip_eol(raw) }
+    };
+    let raw_after = |idx: usize| -> &str {
+        let raw = match &norm_pair {
+            Some((_, new_raw, _, _)) => new_raw[idx],
+            None => input.interner[input.after[idx]],
+        };
         if keep_eol { raw } else { strip_eol(raw) }
     };
     let (old_len, new_len) = (len_u32(input.before.len()), len_u32(input.after.len()));
@@ -280,7 +334,7 @@ fn hunks(old: &str, new: &str, keep_eol: bool) -> Vec<Hunk> {
                     LineKind::Context,
                     Some(o),
                     Some(n),
-                    text(input.before[o as usize]),
+                    raw_before(o as usize),
                 ));
                 o += 1;
                 n += 1;
@@ -290,16 +344,11 @@ fn hunks(old: &str, new: &str, keep_eol: bool) -> Vec<Hunk> {
                     LineKind::Removed,
                     Some(k),
                     None,
-                    text(input.before[k as usize]),
+                    raw_before(k as usize),
                 ));
             }
             for k in change.after.clone() {
-                lines.push(line(
-                    LineKind::Added,
-                    None,
-                    Some(k),
-                    text(input.after[k as usize]),
-                ));
+                lines.push(line(LineKind::Added, None, Some(k), raw_after(k as usize)));
             }
             o = change.before.end;
             n = change.after.end;
@@ -309,7 +358,7 @@ fn hunks(old: &str, new: &str, keep_eol: bool) -> Vec<Hunk> {
                 LineKind::Context,
                 Some(o),
                 Some(n),
-                text(input.before[o as usize]),
+                raw_before(o as usize),
             ));
             o += 1;
             n += 1;
@@ -337,6 +386,22 @@ fn hunks(old: &str, new: &str, keep_eol: bool) -> Vec<Hunk> {
     hunks
 }
 
+fn normalize_ws(lines: &[&str]) -> String {
+    let mut out = String::new();
+    for &l in lines {
+        let mut first = true;
+        for word in l.split_whitespace() {
+            if !first {
+                out.push(' ');
+            }
+            first = false;
+            out.push_str(word);
+        }
+        out.push('\n');
+    }
+    out
+}
+
 fn line(kind: LineKind, old: Option<u32>, new: Option<u32>, text: &str) -> Line {
     Line {
         kind,
@@ -353,4 +418,22 @@ fn strip_eol(s: &str) -> &str {
 
 fn len_u32(n: usize) -> u32 {
     u32::try_from(n).expect("file has more than u32::MAX lines")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ignores_whitespace_only_changes_while_preserving_original_text() {
+        let old = "fn main() {\n    let x = 1;\n}\n";
+        let new = "fn main() {\n        let x = 1;\n}\n";
+        assert_eq!(text_hunks_with(old, new, false).len(), 1);
+        assert!(text_hunks_with(old, new, true).is_empty());
+
+        let mixed = "fn main() {\n        let x = 2;\n}\n";
+        let hunks = text_hunks_with(old, mixed, true);
+        assert_eq!(hunks.len(), 1);
+        assert_eq!(hunks[0].lines[2].text, "        let x = 2;");
+    }
 }

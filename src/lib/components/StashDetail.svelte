@@ -1,6 +1,6 @@
 <script lang="ts">
   import { stashDetail, stashFileDiff, type Change, type CommitDetail, type FileDiff } from "$lib/api";
-  import { prefs } from "$lib/prefs.svelte";
+  import { prefs, toggleIgnoreWhitespace } from "$lib/prefs.svelte";
   import DiffView from "./DiffView.svelte";
 
   let {
@@ -47,25 +47,41 @@
     );
   });
 
-  function showFile(path: string) {
+  function showFile(path: string, ignoreWs = prefs.ignoreWhitespace) {
     const idx = index;
     file = path;
     diff = null;
-    stashFileDiff(repoId, idx, path).then(
+    stashFileDiff(repoId, idx, path, ignoreWs).then(
       (d) => {
-        if (index === idx && file === path) {
+        if (index === idx && file === path && prefs.ignoreWhitespace === ignoreWs) {
           diff = d;
         }
       },
       (err) => (error = String(err)),
     );
   }
+
+  $effect(() => {
+    const ws = prefs.ignoreWhitespace;
+    if (detail && file) {
+      showFile(file, ws);
+    }
+  });
 </script>
 
 <section class="detail" aria-label="Stash">
   <div class="ph">
     Stash <span class="ct">· stash@{`{${index}}`}</span>
-    <span class="r"><button class="close" onclick={onclose} aria-label="Back to working copy">✕ Close</button></span>
+    <span class="r">
+      <button
+        type="button"
+        class="close"
+        aria-pressed={prefs.ignoreWhitespace}
+        title="Ignore whitespace changes"
+        onclick={toggleIgnoreWhitespace}>±ws</button
+      >
+      <button class="close" onclick={onclose} aria-label="Back to working copy">✕ Close</button>
+    </span>
   </div>
 
   {#if error}

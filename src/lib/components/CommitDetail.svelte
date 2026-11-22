@@ -1,7 +1,7 @@
 <script lang="ts">
   import { commitDetail, commitFileDiff, type Change, type CommitDetail, type FileDiff } from "$lib/api";
   import { imageUrl, isImage } from "$lib/images";
-  import { prefs } from "$lib/prefs.svelte";
+  import { prefs, toggleIgnoreWhitespace } from "$lib/prefs.svelte";
   import DiffView from "./DiffView.svelte";
 
   let { repoId, commit, onclose }: { repoId: number; commit: string; onclose: () => void } = $props();
@@ -32,19 +32,26 @@
     );
   });
 
-  function showFile(path: string) {
+  function showFile(path: string, ignoreWs = prefs.ignoreWhitespace) {
     const id = commit;
     file = path;
     diff = null;
-    commitFileDiff(repoId, id, path).then(
+    commitFileDiff(repoId, id, path, ignoreWs).then(
       (d) => {
-        if (commit === id && file === path) {
+        if (commit === id && file === path && prefs.ignoreWhitespace === ignoreWs) {
           diff = d;
         }
       },
       (err) => (error = String(err)),
     );
   }
+
+  $effect(() => {
+    const ws = prefs.ignoreWhitespace;
+    if (detail && file) {
+      showFile(file, ws);
+    }
+  });
 
   function date(seconds: number) {
     return new Date(seconds * 1000).toLocaleString();
@@ -54,7 +61,17 @@
 <section class="detail" aria-label="Commit">
   <div class="ph">
     Commit <span class="ct">· {detail?.shortId ?? commit.slice(0, 7)}</span>
-    <span class="r"><button class="close" onclick={onclose} aria-label="Back to working copy" title="Esc in the graph">✕ Close</button></span>
+    <span class="r">
+      <button
+        type="button"
+        class="close"
+        class:ws-on={prefs.ignoreWhitespace}
+        aria-pressed={prefs.ignoreWhitespace}
+        title="Ignore whitespace changes"
+        onclick={toggleIgnoreWhitespace}>±ws</button
+      >
+      <button class="close" onclick={onclose} aria-label="Back to working copy" title="Esc in the graph">✕ Close</button>
+    </span>
   </div>
 
   {#if error}

@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use gitgud_core::branches::Branches;
 use gitgud_core::clone::{CloneProgress, clone_repo as core_clone_repo};
+use gitgud_core::config::{self, IdentityConfig, ToolDiagnostics};
 use gitgud_core::diff::{CommitDetail, FileDiff};
 use gitgud_core::git::{self, GitInfo};
 use gitgud_core::graph::Row;
@@ -22,7 +23,7 @@ use gitgud_core::sequencer::{SequencerState, SequencerStep};
 use gitgud_core::session::{Opened, PlanPreview, PullResult, Reverted, Session};
 use gitgud_core::stash::StashEntry;
 use gitgud_core::task::{Cancel, Progress};
-use gitgud_core::worktree::{HunkHeader, Side};
+use gitgud_core::worktree::{HunkHeader, LineSelect, Side};
 use tauri::{AppHandle, Builder, Emitter, Manager, Runtime, State};
 
 mod images;
@@ -120,8 +121,12 @@ async fn commit_file_diff(
     id: u32,
     commit: String,
     path: String,
+    ignore_whitespace: Option<bool>,
 ) -> Result<FileDiff, Error> {
-    session.get(id)?.repo.commit_file_diff(&commit, &path)
+    session
+        .get(id)?
+        .repo
+        .commit_file_diff_with(&commit, &path, ignore_whitespace.unwrap_or(false))
 }
 
 #[tauri::command]
@@ -130,8 +135,12 @@ async fn worktree_file_diff(
     id: u32,
     path: String,
     side: Side,
+    ignore_whitespace: Option<bool>,
 ) -> Result<FileDiff, Error> {
-    session.get(id)?.repo.worktree_file_diff(&path, side)
+    session
+        .get(id)?
+        .repo
+        .worktree_file_diff_with(&path, side, ignore_whitespace.unwrap_or(false))
 }
 
 #[tauri::command]
@@ -154,6 +163,36 @@ async fn unstage_hunk(
 ) -> Result<Opened, Error> {
     let action = format!("Unstage hunk in {path}");
     session.write(id, &action, |repo, git| repo.unstage_hunk(git, &path, hunk))
+}
+
+#[tauri::command]
+async fn stage_lines(
+    session: State<'_, Session>,
+    id: u32,
+    path: String,
+    select: LineSelect,
+) -> Result<Opened, Error> {
+    session.stage_lines(id, &path, &select)
+}
+
+#[tauri::command]
+async fn unstage_lines(
+    session: State<'_, Session>,
+    id: u32,
+    path: String,
+    select: LineSelect,
+) -> Result<Opened, Error> {
+    session.unstage_lines(id, &path, &select)
+}
+
+#[tauri::command]
+async fn discard_lines(
+    session: State<'_, Session>,
+    id: u32,
+    path: String,
+    select: LineSelect,
+) -> Result<Opened, Error> {
+    session.discard_lines(id, &path, &select)
 }
 
 #[tauri::command]
@@ -684,8 +723,44 @@ async fn stash_file_diff(
     id: u32,
     index: usize,
     path: String,
+    ignore_whitespace: Option<bool>,
 ) -> Result<FileDiff, Error> {
-    session.get(id)?.repo.stash_file_diff(index, &path)
+    session
+        .get(id)?
+        .repo
+        .stash_file_diff_with(index, &path, ignore_whitespace.unwrap_or(false))
+}
+
+#[tauri::command]
+async fn config_get_identity(
+    session: State<'_, Session>,
+    id: Option<u32>,
+) -> Result<IdentityConfig, Error> {
+    let git = session.git()?;
+    match id {
+        Some(repo_id) => config::read_identity(git, Some(session.get(repo_id)?.repo.root())),
+        None => config::read_identity(git, None),
+    }
+}
+
+#[tauri::command]
+async fn config_set_identity(
+    session: State<'_, Session>,
+    id: Option<u32>,
+    name: String,
+    email: String,
+) -> Result<(), Error> {
+    if let Some(repo_id) = id {
+        session.set_repo_identity(repo_id, &name, &email).map(drop)
+    } else {
+        config::write_identity(session.git()?, None, &name, &email)
+    }
+}
+
+#[tauri::command]
+async fn tool_diagnostics(session: State<'_, Session>) -> Result<ToolDiagnostics, Error> {
+    let info = git::locate()?;
+    Ok(config::tool_diagnostics(session.git()?, &info))
 }
 
 #[tauri::command]
@@ -1123,7 +1198,13 @@ fn app_with_library<R: Runtime>(builder: Builder<R>, library: Option<LibraryStor
             scan_folder,
             clone_repo,
             cancel_clone,
-            fetch_many
+            fetch_many,
+            stage_lines,
+            unstage_lines,
+            discard_lines,
+            config_get_identity,
+            config_set_identity,
+            tool_diagnostics
         ])
 }
 
@@ -2109,5 +2190,154 @@ mod tests {
             .call("fetch_many", json!({ "paths": [cloned_path] }))
             .unwrap();
         assert_eq!(sums[0]["behind"], 1);
+    }
+
+    #[test]
+    fn line_staging_whitespace_diff_and_config_through_ipc() {
+        let ipc = Ipc::new();
+        let repo = TestRepo::init();
+        repo.write("f.txt", "one\ntwo\nthree\nfour\n")
+            .commit_all("base");
+        let id = open(&ipc, &repo)["id"].clone();
+
+        repo.write("f.txt", "one\n  two  \nthree changed\nfour\n");
+
+        let ws_on = ipc
+            .call(
+                "worktree_file_diff",
+                json!({ "id": id, "path": "f.txt", "side": "unstaged", "ignoreWhitespace": false }),
+            )
+            .unwrap();
+        let ws_lines = ws_on["hunks"][0]["lines"].as_array().unwrap();
+        assert!(ws_lines.iter().any(|l| l["text"] == "  two  "));
+
+        let ws_off = ipc
+            .call(
+                "worktree_file_diff",
+                json!({ "id": id, "path": "f.txt", "side": "unstaged", "ignoreWhitespace": true }),
+            )
+            .unwrap();
+        let ws_off_lines = ws_off["hunks"][0]["lines"].as_array().unwrap();
+        assert!(!ws_off_lines.iter().any(|l| l["text"] == "  two  "));
+        assert!(ws_off_lines.iter().any(|l| l["text"] == "three changed"));
+
+        let hunk = &ws_on["hunks"][0];
+        let select_hunk = json!({
+            "oldStart": hunk["oldStart"],
+            "oldLines": hunk["oldLines"],
+            "newStart": hunk["newStart"],
+            "newLines": hunk["newLines"],
+        });
+        let changed_three: Vec<usize> = ws_lines
+            .iter()
+            .enumerate()
+            .filter(|(_, l)| {
+                (l["kind"] == "removed" && l["text"] == "three")
+                    || (l["kind"] == "added" && l["text"] == "three changed")
+            })
+            .map(|(i, _)| i)
+            .collect();
+        ipc.call(
+            "stage_lines",
+            json!({ "id": id, "path": "f.txt", "select": { "hunk": select_hunk, "lines": changed_three } }),
+        )
+        .unwrap();
+
+        let staged = ipc
+            .call(
+                "worktree_file_diff",
+                json!({ "id": id, "path": "f.txt", "side": "staged" }),
+            )
+            .unwrap();
+        let staged_lines = staged["hunks"][0]["lines"].as_array().unwrap();
+        assert!(staged_lines.iter().any(|l| l["text"] == "three changed"));
+        assert!(!staged_lines.iter().any(|l| l["text"] == "  two  "));
+
+        let staged_hunk = &staged["hunks"][0];
+        let staged_three_added: Vec<usize> = staged_lines
+            .iter()
+            .enumerate()
+            .filter(|(_, l)| l["kind"] == "added" && l["text"] == "three changed")
+            .map(|(i, _)| i)
+            .collect();
+        ipc.call(
+            "unstage_lines",
+            json!({
+                "id": id,
+                "path": "f.txt",
+                "select": {
+                    "hunk": {
+                        "oldStart": staged_hunk["oldStart"],
+                        "oldLines": staged_hunk["oldLines"],
+                        "newStart": staged_hunk["newStart"],
+                        "newLines": staged_hunk["newLines"],
+                    },
+                    "lines": staged_three_added,
+                },
+            }),
+        )
+        .unwrap();
+
+        let unstaged_after = ipc
+            .call(
+                "worktree_file_diff",
+                json!({ "id": id, "path": "f.txt", "side": "unstaged" }),
+            )
+            .unwrap();
+        assert!(
+            unstaged_after["hunks"][0]["lines"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|l| l["text"] == "three changed")
+        );
+
+        let uh = &unstaged_after["hunks"][0];
+        let discard_idx: Vec<usize> = uh["lines"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .enumerate()
+            .filter(|(_, l)| l["kind"] == "added" && l["text"] == "three changed")
+            .map(|(i, _)| i)
+            .collect();
+        ipc.call(
+            "discard_lines",
+            json!({
+                "id": id,
+                "path": "f.txt",
+                "select": {
+                    "hunk": {
+                        "oldStart": uh["oldStart"],
+                        "oldLines": uh["oldLines"],
+                        "newStart": uh["newStart"],
+                        "newLines": uh["newLines"],
+                    },
+                    "lines": discard_idx,
+                },
+            }),
+        )
+        .unwrap();
+        ipc.call("undo", json!({ "id": id })).unwrap();
+        assert!(
+            std::fs::read_to_string(repo.path().join("f.txt"))
+                .unwrap()
+                .contains("three changed")
+        );
+
+        ipc.call(
+            "config_set_identity",
+            json!({ "id": id, "name": "Alice Test", "email": "alice@example.com" }),
+        )
+        .unwrap();
+        let ident = ipc
+            .call("config_get_identity", json!({ "id": id }))
+            .unwrap();
+        assert_eq!(ident["userName"], "Alice Test");
+        assert_eq!(ident["userEmail"], "alice@example.com");
+
+        let diag = ipc.call("tool_diagnostics", json!({})).unwrap();
+        assert!(diag["gitPath"].as_str().unwrap().contains("git"));
+        assert_eq!(diag["gitVersion"].as_str().unwrap().split('.').count(), 3);
     }
 }

@@ -4,6 +4,8 @@ import type { DiffLine, Hunk } from "$lib/api";
 export interface SplitRow {
   left: DiffLine | null;
   right: DiffLine | null;
+  leftIndex: number | null;
+  rightIndex: number | null;
 }
 
 /**
@@ -12,26 +14,32 @@ export interface SplitRow {
  */
 export function splitRows(hunk: Hunk): SplitRow[] {
   const rows: SplitRow[] = [];
-  let removed: DiffLine[] = [];
-  let added: DiffLine[] = [];
+  let removed: { line: DiffLine; index: number }[] = [];
+  let added: { line: DiffLine; index: number }[] = [];
   const flush = () => {
     for (let i = 0; i < Math.max(removed.length, added.length); i++) {
-      rows.push({ left: removed[i] ?? null, right: added[i] ?? null });
+      rows.push({
+        left: removed[i]?.line ?? null,
+        right: added[i]?.line ?? null,
+        leftIndex: removed[i]?.index ?? null,
+        rightIndex: added[i]?.index ?? null,
+      });
     }
     removed = [];
     added = [];
   };
-  for (const line of hunk.lines) {
+  for (let idx = 0; idx < hunk.lines.length; idx++) {
+    const line = hunk.lines[idx];
     if (line.kind === "removed") {
       if (added.length) {
         flush();
       }
-      removed.push(line);
+      removed.push({ line, index: idx });
     } else if (line.kind === "added") {
-      added.push(line);
+      added.push({ line, index: idx });
     } else {
       flush();
-      rows.push({ left: line, right: line });
+      rows.push({ left: line, right: line, leftIndex: idx, rightIndex: idx });
     }
   }
   flush();

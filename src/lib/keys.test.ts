@@ -2,12 +2,15 @@ import { describe, expect, it } from "vitest";
 import {
   conflictKey,
   graphEditKey,
+  isCommandPaletteKey,
   isFetchKey,
   isFindKey,
   isNewBranchKey,
   isPullKey,
   isPushKey,
   isQuickSwitchKey,
+  isSettingsKey,
+  isShortcutSheetKey,
   isCloseTabKey,
   isSplitKey,
   opLogKey,
@@ -208,5 +211,13 @@ describe("pull, push, and new-branch keys", () => {
     expect(tabCycleKey(event({ key: "Tab", ctrlKey: true }))).toBe(1);
     expect(tabCycleKey(event({ key: "Tab", ctrlKey: true, shiftKey: true }))).toBe(-1);
     expect(tabCycleKey(event({ key: "Tab" }))).toBeNull();
+  });
+
+  it("maps Ctrl+K, Ctrl+,, and ? outside text fields", () => {
+    expect(isCommandPaletteKey(event({ key: "k", ctrlKey: true }))).toBe(true);
+    expect(isCommandPaletteKey(event({ key: "k", ctrlKey: true, shiftKey: true }))).toBe(false);
+    expect(isSettingsKey(event({ key: ",", ctrlKey: true }))).toBe(true);
+    expect(isShortcutSheetKey(event({ key: "?", shiftKey: true }))).toBe(true);
+    expect(isShortcutSheetKey(event({ key: "?" }, document.createElement("input")))).toBe(false);
   });
 });

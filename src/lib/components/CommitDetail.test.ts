@@ -48,10 +48,12 @@ describe("CommitDetail", () => {
     expect(screen.getByText("bbbbbbb")).toBeInTheDocument();
   });
 
+  const diffLine = (text: string) => (_: string, el: Element | null) => el?.tagName === "TD" && el.textContent === text;
+
   it("lists changed files and opens the first one's diff", async () => {
     const { calls } = setup();
 
-    expect(await screen.findByText("in src/frob.rs")).toBeInTheDocument();
+    expect(await screen.findByText(diffLine("+in src/frob.rs"))).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /src\/frob\.rs/ })).toHaveAttribute("aria-pressed", "true");
     expect(calls.find((c) => c.cmd === "commit_detail")?.args).toEqual({ id: 2, commit: ID });
     expect(calls.find((c) => c.cmd === "commit_file_diff")?.args).toEqual({ id: 2, commit: ID, path: "src/frob.rs" });
@@ -59,12 +61,12 @@ describe("CommitDetail", () => {
 
   it("switches the diff to another file", async () => {
     setup();
-    await screen.findByText("in src/frob.rs");
+    await screen.findByText(diffLine("+in src/frob.rs"));
 
     await fireEvent.click(screen.getByRole("button", { name: /tests\/frob\.rs/ }));
 
-    expect(await screen.findByText("in tests/frob.rs")).toBeInTheDocument();
-    expect(screen.queryByText("in src/frob.rs")).not.toBeInTheDocument();
+    expect(await screen.findByText(diffLine("+in tests/frob.rs"))).toBeInTheDocument();
+    expect(screen.queryByText(diffLine("+in src/frob.rs"))).not.toBeInTheDocument();
   });
 
   it("names a root commit", async () => {

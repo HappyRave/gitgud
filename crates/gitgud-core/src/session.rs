@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use serde::Serialize;
 
 use crate::cli::GitCli;
+use crate::config;
 use crate::git;
 use crate::graph::{Graph, Row};
 use crate::history::{Action, HistoryPlan, PlanPrediction, Step};
@@ -18,6 +19,7 @@ use crate::repo::{self, Error, Repo};
 use crate::sequencer::{SequencerKind, SequencerState, SequencerStep};
 use crate::task::{Cancel, Progress};
 use crate::watch::RepoWatcher;
+use crate::worktree::LineSelect;
 
 /// The repositories the app has open, by id, and the git CLI it writes with.
 #[derive(Default)]
@@ -1026,6 +1028,49 @@ impl Session {
             }
             None => false,
         }
+    }
+
+    /// Stages selected line indices within one hunk of `path`, undoable via Ctrl+Z.
+    ///
+    /// # Errors
+    /// As [`Repo::stage_lines`].
+    pub fn stage_lines(&self, id: u32, path: &str, select: &LineSelect) -> Result<Opened, Error> {
+        let action = format!("Stage {} lines in {path}", select.lines.len());
+        self.write(id, &action, |repo, git| repo.stage_lines(git, path, select))
+    }
+
+    /// Unstages selected line indices within one hunk of `path`, undoable via Ctrl+Z.
+    ///
+    /// # Errors
+    /// As [`Repo::unstage_lines`].
+    pub fn unstage_lines(&self, id: u32, path: &str, select: &LineSelect) -> Result<Opened, Error> {
+        let action = format!("Unstage {} lines in {path}", select.lines.len());
+        self.write(id, &action, |repo, git| {
+            repo.unstage_lines(git, path, select)
+        })
+    }
+
+    /// Discards selected line indices within one hunk of `path`, snapshotting first for Ctrl+Z.
+    ///
+    /// # Errors
+    /// As [`Repo::discard_lines`].
+    pub fn discard_lines(&self, id: u32, path: &str, select: &LineSelect) -> Result<Opened, Error> {
+        let action = format!("Discard {} lines in {path}", select.lines.len());
+        let paths = [path.to_owned()];
+        self.write_destructive(id, &action, &paths, |repo, git| {
+            repo.discard_lines(git, path, select)
+        })
+    }
+
+    /// Updates local git identity for repo `id` and refreshes if config changed.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`], [`Error::Command`], or [`Error::Read`].
+    pub fn set_repo_identity(&self, id: u32, name: &str, email: &str) -> Result<Opened, Error> {
+        let open = self.get(id)?;
+        let git = self.git()?;
+        config::write_identity(git, Some(open.repo.root()), name, email)?;
+        self.refresh(id)
     }
 
     /// Runs `f` as the only write on repo `id`, with its watcher paused.

@@ -44,10 +44,10 @@ export interface Line {
 }
 
 /** A segment as a line in canvas space, for a row whose top edge is at `y`. */
-export function segmentLine(s: Segment, y: number, theme = DEFAULT_THEME): Line {
+export function segmentLine(s: Segment, y: number, theme = DEFAULT_THEME, rowHeight = ROW_HEIGHT): Line {
   const top = y;
-  const mid = y + ROW_HEIGHT / 2;
-  const bottom = y + ROW_HEIGHT;
+  const mid = y + rowHeight / 2;
+  const bottom = y + rowHeight;
   switch (s.part) {
     case "top":
       return { x1: laneX(s.from), y1: top, x2: laneX(s.to), y2: mid, color: laneColor(s.from, theme) };
@@ -90,14 +90,15 @@ export function drawGraph(
   width: number,
   height: number,
   theme = DEFAULT_THEME,
+  rowHeight = ROW_HEIGHT,
 ) {
   ctx.clearRect(0, 0, width, height);
   ctx.lineWidth = 2;
   ctx.lineCap = "round";
   for (const row of rows) {
-    const y = row.index * ROW_HEIGHT - scrollTop;
+    const y = row.index * rowHeight - scrollTop;
     for (const s of row.layout.segments) {
-      const l = segmentLine(s, y, theme);
+      const l = segmentLine(s, y, theme, rowHeight);
       ctx.strokeStyle = l.color;
       ctx.setLineDash(s.stroke === "dashed" ? DASH : []);
       ctx.globalAlpha = s.stroke === "faded" ? FADED_ALPHA : 1;
@@ -109,7 +110,7 @@ export function drawGraph(
     ctx.setLineDash([]);
     ctx.globalAlpha = row.faded ? FADED_ALPHA : 1;
     const cx = laneX(row.layout.node);
-    const cy = y + ROW_HEIGHT / 2;
+    const cy = y + rowHeight / 2;
     if (row.stash) {
       const s = DOT_RADIUS * 1.7;
       ctx.fillStyle = theme.panel;

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { CommitOptions, Hunk, Status } from "$lib/api";
+  import type { CommitOptions, Hunk, LineSelect, Status } from "$lib/api";
   import { workingKey } from "$lib/keys";
   import { fileOrder, stepFile, type FileRef } from "$lib/working";
   import CommitBox from "./CommitBox.svelte";
@@ -19,6 +19,7 @@
     onunstage,
     ondiscard,
     onhunk,
+    onlines,
     oncommit,
     onstash,
   }: {
@@ -36,6 +37,7 @@
     onunstage: (paths: string[]) => void;
     ondiscard: (paths: string[]) => void;
     onhunk: (path: string, action: "stage" | "unstage" | "discard", hunk: Hunk) => void;
+    onlines?: (path: string, action: "stage" | "unstage" | "discard", select: LineSelect) => void;
     oncommit: (message: string, options?: CommitOptions) => Promise<void>;
     onstash?: () => void;
   } = $props();
@@ -139,6 +141,7 @@
         {perHunk}
         {busy}
         onhunk={(action, hunk) => onhunk(file.path, action, hunk)}
+        onlines={onlines ? (action, select) => onlines(file.path, action, select) : undefined}
       />
     </div>
   {:else if status.entries.length}

@@ -108,9 +108,12 @@ replaying at most 255 rows (spike 4.3).
   `refs/gitgud/snapshots` so `git gc` keeps them. Undo restores only the action's `paths`, and
   refuses if those files changed since. Snapshot pruning with the op log's retention isn't built.
 - **Working copy** (`worktree.rs`): diffs per side (staged: HEAD → index; unstaged: index → work
-  tree after git's to-git filters, so autocrlf files diff like `git diff`). Hunks stage / unstage
-  through `git apply --cached [--reverse]` with a patch rebuilt from exact bytes; the hunk is named
-  by its `@@` header and a stale one is refused (`Error::Stale`).
+  tree after git's to-git filters, so autocrlf files diff like `git diff`). Both hunks and individual
+  clicked/Shift+clicked lines stage, unstage, and undoably discard through `git apply --cached` /
+  worktree patches rebuilt from exact bytes; stale hunks are refused (`Error::Stale`).
+- **Config & diagnostics** (`config.rs`): reads/writes `user.name` and `user.email` at global or
+  repo-local scope (`Session::set_repo_identity` triggers config reload), and reports installed git
+  and git-lfs paths/versions.
 - **Network** (`task.rs`, `job.rs`): long git runs parse `--progress` and cancel by killing a
   Windows Job Object (git starts suspended, joins the job, resumes), which also ends grandchildren
   `taskkill /T` misses. A cancelled fetch deletes its `tmp_pack_*` files.
@@ -123,9 +126,13 @@ replaying at most 255 rows (spike 4.3).
   custom protocol `gitgud` (`http://gitgud.localhost/image?repo=&path=&at=` on WebView2; `at` is
   head / index / worktree / yours / theirs / commit / parent), not over IPC. LFS pointers are read
   from `.git/lfs/objects`; a version that isn't there answers 404 with the reason as text.
-- **Diffs** (`diff.rs`) are gix histogram + slider heuristics, 3 lines of context, against the
-  first parent, no renames. gix can pair repeated lines differently from `git diff` (both correct):
-  tests compare to git only where the diff is unambiguous.
+- **Diffs** (`diff.rs`, `$lib/diff/*`) are gix histogram + slider heuristics, 3 lines of context, against
+  the first parent, no renames, with optional whitespace normalization (`ignoreWhitespace`) keeping
+  original line text. The frontend adds syntax tokenizing (`highlight.ts`), word/token intra-line spans
+  (`intraline.ts`), responsive auto-split at ≥ 1400 px, line selection, `Ctrl+K` command palette
+  (`CommandPalette.svelte`), `?` shortcut sheet (`keymap.ts`, `ShortcutSheet.svelte`), `Ctrl+,`
+  settings (`SettingsModal.svelte` for identity/theme/density/diff), and plain-English git error
+  explanations (`errors.ts`, `ErrorBanner.svelte`).
 
 ## Commands
 

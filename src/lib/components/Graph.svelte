@@ -5,6 +5,7 @@
   import { RowStore } from "$lib/graph/rows.svelte";
   import { ROW_HEIGHT, visibleRange } from "$lib/graph/window";
   import { graphEditKey } from "$lib/keys";
+  import { prefs } from "$lib/prefs.svelte";
   import { age, fullDate } from "$lib/time";
 
   let {
@@ -54,7 +55,8 @@
   let lanes = $state(1);
   let theme = $state(DEFAULT_THEME);
 
-  const range = $derived(visibleRange(scrollTop, height, rowCount));
+  const rowHeight = $derived(prefs.density === "compact" ? 20 : ROW_HEIGHT);
+  const range = $derived(visibleRange(scrollTop, height, rowCount, 10, rowHeight));
   const visible = $derived.by(() => {
     void store.version;
     const rows: { index: number; row: Row }[] = [];
@@ -107,7 +109,13 @@
       graphWidth,
       height,
       theme,
+      rowHeight,
     );
+  });
+
+  $effect(() => {
+    void prefs.theme;
+    theme = readTheme(document.documentElement);
   });
 
   onMount(() => {
@@ -160,8 +168,8 @@
   /** Selects row `index` and scrolls it to the middle of the view (find, Ctrl+F). */
   export function reveal(index: number) {
     select(index);
-    const top = index * ROW_HEIGHT;
-    if (top < viewport.scrollTop || top + ROW_HEIGHT > viewport.scrollTop + height) {
+    const top = index * rowHeight;
+    if (top < viewport.scrollTop || top + rowHeight > viewport.scrollTop + height) {
       viewport.scrollTop = Math.max(0, top - height / 2);
       scrollTop = viewport.scrollTop;
     }
@@ -233,11 +241,11 @@
     event.preventDefault();
     const next = Math.min(rowCount - 1, Math.max(0, (selected ?? -1) + step));
     select(next);
-    const top = next * ROW_HEIGHT;
+    const top = next * rowHeight;
     if (top < viewport.scrollTop) {
       viewport.scrollTop = top;
-    } else if (top + ROW_HEIGHT > viewport.scrollTop + height) {
-      viewport.scrollTop = top + ROW_HEIGHT - height;
+    } else if (top + rowHeight > viewport.scrollTop + height) {
+      viewport.scrollTop = top + rowHeight - height;
     }
     scrollTop = viewport.scrollTop;
   }
@@ -249,7 +257,7 @@
 
 <svelte:window onresize={() => (height = viewport.clientHeight)} />
 
-<div class="graph">
+<div class="graph" style:--row-h="{rowHeight}px">
   {#if store.error}
     <p role="alert">{store.error}</p>
   {/if}
@@ -261,7 +269,7 @@
       role="listbox"
       aria-label="Commits"
       tabindex="0"
-      style:height="{rowCount * ROW_HEIGHT}px"
+      style:height="{rowCount * rowHeight}px"
       onclick={onClick}
       onkeydown={onKey}
       oncontextmenu={onContextMenu}
@@ -277,7 +285,7 @@
           class:selected={selected === index}
           class:hit={hits?.has(index)}
           aria-selected={selected === index}
-          style:top="{index * ROW_HEIGHT}px"
+          style:top="{index * rowHeight}px"
           style:padding-left="{graphWidth}px"
         >
           <span class="subject">
@@ -346,7 +354,7 @@
     position: absolute;
     left: 0;
     right: 0;
-    height: 24px;
+    height: var(--row-h, 24px);
     display: grid;
     grid-template-columns: minmax(10rem, 1fr) minmax(0, 8rem) 4.5rem 4.5rem;
     gap: 10px;

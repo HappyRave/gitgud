@@ -3,7 +3,7 @@ use gitgud_core::diff::{FileDiff, LineKind};
 use gitgud_core::git;
 use gitgud_core::repo::{self, Error, Repo};
 use gitgud_core::testing::TestRepo;
-use gitgud_core::worktree::{HunkHeader, Side};
+use gitgud_core::worktree::{HunkHeader, LineSelect, Side};
 use proptest::prelude::*;
 
 fn cli() -> GitCli {
@@ -312,4 +312,72 @@ proptest! {
         }
         prop_assert_eq!(index_bytes(&repo, "f.txt"), old.as_bytes());
     }
+}
+
+#[test]
+fn stage_unstage_and_discard_individual_lines_round_trip() {
+    let repo = committed("f.txt", "a\nb\nc\nd\n");
+    repo.write("f.txt", "a\nB1\nB2\nc\nd\nE1\n");
+    let r = open(&repo);
+    let git = cli();
+    let diff = r.worktree_file_diff("f.txt", Side::Unstaged).unwrap();
+    let hunk = &diff.hunks[0];
+    // Hunk lines: 0:ctx "a", 1:del "b", 2:add "B1", 3:add "B2", 4:ctx "c", 5:ctx "d", 6:add "E1"
+    // Stage only -b and +B1 (indices 1 and 2).
+    r.stage_lines(
+        &git,
+        "f.txt",
+        &LineSelect {
+            hunk: hunk.into(),
+            lines: vec![1, 2],
+        },
+    )
+    .unwrap();
+    assert_eq!(index_bytes(&repo, "f.txt"), b"a\nB1\nc\nd\n");
+
+    // Unstage only -b (index 1 of staged hunk), leaving +B1 staged as an insertion after a & b!
+    let staged_diff = r.worktree_file_diff("f.txt", Side::Staged).unwrap();
+    let staged_hunk = &staged_diff.hunks[0];
+    r.unstage_lines(
+        &git,
+        "f.txt",
+        &LineSelect {
+            hunk: staged_hunk.into(),
+            lines: vec![1],
+        },
+    )
+    .unwrap();
+    assert_eq!(index_bytes(&repo, "f.txt"), b"a\nb\nB1\nc\nd\n");
+
+    // Discard only +E1 from unstaged working copy via Session so it is undoable.
+    let session = gitgud_core::session::Session::default();
+    let opened = session.open(repo.path()).unwrap();
+    let unstaged2 = session
+        .get(opened.id)
+        .unwrap()
+        .repo
+        .worktree_file_diff("f.txt", Side::Unstaged)
+        .unwrap();
+    let h2 = &unstaged2.hunks[0];
+    let e1_idx = h2
+        .lines
+        .iter()
+        .position(|l| l.text == "E1")
+        .expect("E1 in unstaged diff");
+    session
+        .discard_lines(
+            opened.id,
+            "f.txt",
+            &LineSelect {
+                hunk: h2.into(),
+                lines: vec![e1_idx],
+            },
+        )
+        .unwrap();
+    let after_discard = std::fs::read_to_string(repo.path().join("f.txt")).unwrap();
+    assert!(!after_discard.contains("E1"), "{after_discard:?}");
+
+    session.undo(opened.id).unwrap();
+    let after_undo = std::fs::read_to_string(repo.path().join("f.txt")).unwrap();
+    assert!(after_undo.contains("E1"), "{after_undo:?}");
 }

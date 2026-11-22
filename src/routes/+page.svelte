@@ -19,13 +19,25 @@
     type ScanResult,
   } from "$lib/api";
   import CloneDialog from "$lib/components/CloneDialog.svelte";
+  import CommandPalette from "$lib/components/CommandPalette.svelte";
+  import ErrorBanner from "$lib/components/ErrorBanner.svelte";
   import LibraryView from "$lib/components/LibraryView.svelte";
   import QuickSwitch from "$lib/components/QuickSwitch.svelte";
   import RepoView from "$lib/components/RepoView.svelte";
   import ScanFolderDialog from "$lib/components/ScanFolderDialog.svelte";
+  import SettingsModal from "$lib/components/SettingsModal.svelte";
+  import ShortcutSheet from "$lib/components/ShortcutSheet.svelte";
   import TabBar, { type RepoTabInfo } from "$lib/components/TabBar.svelte";
-  import { isCloseTabKey, isQuickSwitchKey, tabCycleKey } from "$lib/keys";
+  import {
+    isCloseTabKey,
+    isCommandPaletteKey,
+    isQuickSwitchKey,
+    isSettingsKey,
+    isShortcutSheetKey,
+    tabCycleKey,
+  } from "$lib/keys";
   import { folderPathLabel, pathKey } from "$lib/library/filter";
+  import { applyTheme, prefs } from "$lib/prefs.svelte";
 
   const git = gitInfo();
 
@@ -46,13 +58,26 @@
   let globalError = $state<string | null>(null);
 
   let quickSwitchOpen = $state(false);
+  let paletteOpen = $state(false);
+  let shortcutsOpen = $state(false);
+  let settingsOpen = $state(false);
   let scanResult = $state<ScanResult | null>(null);
   let cloneOpen = $state(false);
   let cloneInitialFolder = $state("");
   let fetchingMany = $state<FetchManyProgress | null>(null);
+  let repoViews = $state<Record<string, ReturnType<typeof RepoView> | undefined>>({});
 
   const openPathSet = $derived(new Set(openTabs.map((t) => pathKey(t.path))));
-  const appModalOpen = $derived(quickSwitchOpen || !!scanResult || cloneOpen);
+  const appModalOpen = $derived(
+    quickSwitchOpen || paletteOpen || shortcutsOpen || settingsOpen || !!scanResult || cloneOpen,
+  );
+  const activeCtx = $derived(
+    activePath !== null ? (repoViews[pathKey(activePath)]?.getPaletteContext() ?? null) : null,
+  );
+
+  $effect(() => {
+    applyTheme(prefs.theme);
+  });
 
   function repoName(path: string) {
     const parts = path.split(/[\\/]/).filter(Boolean);
@@ -225,9 +250,33 @@
   }
 
   function onGlobalKeydown(event: KeyboardEvent) {
+    if (isCommandPaletteKey(event)) {
+      event.preventDefault();
+      quickSwitchOpen = false;
+      shortcutsOpen = false;
+      settingsOpen = false;
+      paletteOpen = !paletteOpen;
+      return;
+    }
+    if (isSettingsKey(event)) {
+      event.preventDefault();
+      quickSwitchOpen = false;
+      paletteOpen = false;
+      shortcutsOpen = false;
+      settingsOpen = !settingsOpen;
+      return;
+    }
     if (isQuickSwitchKey(event)) {
       event.preventDefault();
+      paletteOpen = false;
+      shortcutsOpen = false;
+      settingsOpen = false;
       quickSwitchOpen = !quickSwitchOpen;
+      return;
+    }
+    if (isShortcutSheetKey(event) && !appModalOpen) {
+      event.preventDefault();
+      shortcutsOpen = true;
       return;
     }
     if (appModalOpen) {
@@ -289,13 +338,17 @@
     onclose={closeTab}
     onadd={() => chooseAndOpenRepo()}
     onquickswitch={() => (quickSwitchOpen = true)}
+    onpalette={() => (paletteOpen = true)}
+    onshortcuts={() => (shortcutsOpen = true)}
+    onsettings={() => (settingsOpen = true)}
   />
 
   {#if globalError}
-    <div class="errbar" role="alert">
-      <span class="msg">{globalError}</span>
-      <button type="button" class="bare x" aria-label="Dismiss error" onclick={() => (globalError = null)}>✕</button>
-    </div>
+    <ErrorBanner
+      message={globalError}
+      onfix={(fix) => fix === "settings" && (settingsOpen = true)}
+      ondismiss={() => (globalError = null)}
+    />
   {/if}
 
   <div class="views">
@@ -326,6 +379,7 @@
       {@const isTabActive = activePath !== null && pathKey(activePath) === pathKey(tab.path)}
       <div class="view" class:off={!isTabActive} hidden={!isTabActive}>
         <RepoView
+          bind:this={repoViews[pathKey(tab.path)]}
           path={tab.path}
           active={isTabActive}
           suspended={appModalOpen}
@@ -333,6 +387,7 @@
           onopenother={() => chooseAndOpenRepo()}
           onstatuschange={(dirty) => updateTabDirty(tab.path, dirty)}
           onopenfail={(msg) => onTabOpenFailed(tab.path, msg)}
+          onopensettings={() => (settingsOpen = true)}
         />
       </div>
     {/each}
@@ -374,6 +429,34 @@
   />
 {/if}
 
+{#if paletteOpen}
+  <CommandPalette
+    repo={activeCtx?.actions ?? null}
+    onopenrepo={() => chooseAndOpenRepo()}
+    onscanfolder={runScanFolder}
+    onclone={() => {
+      cloneInitialFolder = "";
+      cloneOpen = true;
+    }}
+    onquickswitch={() => (quickSwitchOpen = true)}
+    onshortcuts={() => (shortcutsOpen = true)}
+    onsettings={() => (settingsOpen = true)}
+    onclose={() => (paletteOpen = false)}
+  />
+{/if}
+
+{#if shortcutsOpen}
+  <ShortcutSheet onclose={() => (shortcutsOpen = false)} />
+{/if}
+
+{#if settingsOpen}
+  <SettingsModal
+    activeRepoId={activeCtx?.repoId ?? null}
+    activeRepoName={activeCtx?.repoName ?? null}
+    onclose={() => (settingsOpen = false)}
+  />
+{/if}
+
 <style>
   .shell {
     height: 100vh;
@@ -395,22 +478,5 @@
   }
   .view.off {
     display: none;
-  }
-  .errbar {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 6px 12px;
-    background: var(--bad);
-    color: var(--bad-ink);
-    border-bottom: 1px solid var(--line);
-    flex: none;
-  }
-  .errbar .msg {
-    flex: 1;
-    font: 11.5px var(--mono);
-  }
-  .x {
-    padding: 0 4px;
   }
 </style>

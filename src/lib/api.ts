@@ -465,6 +465,22 @@ export const hunkHeader = (h: Hunk): HunkHeader => ({
   newLines: h.newLines,
 });
 
+export interface LineSelect {
+  hunk: HunkHeader;
+  lines: number[];
+}
+
+export interface IdentityConfig {
+  userName: string | null;
+  userEmail: string | null;
+}
+
+export interface ToolDiagnostics {
+  gitPath: string;
+  gitVersion: string;
+  lfsVersion: string | null;
+}
+
 /** Every command the frontend invokes: its arguments and its Ok value. Errors arrive as strings. */
 export interface Commands {
   git_info: { args: Record<string, never>; result: GitInfo };
@@ -475,12 +491,15 @@ export interface Commands {
   graph_rows: { args: { id: number; start: number; count: number }; result: Row[] };
   graph_find: { args: { id: number; query: string }; result: number[] };
   commit_detail: { args: { id: number; commit: string }; result: CommitDetail };
-  commit_file_diff: { args: { id: number; commit: string; path: string }; result: FileDiff };
-  worktree_file_diff: { args: { id: number; path: string; side: Side }; result: FileDiff };
+  commit_file_diff: { args: { id: number; commit: string; path: string; ignoreWhitespace?: boolean }; result: FileDiff };
+  worktree_file_diff: { args: { id: number; path: string; side: Side; ignoreWhitespace?: boolean }; result: FileDiff };
   stage_hunk: { args: { id: number; path: string; hunk: HunkHeader }; result: Opened };
   unstage_hunk: { args: { id: number; path: string; hunk: HunkHeader }; result: Opened };
+  stage_lines: { args: { id: number; path: string; select: LineSelect }; result: Opened };
+  unstage_lines: { args: { id: number; path: string; select: LineSelect }; result: Opened };
   discard: { args: { id: number; paths: string[] }; result: Opened };
   discard_hunk: { args: { id: number; path: string; hunk: HunkHeader }; result: Opened };
+  discard_lines: { args: { id: number; path: string; select: LineSelect }; result: Opened };
   refresh_repo: { args: { id: number }; result: Opened };
   undo: { args: { id: number }; result: Reverted };
   redo: { args: { id: number }; result: Reverted };
@@ -524,11 +543,14 @@ export interface Commands {
   sequencer_step: { args: { id: number; step: SequencerStep }; result: Opened };
   stashes: { args: { id: number }; result: StashEntry[] };
   stash_detail: { args: { id: number; index: number }; result: CommitDetail };
-  stash_file_diff: { args: { id: number; index: number; path: string }; result: FileDiff };
+  stash_file_diff: { args: { id: number; index: number; path: string; ignoreWhitespace?: boolean }; result: FileDiff };
   stash_save: { args: { id: number; message?: string | null; includeUntracked: boolean }; result: Opened };
   stash_apply: { args: { id: number; index: number }; result: Opened };
   stash_pop: { args: { id: number; index: number }; result: Opened };
   stash_drop: { args: { id: number; index: number }; result: Opened };
+  config_get_identity: { args: { id?: number | null }; result: IdentityConfig };
+  config_set_identity: { args: { id?: number | null; name: string; email: string }; result: null };
+  tool_diagnostics: { args: Record<string, never>; result: ToolDiagnostics };
   pr_url: { args: { id: number; branch: string }; result: string | null };
   open_external_url: { args: { url: string }; result: null };
   predict_merge: { args: { id: number; branch: string }; result: string[] };
@@ -586,14 +608,18 @@ export const graphRows = (id: number, start: number, count: number) => call("gra
 /** Rows matching `query` (subject, author, hash prefix, ref name), in graph order. */
 export const graphFind = (id: number, query: string) => call("graph_find", { id, query });
 export const commitDetail =(id: number, commit: string) => call("commit_detail", { id, commit });
-export const commitFileDiff = (id: number, commit: string, path: string) =>
-  call("commit_file_diff", { id, commit, path });
-export const worktreeFileDiff = (id: number, path: string, side: Side) => call("worktree_file_diff", { id, path, side });
+export const commitFileDiff = (id: number, commit: string, path: string, ignoreWhitespace?: boolean) =>
+  call("commit_file_diff", ignoreWhitespace ? { id, commit, path, ignoreWhitespace: true } : { id, commit, path });
+export const worktreeFileDiff = (id: number, path: string, side: Side, ignoreWhitespace?: boolean) =>
+  call("worktree_file_diff", ignoreWhitespace ? { id, path, side, ignoreWhitespace: true } : { id, path, side });
 export const stageHunk = (id: number, path: string, hunk: HunkHeader) => call("stage_hunk", { id, path, hunk });
 export const unstageHunk = (id: number, path: string, hunk: HunkHeader) => call("unstage_hunk", { id, path, hunk });
+export const stageLines = (id: number, path: string, select: LineSelect) => call("stage_lines", { id, path, select });
+export const unstageLines = (id: number, path: string, select: LineSelect) => call("unstage_lines", { id, path, select });
 /** Undoable with Ctrl+Z: the work tree is snapshotted first. */
 export const discard = (id: number, paths: string[]) => call("discard", { id, paths });
 export const discardHunk = (id: number, path: string, hunk: HunkHeader) => call("discard_hunk", { id, path, hunk });
+export const discardLines = (id: number, path: string, select: LineSelect) => call("discard_lines", { id, path, select });
 export const refreshRepo = (id: number) => call("refresh_repo", { id });
 export const undo = (id: number) => call("undo", { id });
 export const redo = (id: number) => call("redo", { id });
@@ -638,7 +664,12 @@ export const sequencerState = (id: number) => call("sequencer_state", { id });
 export const sequencerStep = (id: number, step: SequencerStep) => call("sequencer_step", { id, step });
 export const stashes = (id: number) => call("stashes", { id });
 export const stashDetail = (id: number, index: number) => call("stash_detail", { id, index });
-export const stashFileDiff = (id: number, index: number, path: string) => call("stash_file_diff", { id, index, path });
+export const stashFileDiff = (id: number, index: number, path: string, ignoreWhitespace?: boolean) =>
+  call("stash_file_diff", ignoreWhitespace ? { id, index, path, ignoreWhitespace: true } : { id, index, path });
+export const configGetIdentity = (id: number | null = null) => call("config_get_identity", { id });
+export const configSetIdentity = (id: number | null, name: string, email: string) =>
+  call("config_set_identity", { id, name, email });
+export const toolDiagnostics = () => call("tool_diagnostics");
 export const stashSave = (id: number, message: string | null, includeUntracked: boolean) =>
   call("stash_save", { id, message, includeUntracked });
 export const stashApply = (id: number, index: number) => call("stash_apply", { id, index });

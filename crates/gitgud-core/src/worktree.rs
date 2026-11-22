@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::io::Read;
 use std::path::Path;
 
@@ -5,7 +6,7 @@ use gix::bstr::BStr;
 use serde::{Deserialize, Serialize};
 
 use crate::cli::GitCli;
-use crate::diff::{FileDiff, Hunk, LineKind, file_diff, hunks_keeping_eol, is_binary};
+use crate::diff::{FileDiff, Hunk, LineKind, file_diff_with, hunks_keeping_eol, is_binary};
 use crate::repo::{Error, Repo, read_err};
 
 /// Which half of a working-copy change: HEAD → index, or index → work tree.
@@ -37,6 +38,14 @@ impl From<&Hunk> for HunkHeader {
     }
 }
 
+/// Identifies specific changed line indices inside one hunk for line-level staging/discard.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LineSelect {
+    pub hunk: HunkHeader,
+    pub lines: Vec<usize>,
+}
+
 /// Both versions of a path for one side, `None` where the path doesn't exist.
 struct Versions {
     old: Option<Vec<u8>>,
@@ -50,11 +59,25 @@ impl Repo {
     /// # Errors
     /// [`Error::Read`] when the path is conflicted or can't be read.
     pub fn worktree_file_diff(&self, path: &str, side: Side) -> Result<FileDiff, Error> {
+        self.worktree_file_diff_with(path, side, false)
+    }
+
+    /// As [`Repo::worktree_file_diff`], optionally ignoring whitespace differences.
+    ///
+    /// # Errors
+    /// [`Error::Read`] when the path is conflicted or can't be read.
+    pub fn worktree_file_diff_with(
+        &self,
+        path: &str,
+        side: Side,
+        ignore_whitespace: bool,
+    ) -> Result<FileDiff, Error> {
         let v = self.versions(path, side)?;
-        Ok(file_diff(
+        Ok(file_diff_with(
             path,
             &v.old.unwrap_or_default(),
             &v.new.unwrap_or_default(),
+            ignore_whitespace,
         ))
     }
 
@@ -68,12 +91,33 @@ impl Repo {
         self.apply_hunk(git, path, Side::Unstaged, hunk)
     }
 
+    /// Stages only the selected line indices within one hunk of `path`.
+    ///
+    /// # Errors
+    /// As [`Repo::stage_hunk`].
+    pub fn stage_lines(&self, git: &GitCli, path: &str, select: &LineSelect) -> Result<(), Error> {
+        self.apply_lines_to(git, path, Side::Unstaged, select, true)
+    }
+
     /// Unstages one hunk of the staged diff of `path`.
     ///
     /// # Errors
     /// As [`Repo::stage_hunk`].
     pub fn unstage_hunk(&self, git: &GitCli, path: &str, hunk: HunkHeader) -> Result<(), Error> {
         self.apply_hunk(git, path, Side::Staged, hunk)
+    }
+
+    /// Unstages only the selected line indices within one hunk of `path`.
+    ///
+    /// # Errors
+    /// As [`Repo::stage_hunk`].
+    pub fn unstage_lines(
+        &self,
+        git: &GitCli,
+        path: &str,
+        select: &LineSelect,
+    ) -> Result<(), Error> {
+        self.apply_lines_to(git, path, Side::Staged, select, true)
     }
 
     /// Throws away one hunk of the unstaged diff of `path`: the work tree file
@@ -84,6 +128,20 @@ impl Repo {
     /// As [`Repo::stage_hunk`].
     pub fn discard_hunk(&self, git: &GitCli, path: &str, hunk: HunkHeader) -> Result<(), Error> {
         self.apply_hunk_to(git, path, Side::Unstaged, hunk, false)
+    }
+
+    /// Discards only the selected line indices within one hunk of `path`. Destructive: record it
+    /// with [`crate::oplog::OpLog::record_destructive`].
+    ///
+    /// # Errors
+    /// As [`Repo::stage_hunk`].
+    pub fn discard_lines(
+        &self,
+        git: &GitCli,
+        path: &str,
+        select: &LineSelect,
+    ) -> Result<(), Error> {
+        self.apply_lines_to(git, path, Side::Unstaged, select, false)
     }
 
     /// Throws away the unstaged changes of `paths`: tracked files go back to their
@@ -163,6 +221,43 @@ impl Repo {
         }
         if side == Side::Staged || !to_index {
             args.push("--reverse");
+        }
+        args.push("-");
+        git.run(self.root(), &args, Some(patch.as_bytes()))
+            .map(drop)
+    }
+
+    fn apply_lines_to(
+        &self,
+        git: &GitCli,
+        path: &str,
+        side: Side,
+        select: &LineSelect,
+        to_index: bool,
+    ) -> Result<(), Error> {
+        let v = self.versions(path, side)?;
+        let (Some(old), Some(new)) = (v.old, v.new) else {
+            return Err(Error::Refused(format!(
+                "{path} is new or deleted: stage or unstage the whole file"
+            )));
+        };
+        if is_binary(&old) || is_binary(&new) {
+            return Err(Error::Refused(format!(
+                "{path} is binary: stage or unstage the whole file"
+            )));
+        }
+        let (old, new) = (String::from_utf8_lossy(&old), String::from_utf8_lossy(&new));
+        let hunk = hunks_keeping_eol(&old, &new)
+            .into_iter()
+            .find(|h| HunkHeader::from(h) == select.hunk)
+            .ok_or_else(|| Error::Stale(path.to_owned()))?;
+
+        let chosen: BTreeSet<usize> = select.lines.iter().copied().collect();
+        let forward = side == Side::Unstaged && to_index;
+        let patch = patch_lines(path, &hunk, &chosen, forward)?;
+        let mut args = vec!["apply", "--whitespace=nowarn"];
+        if to_index {
+            args.push("--cached");
         }
         args.push("-");
         git.run(self.root(), &args, Some(patch.as_bytes()))
@@ -266,6 +361,102 @@ fn patch(path: &str, hunk: &Hunk) -> String {
         }
     }
     out
+}
+
+/// Builds a partial patch applying only the selected line indices within `hunk`.
+/// When `forward` is `true`, the patch transforms `old` toward `new` (for `stage_lines`).
+/// When `forward` is `false`, the patch transforms `new` directly back toward `old`
+/// (for `unstage_lines` and `discard_lines` without `--reverse`).
+fn patch_lines(
+    path: &str,
+    hunk: &Hunk,
+    selected: &BTreeSet<usize>,
+    forward: bool,
+) -> Result<String, Error> {
+    let mut body = String::new();
+    let mut before_count = 0u32;
+    let mut after_count = 0u32;
+    let mut applied_any = false;
+
+    for (idx, line) in hunk.lines.iter().enumerate() {
+        let is_selected = selected.contains(&idx);
+        let emitted = match (forward, line.kind) {
+            (_, LineKind::Context) => {
+                before_count += 1;
+                after_count += 1;
+                Some(' ')
+            }
+            (true, LineKind::Removed) => {
+                if is_selected {
+                    applied_any = true;
+                    before_count += 1;
+                    Some('-')
+                } else {
+                    before_count += 1;
+                    after_count += 1;
+                    Some(' ')
+                }
+            }
+            (true, LineKind::Added) => {
+                if is_selected {
+                    applied_any = true;
+                    after_count += 1;
+                    Some('+')
+                } else {
+                    None
+                }
+            }
+            (false, LineKind::Added) => {
+                if is_selected {
+                    applied_any = true;
+                    before_count += 1;
+                    Some('-')
+                } else {
+                    before_count += 1;
+                    after_count += 1;
+                    Some(' ')
+                }
+            }
+            (false, LineKind::Removed) => {
+                if is_selected {
+                    applied_any = true;
+                    after_count += 1;
+                    Some('+')
+                } else {
+                    None
+                }
+            }
+        };
+        if let Some(prefix) = emitted {
+            body.push(prefix);
+            body.push_str(&line.text);
+            if !line.text.ends_with('\n') {
+                body.push_str("\n\\ No newline at end of file\n");
+            }
+        }
+    }
+
+    if !applied_any {
+        return Err(Error::Refused("no changed lines selected".into()));
+    }
+
+    let before_start = if forward {
+        hunk.old_start
+    } else {
+        hunk.new_start
+    };
+    let after_start = if after_count == 0 {
+        before_start.saturating_sub(1)
+    } else if before_start == 0 {
+        1
+    } else {
+        before_start
+    };
+    Ok(format!(
+        "--- {}\n+++ {}\n@@ -{before_start},{before_count} +{after_start},{after_count} @@\n{body}",
+        quote(&format!("a/{path}")),
+        quote(&format!("b/{path}")),
+    ))
 }
 
 /// Git's C-style quoting for paths with characters a patch header can't hold raw.

@@ -9,9 +9,15 @@ export interface Range {
 }
 
 /** Rows to render for a scroll position, with `overscan` extra rows each side. */
-export function visibleRange(scrollTop: number, viewport: number, total: number, overscan = 10): Range {
-  const start = Math.min(total, Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - overscan));
-  const end = Math.min(total, Math.ceil((scrollTop + viewport) / ROW_HEIGHT) + overscan);
+export function visibleRange(
+  scrollTop: number,
+  viewport: number,
+  total: number,
+  overscan = 10,
+  rowHeight = ROW_HEIGHT,
+): Range {
+  const start = Math.min(total, Math.max(0, Math.floor(scrollTop / rowHeight) - overscan));
+  const end = Math.min(total, Math.ceil((scrollTop + viewport) / rowHeight) + overscan);
   return { start, end: Math.max(start, end) };
 }
 

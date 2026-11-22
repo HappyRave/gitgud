@@ -16,6 +16,9 @@
     onclose,
     onadd,
     onquickswitch,
+    onpalette,
+    onshortcuts,
+    onsettings,
   }: {
     tabs: RepoTabInfo[];
     /** `null` when the always-first Library tab is active. */
@@ -24,6 +27,9 @@
     onclose: (path: string) => void;
     onadd: () => void;
     onquickswitch: () => void;
+    onpalette?: () => void;
+    onshortcuts?: () => void;
+    onsettings?: () => void;
   } = $props();
 
   const VISIBLE_CAP = 8;
@@ -144,6 +150,17 @@
   <button type="button" class="bare quick" title="Go to repository (Ctrl+P)" onclick={onquickswitch}>
     Ctrl+P go to repo
   </button>
+  {#if onpalette}
+    <button type="button" class="bare quick" title="Command palette (Ctrl+K)" onclick={onpalette}>Ctrl+K</button>
+  {/if}
+  {#if onshortcuts}
+    <button type="button" class="bare quick" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)" onclick={onshortcuts}
+      >?</button
+    >
+  {/if}
+  {#if onsettings}
+    <button type="button" class="bare quick" aria-label="Settings" title="Settings (Ctrl+,)" onclick={onsettings}>⚙</button>
+  {/if}
 </nav>
 
 <style>

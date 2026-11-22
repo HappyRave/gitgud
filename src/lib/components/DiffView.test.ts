@@ -96,4 +96,55 @@ describe("DiffView", () => {
 
     expect(screen.getByText("No content changes.")).toBeInTheDocument();
   });
+
+  it("renders syntax tokens and intra-line spans without altering text content", () => {
+    const view = render(DiffView, { diff: DIFF });
+    expect(view.container.querySelector(".tok-kw")?.textContent).toBe("fn");
+    expect(view.container.querySelectorAll(".chg").length).toBeGreaterThan(0);
+    expect(rows()).toEqual([
+      ["hunk", "@@ -1,2 +1,2 @@"],
+      ["context", "11 fn main() {"],
+      ["removed", "2-    old();"],
+      ["added", "2+    new();"],
+      ["hunk", "@@ -40 +40,0 @@"],
+      ["removed", "40-}"],
+    ]);
+  });
+
+  it("selects individual and Shift+click range of lines and dispatches lineActions", async () => {
+    const multi: FileDiff = {
+      path: "src/a.rs",
+      binary: false,
+      hunks: [
+        {
+          oldStart: 1,
+          oldLines: 3,
+          newStart: 1,
+          newLines: 4,
+          lines: [
+            { kind: "context", old: 1, new: 1, text: "fn f() {" },
+            { kind: "removed", old: 2, new: null, text: "    old_a();" },
+            { kind: "added", old: null, new: 2, text: "    new_a();" },
+            { kind: "added", old: null, new: 3, text: "    new_b();" },
+          ],
+        },
+      ],
+    };
+    const stageLines = vi.fn();
+    render(DiffView, {
+      diff: multi,
+      lineActions: [{ label: (n) => `Stage ${n} lines`, run: stageLines }],
+    });
+
+    await fireEvent.click(screen.getByText("old_a"));
+    await fireEvent.click(screen.getByText("new_b"), { shiftKey: true });
+
+    const btn = screen.getByRole("button", { name: "Stage 3 lines" });
+    await fireEvent.click(btn);
+
+    expect(stageLines).toHaveBeenCalledWith({
+      hunk: { oldStart: 1, oldLines: 3, newStart: 1, newLines: 4 },
+      lines: [1, 2, 3],
+    });
+  });
 });

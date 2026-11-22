@@ -208,3 +208,18 @@ export function tabCycleKey(event: KeyboardEvent): -1 | 1 | null {
   }
   return event.shiftKey ? -1 : 1;
 }
+
+/** Ctrl+K opens the command palette (spec §5). */
+export function isCommandPaletteKey(event: KeyboardEvent): boolean {
+  return event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey && event.key.toLowerCase() === "k";
+}
+
+/** Ctrl+, opens Settings (spec §5). */
+export function isSettingsKey(event: KeyboardEvent): boolean {
+  return event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey && event.key === ",";
+}
+
+/** ? outside text fields opens the keyboard shortcut sheet (spec §5). */
+export function isShortcutSheetKey(event: KeyboardEvent): boolean {
+  return !event.ctrlKey && !event.altKey && !event.metaKey && event.key === "?" && !inTextField(event.target);
+}

@@ -73,6 +73,12 @@ function app(extra: Handlers = {}) {
     clone_repo: ({ dest }) => dest,
     cancel_clone: () => true,
     fetch_many: () => [],
+    stage_lines: () => ({ id: 1, root: "C:/work/repo", rows: 1, graphVersion: 0 }),
+    unstage_lines: () => ({ id: 1, root: "C:/work/repo", rows: 1, graphVersion: 0 }),
+    discard_lines: () => ({ id: 1, root: "C:/work/repo", rows: 1, graphVersion: 0 }),
+    config_get_identity: () => ({ userName: "Ada", userEmail: "ada@example.com" }),
+    config_set_identity: () => null,
+    tool_diagnostics: () => ({ gitPath: GIT.path, gitVersion: GIT.version, lfsVersion: null }),
     ...extra,
   };
   return mockCommands(handlers);
@@ -1926,5 +1932,83 @@ describe("start page: Milestone 2 Library & multi-tab workspace", () => {
     await fireEvent.keyDown(window, { key: "w", ctrlKey: true });
     await vi.waitFor(() => expect(calls.find((c) => c.cmd === "close_repo")?.args).toEqual({ id: 1 }));
     expect(screen.getByRole("tab", { name: "Library" })).toHaveAttribute("aria-selected", "true");
+  });
+});
+
+describe("command palette, shortcut sheet, settings, and error fixes", () => {
+  it("opens Ctrl+K palette, ? shortcut sheet, and Ctrl+, settings", async () => {
+    const calls = app({
+      launch_path: () => "C:/work/repo",
+      branches: () => ({
+        local: [
+          { name: "main", current: true, upstream: null, ahead: 0, behind: 0 },
+          { name: "feat/palette", current: false, upstream: null, ahead: 0, behind: 0 },
+        ],
+        remotes: [],
+        fetched: null,
+      }),
+      checkout: () => ({ id: 1, root: "C:/work/repo", rows: 1, graphVersion: 0 }),
+    });
+    render(Page);
+    await screen.findByText("first commit");
+
+    await fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+    const pal = await screen.findByRole("dialog", { name: "Command palette" });
+    await fireEvent.click(within(pal).getByRole("option", { name: /Checkout branch/ }));
+    await fireEvent.click(within(pal).getByRole("option", { name: "feat/palette" }));
+    await vi.waitFor(() =>
+      expect(calls.find((c) => c.cmd === "checkout")?.args).toEqual({ id: 1, branch: "feat/palette" }),
+    );
+
+    await fireEvent.keyDown(window, { key: "?" });
+    expect(await screen.findByRole("dialog", { name: "Keyboard shortcuts" })).toBeInTheDocument();
+    await fireEvent.keyDown(screen.getByRole("dialog", { name: "Keyboard shortcuts" }), { key: "Escape" });
+
+    await fireEvent.keyDown(window, { key: ",", ctrlKey: true });
+    const settings = await screen.findByRole("dialog", { name: "Settings" });
+    await fireEvent.click(within(settings).getByRole("button", { name: "repo" }));
+    await fireEvent.click(within(settings).getByRole("button", { name: "Save identity" }));
+    await vi.waitFor(() => expect(calls.some((c) => c.cmd === "config_set_identity")).toBe(true));
+  });
+
+  it("explains push rejections and runs 1-click Pull fix", async () => {
+    const calls = app({
+      launch_path: () => "C:/work/repo",
+      branches: () => ({
+        local: [{ name: "main", current: true, upstream: "origin/main", ahead: 1, behind: 1 }],
+        remotes: [{ name: "origin", branches: ["origin/main"] }],
+        fetched: 1_700_000_000,
+      }),
+      push_info: () => ({
+        branch: "main",
+        remote: "origin",
+        remoteBranch: "main",
+        upstream: "origin/main",
+        ahead: 1,
+        behind: 1,
+        needsForce: false,
+        commits: [],
+        remotes: ["origin"],
+        prUrl: null,
+      }),
+      push: () => {
+        throw "! [rejected] main -> main (non-fast-forward)";
+      },
+      pull: () => ({
+        opened: { id: 1, root: "C:/work/repo", rows: 1, graphVersion: 0 },
+        outcome: { kind: "fastForwarded" },
+      }),
+    });
+    render(Page);
+    await screen.findByText("first commit");
+
+    await fireEvent.click(screen.getByRole("button", { name: /Push/ }));
+    const dlg = await screen.findByRole("dialog", { name: "Push main" });
+    await fireEvent.click(within(dlg).getByRole("button", { name: "Push" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Remote has newer commits");
+    await fireEvent.click(within(alert).getByRole("button", { name: "Pull now" }));
+    await vi.waitFor(() => expect(calls.some((c) => c.cmd === "pull")).toBe(true));
   });
 });
