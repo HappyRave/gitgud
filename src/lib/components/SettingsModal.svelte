@@ -5,8 +5,11 @@
     configSetIdentity,
     hasCommitGraph,
     toolDiagnostics,
+    unityApplyRepoSetup,
+    unityRepoSetupStatus,
     writeCommitGraph,
     type ToolDiagnostics,
+    type UnityRepoSetupStatus,
   } from "$lib/api";
   import {
     prefs,
@@ -38,6 +41,27 @@
   let diag = $state<ToolDiagnostics | null>(null);
   let commitGraph = $state<boolean | null>(null);
   let optimizingGraph = $state(false);
+  let unitySetup = $state<UnityRepoSetupStatus | null>(null);
+  let fixingUnitySetup = $state(false);
+
+  async function fixUnitySetup() {
+    if (activeRepoId == null || fixingUnitySetup || !unitySetup) {
+      return;
+    }
+    fixingUnitySetup = true;
+    error = null;
+    try {
+      unitySetup = await unityApplyRepoSetup(
+        activeRepoId,
+        unitySetup.gitignoreMissing.length > 0,
+        unitySetup.gitattributesMissing.length > 0,
+      );
+    } catch (err) {
+      error = String(err);
+    } finally {
+      fixingUnitySetup = false;
+    }
+  }
 
   async function optimizeGraph() {
     if (activeRepoId == null || optimizingGraph) {
@@ -93,6 +117,10 @@
       hasCommitGraph(activeRepoId).then(
         (built) => (commitGraph = built),
         () => (commitGraph = null),
+      );
+      unityRepoSetupStatus(activeRepoId).then(
+        (s) => (unitySetup = s),
+        () => (unitySetup = null),
       );
     }
   });
@@ -210,6 +238,39 @@
         <p class="ab">Checking installed tools…</p>
       {/if}
     </section>
+
+    {#if unitySetup?.isUnity}
+      <section class="sec" aria-label="Unity Project Setup">
+        <h3>Unity Project Setup</h3>
+        <dl class="diag">
+          <dt>Serialization</dt>
+          <dd>
+            {unitySetup.forceTextOk
+              ? "Force Text ✓"
+              : `Mode ${unitySetup.serializationMode ?? "unknown"} — set Asset Serialization to Force Text in Unity`}
+          </dd>
+          <dt>.gitignore</dt>
+          <dd>
+            {unitySetup.gitignoreMissing.length === 0
+              ? "Standard Unity ignores present ✓"
+              : `Missing ${unitySetup.gitignoreMissing.join(", ")}`}
+          </dd>
+          <dt>.gitattributes</dt>
+          <dd>
+            {unitySetup.gitattributesMissing.length === 0
+              ? "Standard Unity rules present ✓"
+              : `Missing ${unitySetup.gitattributesMissing.length} standard rule(s)`}
+          </dd>
+        </dl>
+        {#if unitySetup.gitignoreMissing.length > 0 || unitySetup.gitattributesMissing.length > 0}
+          <div class="usetup-act">
+            <button type="button" class="pri" disabled={fixingUnitySetup} onclick={fixUnitySetup}>
+              {fixingUnitySetup ? "Updating…" : "Fix Unity .gitignore / .gitattributes"}
+            </button>
+          </div>
+        {/if}
+      </section>
+    {/if}
   </div>
 </div>
 
@@ -357,6 +418,9 @@
     display: flex;
     align-items: center;
     gap: 10px;
+  }
+  .usetup-act {
+    margin-top: 8px;
   }
   .x {
     padding: 2px 6px;

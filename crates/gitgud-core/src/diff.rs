@@ -132,16 +132,11 @@ impl Repo {
         self.commit_file_diff_with(id, path, false)
     }
 
-    /// As [`Repo::commit_file_diff`], optionally ignoring whitespace differences.
-    ///
-    /// # Errors
-    /// [`Error::Read`] when `id` isn't a commit or `path` didn't change in it.
-    pub fn commit_file_diff_with(
+    pub(crate) fn commit_file_versions(
         &self,
         id: &str,
         path: &str,
-        ignore_whitespace: bool,
-    ) -> Result<FileDiff, Error> {
+    ) -> Result<crate::worktree::Versions, Error> {
         let repo = self.gix();
         let commit = find_commit(&repo, id)?;
         let new = blob_at(&repo, &commit, path)?;
@@ -154,10 +149,24 @@ impl Repo {
                 "{path} is not in commit {id} or its parent"
             )));
         }
+        Ok(crate::worktree::Versions { old, new })
+    }
+
+    /// As [`Repo::commit_file_diff`], optionally ignoring whitespace differences.
+    ///
+    /// # Errors
+    /// [`Error::Read`] when `id` isn't a commit or `path` didn't change in it.
+    pub fn commit_file_diff_with(
+        &self,
+        id: &str,
+        path: &str,
+        ignore_whitespace: bool,
+    ) -> Result<FileDiff, Error> {
+        let v = self.commit_file_versions(id, path)?;
         Ok(file_diff_with(
             path,
-            &old.unwrap_or_default(),
-            &new.unwrap_or_default(),
+            &v.old.unwrap_or_default(),
+            &v.new.unwrap_or_default(),
             ignore_whitespace,
         ))
     }

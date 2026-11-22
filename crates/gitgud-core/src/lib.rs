@@ -27,5 +27,6 @@ pub mod task;
 #[cfg(any(test, feature = "test-util"))]
 pub mod testing;
 pub mod unity;
+pub mod unity_yaml;
 pub mod watch;
 pub mod worktree;

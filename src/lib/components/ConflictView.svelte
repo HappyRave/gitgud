@@ -1,12 +1,21 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
   import { SvelteSet } from "svelte/reactivity";
-  import type { MergeSide, MergeState, UnityInfo } from "$lib/api";
+  import {
+    unityPostMergeCheck,
+    type MergeSide,
+    type MergeState,
+    type UnityInfo,
+    type UnityIntegrityIssue,
+    type UnityPropertyPick,
+  } from "$lib/api";
   import { groupByKind } from "$lib/merge/resolve";
+  import { isUnityYaml } from "$lib/unity";
   import ConflictList from "./ConflictList.svelte";
   import MergeSummary from "./MergeSummary.svelte";
   import SidePick from "./SidePick.svelte";
   import TextMerge from "./TextMerge.svelte";
+  import UnityMergeTable from "./UnityMergeTable.svelte";
 
   let {
     repoId,
@@ -19,6 +28,7 @@
     unityInfo = null,
     onresolvewith,
     onresolveside,
+    onresolveunity,
     oncommit,
     onsetupSmartMerge,
     onremergeUnity,
@@ -40,6 +50,7 @@
     /** Resolve to whether the write worked. */
     onresolvewith: (path: string, content: string, how: string) => Promise<boolean>;
     onresolveside: (path: string, side: MergeSide) => Promise<boolean>;
+    onresolveunity?: (path: string, picks: UnityPropertyPick[]) => Promise<boolean>;
     oncommit: () => void;
     onsetupSmartMerge?: () => void;
     onremergeUnity?: () => void;
@@ -63,6 +74,52 @@
   const selected = $derived(ordered.find((c) => c.path === chosen) ?? left[0] ?? null);
   /** Text files git couldn't merge as text after all. */
   const sidePickOnly = new SvelteSet<string>();
+  /** Unity YAML files the user explicitly switched to Raw YAML text view. */
+  const rawYamlMode = new SvelteSet<string>();
+  /** Unity YAML files that could not be parsed as property tables. */
+  const unparseableUnity = new SvelteSet<string>();
+
+  let postIssues = $state<UnityIntegrityIssue[] | null>(null);
+  let postCheckedCount = $state(0);
+
+  $effect(() => {
+    if (left.length > 0) {
+      postIssues = null;
+      postCheckedCount = 0;
+      return;
+    }
+    const unityPaths = Array.from(
+      new Set([
+        ...ordered.map((c) => c.path).filter(isUnityYaml),
+        ...unityVerify.map((f) => f.path).filter(isUnityYaml),
+      ]),
+    );
+    if (unityPaths.length === 0) {
+      postIssues = null;
+      postCheckedCount = 0;
+      return;
+    }
+    const id = repoId;
+    const rev = revision;
+    let stale = false;
+    unityPostMergeCheck(id, unityPaths).then(
+      (issues) => {
+        if (!stale && repoId === id && revision === rev) {
+          postIssues = issues;
+          postCheckedCount = unityPaths.length;
+        }
+      },
+      () => {
+        if (!stale) {
+          postIssues = null;
+          postCheckedCount = 0;
+        }
+      },
+    );
+    return () => {
+      stale = true;
+    };
+  });
 
   const theirsLabel = $derived(merge.theirs ?? "MERGE_HEAD");
 
@@ -81,6 +138,12 @@
 
   async function withSide(path: string, side: MergeSide) {
     if (await onresolveside(path, side)) {
+      advance(path);
+    }
+  }
+
+  async function withUnityPicks(path: string, picks: UnityPropertyPick[]) {
+    if (onresolveunity && (await onresolveunity(path, picks))) {
       advance(path);
     }
   }
@@ -170,6 +233,25 @@
         </section>
       {/if}
 
+      {#if left.length === 0 && postIssues !== null && postCheckedCount > 0}
+        <section
+          class="post-check"
+          class:post-bad={postIssues.length > 0}
+          aria-label="Post-merge Unity check"
+        >
+          {#if postIssues.length === 0}
+            <span>✓ Post-merge check passed: {postCheckedCount} Unity {postCheckedCount === 1 ? "file" : "files"} verified (no duplicate fileIDs or broken references).</span>
+          {:else}
+            <strong>⚠ Post-merge check found {postIssues.length} Unity YAML {postIssues.length === 1 ? "issue" : "issues"}</strong>
+            <ul>
+              {#each postIssues as issue (`${issue.path}-${issue.kind}-${issue.fileId ?? issue.detail}`)}
+                <li><code>{issue.path}</code>: {issue.detail}</li>
+              {/each}
+            </ul>
+          {/if}
+        </section>
+      {/if}
+
       {#if left.length === 0 && whenResolved}
         {@render whenResolved()}
       {:else if left.length === 0}
@@ -193,7 +275,25 @@
               {busy}
               onpick={(side) => withSide(selected.path, side)}
             />
+          {:else if selected.kind === "unityYaml" && onresolveunity && !rawYamlMode.has(selected.path) && !unparseableUnity.has(selected.path)}
+            <UnityMergeTable
+              {repoId}
+              path={selected.path}
+              {revision}
+              yoursLabel={branch}
+              {theirsLabel}
+              {busy}
+              onresolve={(picks) => withUnityPicks(selected.path, picks)}
+              onrawyaml={() => rawYamlMode.add(selected.path)}
+              onfallbacktext={() => unparseableUnity.add(selected.path)}
+            />
           {:else}
+            {#if selected.kind === "unityYaml" && onresolveunity && rawYamlMode.has(selected.path)}
+              <div class="rawbar">
+                <span>Viewing Raw YAML merge</span>
+                <button type="button" onclick={() => rawYamlMode.delete(selected.path)}>Back to Property Table</button>
+              </div>
+            {/if}
             <TextMerge
               {repoId}
               path={selected.path}
@@ -291,5 +391,29 @@
   .auto-merged ul {
     margin: 4px 0 0;
     padding-left: 18px;
+  }
+  .post-check {
+    padding: 7px 12px;
+    border-bottom: 1px solid var(--line);
+    background: var(--add-bg);
+    color: var(--l2);
+    font-size: 12px;
+  }
+  .post-check.post-bad {
+    background: var(--warn);
+    color: var(--warn-ink);
+  }
+  .post-check ul {
+    margin: 4px 0 0;
+    padding-left: 18px;
+  }
+  .rawbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 5px 10px;
+    background: var(--sel);
+    border-bottom: 1px solid var(--line);
+    font-size: 11.5px;
   }
 </style>

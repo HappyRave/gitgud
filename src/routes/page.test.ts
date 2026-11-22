@@ -125,6 +125,31 @@ function app(extra: Handlers = {}) {
     outside_reflog: () => [],
     has_commit_graph: () => false,
     write_commit_graph: () => null,
+    worktree_unity_diff: () => ({ path: "", addedObjects: 0, removedObjects: 0, modifiedProperties: 0, objects: [] }),
+    commit_unity_diff: () => ({ path: "", addedObjects: 0, removedObjects: 0, modifiedProperties: 0, objects: [] }),
+    unity_conflict_table: () => {
+      throw "not valid multi-document Unity YAML";
+    },
+    resolve_unity_conflict: () => ({ id: 1, root: "C:/work/repo", rows: 1, graphVersion: 0 }),
+    unity_post_merge_check: () => [],
+    unity_repo_setup_status: () => ({
+      isUnity: false,
+      hasGitignore: false,
+      gitignoreMissing: [],
+      hasGitattributes: false,
+      gitattributesMissing: [],
+      forceTextOk: false,
+      serializationMode: null,
+    }),
+    unity_apply_repo_setup: () => ({
+      isUnity: false,
+      hasGitignore: false,
+      gitignoreMissing: [],
+      hasGitattributes: false,
+      gitattributesMissing: [],
+      forceTextOk: false,
+      serializationMode: null,
+    }),
     ...extra,
   };
   return mockCommands(handlers);
@@ -2416,5 +2441,133 @@ describe("Unity, LFS locks, Smart Merge verify, and open-editor guard", () => {
     expect(await screen.findByText("HEAD@{0}")).toBeInTheDocument();
     await fireEvent.click(await screen.findByRole("button", { name: "Prune old (4)" }));
     expect(calls.some((c) => c.cmd === "op_log_prune")).toBe(true);
+  });
+
+  it("shows structural Unity prefab diff and auto-lock suggestion for unlocked LFS assets", async () => {
+    const calls = app({
+      launch_path: () => "C:/work/unity",
+      lfs_info: () => ({
+        installed: true,
+        version: "git-lfs/3.6.0",
+        trackedPatterns: ["*.psd"],
+        supportsLocks: true,
+        locksUnsupportedReason: null,
+      }),
+      lfs_locks: () => [],
+      lfs_lock: () => null,
+      repo_status: () => ({
+        root: "C:/work/unity",
+        head: { kind: "branch", name: "main", id: "a".repeat(40) },
+        entries: [
+          {
+            path: "Assets/Player.prefab",
+            index: null,
+            worktree: "modified",
+            kind: "tracked",
+            binary: false,
+            bytes: 120,
+            conflicted: false,
+          },
+          {
+            path: "Assets/Art/Hull.psd",
+            index: null,
+            worktree: "modified",
+            kind: "tracked",
+            binary: true,
+            bytes: 2048,
+            conflicted: false,
+          },
+        ],
+      }),
+      worktree_unity_diff: ({ path }) => ({
+        path,
+        addedObjects: 0,
+        removedObjects: 0,
+        modifiedProperties: 1,
+        objects: [
+          {
+            fileId: "12",
+            objectPath: "Player",
+            component: "PlayerMover.cs",
+            kind: "modified",
+            properties: [
+              {
+                property: "moveSpeed",
+                before: "5",
+                after: "9",
+                beforeDisplay: "5",
+                afterDisplay: "9",
+              },
+            ],
+          },
+        ],
+      }),
+      worktree_file_diff: ({ path }) => ({
+        path,
+        binary: path.endsWith(".psd"),
+        hunks: [],
+      }),
+    });
+    render(Page);
+
+    await fireEvent.click(await screen.findByTitle("Assets/Player.prefab"));
+    expect(await screen.findByText(/PlayerMover\.cs/)).toBeInTheDocument();
+    expect(screen.getByText("moveSpeed")).toBeInTheDocument();
+
+    await fireEvent.click(await screen.findByTitle("Assets/Art/Hull.psd"));
+    expect(await screen.findByText(/LFS asset isn't locked yet/)).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Lock file" }));
+    expect(calls.find((c) => c.cmd === "lfs_lock")?.args).toEqual({
+      id: 1,
+      path: "Assets/Art/Hull.psd",
+    });
+  });
+
+  it("resolves a Unity YAML conflict via R4-A property table and shows post-merge check", async () => {
+    let resolved = false;
+    const calls = app({
+      launch_path: () => "C:/work/unity",
+      merge_state: () => ({
+        theirs: "feature",
+        message: "Merge feature",
+        conflicts: [{ path: "Assets/Ship.prefab", kind: "unityYaml", resolved }],
+      }),
+      unity_conflict_table: ({ path }) => ({
+        path,
+        conflicts: [
+          {
+            id: "12::speed",
+            fileId: "12",
+            objectPath: "Ship / Engine",
+            component: "Thruster.cs",
+            property: "speed",
+            base: "10",
+            yours: "15",
+            theirs: "22",
+            baseDisplay: "10",
+            yoursDisplay: "15",
+            theirsDisplay: "22",
+          },
+        ],
+        autoMerged: [],
+      }),
+      resolve_unity_conflict: () => {
+        resolved = true;
+        return { id: 1, root: "C:/work/unity", rows: 1, graphVersion: 0 };
+      },
+      unity_post_merge_check: () => [],
+    });
+    render(Page);
+
+    expect(await screen.findByText("Ship / Engine")).toBeInTheDocument();
+    await fireEvent.keyDown(window, { key: "1" });
+    await fireEvent.click(screen.getByRole("button", { name: /Save & stage/ }));
+
+    expect(calls.find((c) => c.cmd === "resolve_unity_conflict")?.args).toEqual({
+      id: 1,
+      path: "Assets/Ship.prefab",
+      picks: [{ fileId: "12", property: "speed", value: "15" }],
+    });
+    expect(await screen.findByText(/Post-merge check passed/)).toBeInTheDocument();
   });
 });

@@ -267,6 +267,83 @@ export interface ReflogEntry {
   time: number;
 }
 
+export interface UnityPropChange {
+  property: string;
+  before: string | null;
+  after: string | null;
+  beforeDisplay: string | null;
+  afterDisplay: string | null;
+}
+
+export interface UnityObjectChange {
+  fileId: string;
+  objectPath: string;
+  component: string;
+  kind: "added" | "removed" | "modified";
+  properties: UnityPropChange[];
+}
+
+export interface UnityYamlDiff {
+  path: string;
+  addedObjects: number;
+  removedObjects: number;
+  modifiedProperties: number;
+  objects: UnityObjectChange[];
+}
+
+export interface UnityConflictRow {
+  id: string;
+  fileId: string;
+  objectPath: string;
+  component: string;
+  property: string;
+  base: string | null;
+  yours: string | null;
+  theirs: string | null;
+  baseDisplay: string | null;
+  yoursDisplay: string | null;
+  theirsDisplay: string | null;
+}
+
+export interface UnityAutoRow {
+  fileId: string;
+  objectPath: string;
+  component: string;
+  property: string;
+  side: string;
+  value: string | null;
+  display: string | null;
+}
+
+export interface UnityConflictTable {
+  path: string;
+  conflicts: UnityConflictRow[];
+  autoMerged: UnityAutoRow[];
+}
+
+export interface UnityPropertyPick {
+  fileId: string;
+  property: string;
+  value: string | null;
+}
+
+export interface UnityIntegrityIssue {
+  path: string;
+  kind: string;
+  fileId: string | null;
+  detail: string;
+}
+
+export interface UnityRepoSetupStatus {
+  isUnity: boolean;
+  hasGitignore: boolean;
+  gitignoreMissing: string[];
+  hasGitattributes: boolean;
+  gitattributesMissing: string[];
+  forceTextOk: boolean;
+  serializationMode: number | null;
+}
+
 export interface MergeState {
   /** The branch being merged in, when gitgud started the merge. */
   theirs: string | null;
@@ -682,6 +759,16 @@ export interface Commands {
   outside_reflog: { args: { id: number; limit?: number }; result: ReflogEntry[] };
   has_commit_graph: { args: { id: number }; result: boolean };
   write_commit_graph: { args: { id: number }; result: null };
+  worktree_unity_diff: { args: { id: number; path: string; side: Side }; result: UnityYamlDiff };
+  commit_unity_diff: { args: { id: number; commit: string; path: string }; result: UnityYamlDiff };
+  unity_conflict_table: { args: { id: number; path: string }; result: UnityConflictTable };
+  resolve_unity_conflict: { args: { id: number; path: string; picks: UnityPropertyPick[] }; result: Opened };
+  unity_post_merge_check: { args: { id: number; paths: string[] }; result: UnityIntegrityIssue[] };
+  unity_repo_setup_status: { args: { id: number }; result: UnityRepoSetupStatus };
+  unity_apply_repo_setup: {
+    args: { id: number; writeGitignore: boolean; writeGitattributes: boolean };
+    result: UnityRepoSetupStatus;
+  };
   pr_url: { args: { id: number; branch: string }; result: string | null };
   open_external_url: { args: { url: string }; result: null };
   predict_merge: { args: { id: number; branch: string }; result: string[] };
@@ -933,6 +1020,16 @@ export const opLogPrune = (id: number) => call("op_log_prune", { id });
 export const outsideReflog = (id: number, limit = 100) => call("outside_reflog", { id, limit });
 export const hasCommitGraph = (id: number) => call("has_commit_graph", { id });
 export const writeCommitGraph = (id: number) => call("write_commit_graph", { id });
+export const worktreeUnityDiff = (id: number, path: string, side: Side) => call("worktree_unity_diff", { id, path, side });
+export const commitUnityDiff = (id: number, commit: string, path: string) =>
+  call("commit_unity_diff", { id, commit, path });
+export const unityConflictTable = (id: number, path: string) => call("unity_conflict_table", { id, path });
+export const resolveUnityConflict = (id: number, path: string, picks: UnityPropertyPick[]) =>
+  call("resolve_unity_conflict", { id, path, picks });
+export const unityPostMergeCheck = (id: number, paths: string[]) => call("unity_post_merge_check", { id, paths });
+export const unityRepoSetupStatus = (id: number) => call("unity_repo_setup_status", { id });
+export const unityApplyRepoSetup = (id: number, writeGitignore: boolean, writeGitattributes: boolean) =>
+  call("unity_apply_repo_setup", { id, writeGitignore, writeGitattributes });
 
 export const onCloneProgress = (handler: (progress: CloneProgress) => void) =>
   listen<CloneProgress>("clone-progress", (e) => handler(e.payload));

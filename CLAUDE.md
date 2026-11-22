@@ -30,9 +30,9 @@ R on an older commit opens the plan, F / D apply at once, all undoable); Ctrl+F 
 working-copy keys of spec §5 plus Ctrl+2 / F6 / Ctrl+C / Ctrl+Shift+L / Ctrl+Shift+P / Ctrl+B; the ultrawide inspector
 split (≥ 2400 px); the strip's upstream / last-fetch line. Styling follows the lab
 mocks (tokens in `src/app.css`, light and dark); the lane colours are the mock's, never given a
-design round. Landed in M1–M5: command palette (`Ctrl+K`), shortcut sheet (`?`), line staging, syntax+intraline diff, plain-English error banner, settings modal, Unity Smart Merge / `.meta` guard / LFS locks / TGA+PSD previews, tags, file history & blame, op-log pruning + outside reflog recovery, and commit-graph optimization. Not yet: history
+design round. Landed in M1–M6: command palette (`Ctrl+K`), shortcut sheet (`?`), line staging, syntax+intraline diff, plain-English error banner, settings modal, Unity Smart Merge / `.meta` guard / LFS locks / TGA+PSD previews, tags, file history & blame, op-log pruning + outside reflog recovery, commit-graph optimization, Unity YAML structural prefab/scene diff, R4-A property table resolver, post-merge integrity check, and Unity repo setup. Not yet: history
 edits over merge commits or the root commit (refused for now, Max 2026-11-22), stacks and PR
-links per stack level, the faded "still on origin" commits after Done, Unity YAML structural diff / property table, proposals.
+links per stack level, the faded "still on origin" commits after Done, proposals.
 Update this file as pieces land.
 
 The approved product spec is `docs/spec.md` (2026-11-21); design verdicts are in `docs/lab/decisions.md`.
@@ -114,12 +114,16 @@ replaying at most 255 rows (spike 4.3).
 - **Config & diagnostics** (`config.rs`): reads/writes `user.name` and `user.email` at global or
   repo-local scope (`Session::set_repo_identity` triggers config reload), and reports installed git
   and git-lfs paths/versions.
-- **Unity & LFS** (`unity.rs`, `lfs.rs`): detects `ProjectVersion.txt`, `Temp/UnityLockfile` (guards
+- **Unity & LFS** (`unity.rs`, `unity_yaml.rs`, `lfs.rs`): detects `ProjectVersion.txt`, `Temp/UnityLockfile` (guards
   checkout/merge/rebase touching `Assets/`), Hub `UnityYAMLMerge.exe`, Smart Merge setup in local
   `.git/config` + `.git/info/attributes` (never `.gitattributes`), v1.0 per-property verification in
   `merge.json` gating `merge_commit`, `.meta` auto-pairing (`Session::{stage,unstage,discard}`) +
-  non-blocking `.meta` warnings, Git LFS locks (disabled on Bitbucket Cloud per O1) + unlock-on-push,
-  and quiet non-interactive 10-min `background_refresh` (`cli::GitCli::run_background`).
+  non-blocking `.meta` warnings, Git LFS locks (disabled on Bitbucket Cloud per O1) + unlock-on-push
+  + inline unlock suggestion (`WorkingCopy.svelte`), quiet non-interactive 10-min `background_refresh`
+  (`cli::GitCli::run_background`), pure-Rust multi-document Unity YAML structural diff (`UnityDiffView.svelte`)
+  and GUID/`fileID` resolution (`GuidIndex`), R4-A interactive Property Table merge (`UnityMergeTable.svelte`
+  with `1`/`2`/`E` + Raw YAML fallback), post-merge duplicate-`fileID` / broken-reference check, and
+  one-click Unity `.gitignore`/`.gitattributes` + `Force Text` check (`SettingsModal.svelte`).
 - **Network** (`task.rs`, `job.rs`): long git runs parse `--progress` and cancel by killing a
   Windows Job Object (git starts suspended, joins the job, resumes), which also ends grandchildren
   `taskkill /T` misses. A cancelled fetch deletes its `tmp_pack_*` files.

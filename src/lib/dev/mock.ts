@@ -528,6 +528,116 @@ export function installMock(scenario: string) {
       commitGraphBuilt = true;
       return null;
     },
+    worktree_unity_diff: ({ path }) => ({
+      path,
+      addedObjects: 0,
+      removedObjects: 0,
+      modifiedProperties: 2,
+      objects: [
+        {
+          fileId: "400001",
+          objectPath: "Boat / Hull",
+          component: "Transform",
+          kind: "modified",
+          properties: [
+            {
+              property: "m_LocalPosition",
+              before: "{x: 0, y: 0, z: 0}",
+              after: "{x: 0, y: 1.5, z: 0}",
+              beforeDisplay: "{x: 0, y: 0, z: 0}",
+              afterDisplay: "{x: 0, y: 1.5, z: 0}",
+            },
+          ],
+        },
+        {
+          fileId: "1140002",
+          objectPath: "Boat",
+          component: "BoatController.cs",
+          kind: "modified",
+          properties: [
+            {
+              property: "maxSpeed",
+              before: "14",
+              after: "18",
+              beforeDisplay: "14",
+              afterDisplay: "18",
+            },
+          ],
+        },
+      ],
+    }),
+    commit_unity_diff: ({ path }) => ({
+      path,
+      addedObjects: 0,
+      removedObjects: 0,
+      modifiedProperties: 1,
+      objects: [
+        {
+          fileId: "1140002",
+          objectPath: "Boat",
+          component: "BoatController.cs",
+          kind: "modified",
+          properties: [
+            {
+              property: "maxSpeed",
+              before: "12",
+              after: "14",
+              beforeDisplay: "12",
+              afterDisplay: "14",
+            },
+          ],
+        },
+      ],
+    }),
+    unity_conflict_table: ({ path }) => ({
+      path,
+      conflicts: [
+        {
+          id: "1140002::maxSpeed",
+          fileId: "1140002",
+          objectPath: "Boat / Engine",
+          component: "BoatController.cs",
+          property: "maxSpeed",
+          base: "12",
+          yours: "18",
+          theirs: "22",
+          baseDisplay: "12",
+          yoursDisplay: "18",
+          theirsDisplay: "22",
+        },
+      ],
+      autoMerged: [
+        {
+          fileId: "400001",
+          objectPath: "Boat / Hull",
+          component: "Transform",
+          property: "m_LocalRotation.y",
+          side: "theirs",
+          value: "0.707",
+          display: "0.707",
+        },
+      ],
+    }),
+    resolve_unity_conflict: () => opened(),
+    unity_post_merge_check: () => [],
+    unity_repo_setup_status: () => ({
+      isUnity: true,
+      hasGitignore: true,
+      gitignoreMissing: [],
+      hasGitattributes: true,
+      gitattributesMissing: ["*.png filter=lfs diff=lfs merge=lfs -text"],
+      forceTextOk: true,
+      serializationMode: 2,
+    }),
+    unity_apply_repo_setup: () => ({
+      isUnity: true,
+      hasGitignore: true,
+      gitignoreMissing: [],
+      hasGitattributes: true,
+      gitattributesMissing: [],
+      forceTextOk: true,
+      serializationMode: 2,
+    }),
     pr_url: ({ branch }) => `https://github.com/Max/boat/pull/new/${branch}`,
     open_external_url: () => null,
     library_load: () => mockLib,

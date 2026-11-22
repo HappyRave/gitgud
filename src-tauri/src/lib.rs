@@ -27,6 +27,9 @@ use gitgud_core::stash::StashEntry;
 use gitgud_core::tags::TagInfo;
 use gitgud_core::task::{Cancel, Progress};
 use gitgud_core::unity::{MetaIssue, UnityInfo};
+use gitgud_core::unity_yaml::{
+    UnityConflictTable, UnityIntegrityIssue, UnityPropertyPick, UnityRepoSetupStatus, UnityYamlDiff,
+};
 use gitgud_core::worktree::{HunkHeader, LineSelect, Side};
 use tauri::{AppHandle, Builder, Emitter, Manager, Runtime, State};
 
@@ -1282,6 +1285,72 @@ async fn write_commit_graph(session: State<'_, Session>, id: u32) -> Result<(), 
 }
 
 #[tauri::command]
+async fn worktree_unity_diff(
+    session: State<'_, Session>,
+    id: u32,
+    path: String,
+    side: Side,
+) -> Result<UnityYamlDiff, Error> {
+    session.worktree_unity_diff(id, &path, side)
+}
+
+#[tauri::command]
+async fn commit_unity_diff(
+    session: State<'_, Session>,
+    id: u32,
+    commit: String,
+    path: String,
+) -> Result<UnityYamlDiff, Error> {
+    session.commit_unity_diff(id, &commit, &path)
+}
+
+#[tauri::command]
+async fn unity_conflict_table(
+    session: State<'_, Session>,
+    id: u32,
+    path: String,
+) -> Result<UnityConflictTable, Error> {
+    session.unity_conflict_table(id, &path)
+}
+
+#[tauri::command]
+async fn resolve_unity_conflict(
+    session: State<'_, Session>,
+    id: u32,
+    path: String,
+    picks: Vec<UnityPropertyPick>,
+) -> Result<Opened, Error> {
+    session.resolve_unity_conflict(id, &path, &picks)
+}
+
+#[tauri::command]
+async fn unity_post_merge_check(
+    session: State<'_, Session>,
+    id: u32,
+    paths: Vec<String>,
+) -> Result<Vec<UnityIntegrityIssue>, Error> {
+    session.unity_post_merge_check(id, &paths)
+}
+
+#[tauri::command]
+async fn unity_repo_setup_status(
+    session: State<'_, Session>,
+    id: u32,
+) -> Result<UnityRepoSetupStatus, Error> {
+    session.unity_repo_setup_status(id)
+}
+
+#[tauri::command]
+async fn unity_apply_repo_setup(
+    session: State<'_, Session>,
+    id: u32,
+    write_gitignore: bool,
+    write_gitattributes: bool,
+) -> Result<UnityRepoSetupStatus, Error> {
+    session.unity_apply_repo_setup(id, write_gitignore, write_gitattributes)
+}
+
+#[tauri::command]
 async fn background_refresh(
     session: State<'_, Session>,
     id: u32,
@@ -1428,7 +1497,14 @@ fn app_with_library<R: Runtime>(builder: Builder<R>, library: Option<LibraryStor
             op_log_prune,
             outside_reflog,
             has_commit_graph,
-            write_commit_graph
+            write_commit_graph,
+            worktree_unity_diff,
+            commit_unity_diff,
+            unity_conflict_table,
+            resolve_unity_conflict,
+            unity_post_merge_check,
+            unity_repo_setup_status,
+            unity_apply_repo_setup
         ])
 }
 
@@ -2722,5 +2798,133 @@ mod tests {
                 .len(),
             0
         );
+    }
+
+    #[test]
+    fn unity_yaml_structural_diff_conflict_table_and_integrity_through_ipc() {
+        let ipc = Ipc::new();
+        let repo = TestRepo::init();
+        let script_guid = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let base_prefab = format!(
+            "%YAML 1.1\n--- !u!1 &10\nGameObject:\n  m_Name: Player\n--- !u!4 &11\nTransform:\n  m_GameObject: {{fileID: 10}}\n  m_Father: {{fileID: 0}}\n--- !u!114 &12\nMonoBehaviour:\n  m_GameObject: {{fileID: 10}}\n  m_Script: {{fileID: 11500000, guid: {script_guid}, type: 3}}\n  speed: 10\n"
+        );
+        repo.write(
+            "ProjectSettings/ProjectVersion.txt",
+            "m_EditorVersion: 6000.0.12f1\n",
+        )
+        .write(
+            "ProjectSettings/EditorSettings.asset",
+            "m_SerializationMode: 2\n",
+        )
+        .write("Assets/Mover.cs", "class Mover {}")
+        .write(
+            "Assets/Mover.cs.meta",
+            &format!("fileFormatVersion: 2\nguid: {script_guid}\n"),
+        )
+        .write("Assets/Player.prefab", &base_prefab)
+        .commit_all("base prefab");
+
+        let default_branch = repo
+            .git(&["rev-parse", "--abbrev-ref", "HEAD"])
+            .trim()
+            .to_owned();
+
+        let theirs_prefab = base_prefab.replace("speed: 10", "speed: 25");
+        repo.git(&["checkout", "-b", "theirs"]);
+        repo.write("Assets/Player.prefab", &theirs_prefab)
+            .commit_all("theirs speed");
+
+        repo.git(&["checkout", &default_branch]);
+        let ours_prefab = base_prefab.replace("speed: 10", "speed: 15");
+        repo.write("Assets/Player.prefab", &ours_prefab)
+            .commit_all("ours speed");
+
+        // Unstaged structural change before merge.
+        let dirty_prefab = ours_prefab.replace("speed: 15", "speed: 18");
+        repo.write("Assets/Player.prefab", &dirty_prefab);
+
+        let id = open(&ipc, &repo)["id"].clone();
+
+        let setup_before = ipc
+            .call("unity_repo_setup_status", json!({ "id": id }))
+            .unwrap();
+        assert_eq!(setup_before["isUnity"], true);
+        assert_eq!(setup_before["forceTextOk"], true);
+        assert!(
+            !setup_before["gitignoreMissing"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+
+        let setup_after = ipc
+            .call(
+                "unity_apply_repo_setup",
+                json!({ "id": id, "writeGitignore": true, "writeGitattributes": true }),
+            )
+            .unwrap();
+        assert!(
+            setup_after["gitignoreMissing"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            setup_after["gitattributesMissing"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+
+        let wdiff = ipc
+            .call(
+                "worktree_unity_diff",
+                json!({ "id": id, "path": "Assets/Player.prefab", "side": "unstaged" }),
+            )
+            .unwrap();
+        assert_eq!(wdiff["modifiedProperties"], 1);
+        assert_eq!(wdiff["objects"][0]["objectPath"], "Player");
+        assert_eq!(wdiff["objects"][0]["component"], "Mover.cs");
+
+        let head_sha = repo.git(&["rev-parse", "HEAD"]).trim().to_owned();
+        let cdiff = ipc
+            .call(
+                "commit_unity_diff",
+                json!({ "id": id, "commit": head_sha, "path": "Assets/Player.prefab" }),
+            )
+            .unwrap();
+        assert_eq!(cdiff["objects"][0]["properties"][0]["after"], "15");
+
+        // Restore clean working tree before triggering merge conflict.
+        repo.git(&["checkout", "--", "Assets/Player.prefab"]);
+        ipc.call("merge", json!({ "id": id, "branch": "theirs" }))
+            .unwrap();
+
+        let table = ipc
+            .call(
+                "unity_conflict_table",
+                json!({ "id": id, "path": "Assets/Player.prefab" }),
+            )
+            .unwrap();
+        assert_eq!(table["conflicts"].as_array().unwrap().len(), 1);
+        assert_eq!(table["conflicts"][0]["property"], "speed");
+
+        ipc.call(
+            "resolve_unity_conflict",
+            json!({
+                "id": id,
+                "path": "Assets/Player.prefab",
+                "picks": [{ "fileId": "12", "property": "speed", "value": "30" }]
+            }),
+        )
+        .unwrap();
+
+        let issues = ipc
+            .call(
+                "unity_post_merge_check",
+                json!({ "id": id, "paths": ["Assets/Player.prefab"] }),
+            )
+            .unwrap();
+        assert_eq!(issues.as_array().unwrap().len(), 0);
     }
 }

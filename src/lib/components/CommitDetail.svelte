@@ -1,8 +1,18 @@
 <script lang="ts">
-  import { commitDetail, commitFileDiff, type Change, type CommitDetail, type FileDiff } from "$lib/api";
+  import {
+    commitDetail,
+    commitFileDiff,
+    commitUnityDiff,
+    type Change,
+    type CommitDetail,
+    type FileDiff,
+    type UnityYamlDiff,
+  } from "$lib/api";
   import { imageUrl, isImage } from "$lib/images";
   import { prefs, toggleIgnoreWhitespace } from "$lib/prefs.svelte";
+  import { isUnityYaml } from "$lib/unity";
   import DiffView from "./DiffView.svelte";
+  import UnityDiffView from "./UnityDiffView.svelte";
 
   let {
     repoId,
@@ -23,6 +33,8 @@
   let detail = $state<CommitDetail | null>(null);
   let file = $state<string | null>(null);
   let diff = $state<FileDiff | null>(null);
+  let unityDiff = $state<UnityYamlDiff | null>(null);
+  let preferStructural = $state(true);
   let error = $state<string | null>(null);
 
   $effect(() => {
@@ -48,18 +60,46 @@
     const id = commit;
     file = path;
     diff = null;
-    commitFileDiff(repoId, id, path, ignoreWs).then(
-      (d) => {
-        if (commit === id && file === path && prefs.ignoreWhitespace === ignoreWs) {
-          diff = d;
-        }
-      },
-      (err) => (error = String(err)),
-    );
+    unityDiff = null;
+    const structural = isUnityYaml(path) && preferStructural;
+    const stale = () => commit !== id || file !== path || prefs.ignoreWhitespace !== ignoreWs || (isUnityYaml(path) && preferStructural) !== structural;
+    const loadRaw = () => {
+      unityDiff = null;
+      commitFileDiff(repoId, id, path, ignoreWs).then(
+        (d) => {
+          if (!stale()) {
+            diff = d;
+          }
+        },
+        (err) => {
+          if (!stale()) {
+            error = String(err);
+          }
+        },
+      );
+    };
+    if (structural) {
+      commitUnityDiff(repoId, id, path).then(
+        (u) => {
+          if (!stale()) {
+            unityDiff = u;
+          }
+        },
+        () => {
+          if (!stale()) {
+            loadRaw();
+          }
+        },
+      );
+    } else {
+      loadRaw();
+    }
   }
 
   $effect(() => {
     const ws = prefs.ignoreWhitespace;
+    const _pref = preferStructural;
+    void _pref;
     if (detail && file) {
       showFile(file, ws);
     }
@@ -74,6 +114,16 @@
   <div class="ph">
     Commit <span class="ct">· {detail?.shortId ?? commit.slice(0, 7)}</span>
     <span class="r">
+      {#if file && isUnityYaml(file)}
+        <button
+          type="button"
+          class="close"
+          class:ws-on={preferStructural}
+          aria-pressed={preferStructural}
+          title="Toggle Unity structural property diff vs raw YAML diff"
+          onclick={() => (preferStructural = !preferStructural)}>{preferStructural ? "Structural" : "Raw"}</button
+        >
+      {/if}
       {#if file && onhistory}
         <button type="button" class="close" title="File history" onclick={() => file && onhistory(file)}>History</button>
       {/if}
@@ -131,7 +181,9 @@
       {/each}
     </ul>
 
-    {#if diff}
+    {#if unityDiff && file && isUnityYaml(file) && preferStructural}
+      <UnityDiffView diff={unityDiff} />
+    {:else if diff}
       <DiffView
         {diff}
         split={prefs.split}

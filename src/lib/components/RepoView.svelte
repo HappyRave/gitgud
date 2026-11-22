@@ -98,6 +98,7 @@
     type TagInfo,
     type TaskOp,
     type UnityInfo,
+    type UnityPropertyPick,
   } from "$lib/api";
   import {
     createTag,
@@ -107,6 +108,7 @@
     opLogStats,
     outsideReflog,
     pushTag,
+    resolveUnityConflict,
     tags,
     unityCheckOpenAssets,
     unityConfigureSmartMerge,
@@ -858,6 +860,9 @@
   const resolvePick = (filePath: string, side: MergeSide) =>
     resolveFile(filePath, side === "yours" ? "keep yours" : "take theirs", (id) => resolveSide(id, filePath, side));
 
+  const resolveUnity = (filePath: string, picks: UnityPropertyPick[]) =>
+    resolveFile(filePath, "property table", (id) => resolveUnityConflict(id, filePath, picks));
+
   function commitMerge() {
     const unconfirmed =
       merging?.unityVerify?.some((f) => f.verify.some((v) => !v.confirmed)) ?? false;
@@ -1574,6 +1579,7 @@
           unityInfo={unityState}
           onresolvewith={resolveText}
           onresolveside={resolvePick}
+          onresolveunity={resolveUnity}
           oncommit={commitMerge}
           onsetupSmartMerge={setupAndRemergeUnity}
           onremergeUnity={runRemergeUnity}

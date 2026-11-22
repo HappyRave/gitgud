@@ -9,6 +9,7 @@ use serde::Serialize;
 use crate::blame::{BlameLine, FileCommit};
 use crate::cli::GitCli;
 use crate::config;
+use crate::diff::is_binary;
 use crate::git;
 use crate::graph::{Graph, Row};
 use crate::history::{Action, HistoryPlan, PlanPrediction, Step};
@@ -23,6 +24,10 @@ use crate::sequencer::{SequencerKind, SequencerState, SequencerStep};
 use crate::tags::TagInfo;
 use crate::task::{Cancel, Progress};
 use crate::unity::{self, MetaIssue, UnityInfo};
+use crate::unity_yaml::{
+    self, UnityConflictTable, UnityIntegrityIssue, UnityPropertyPick, UnityRepoSetupStatus,
+    UnityYamlDiff,
+};
 use crate::watch::RepoWatcher;
 use crate::worktree::LineSelect;
 
@@ -1426,6 +1431,125 @@ impl Session {
     /// [`Error::UnknownRepo`] or [`Error::Command`].
     pub fn write_commit_graph(&self, id: u32) -> Result<(), Error> {
         self.exclusive(id, |open, git| open.repo.write_commit_graph(git))
+    }
+
+    /// Structural property diff of a working-copy Unity YAML file (staged or unstaged).
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`], [`Error::Refused`], or [`Error::Read`].
+    pub fn worktree_unity_diff(
+        &self,
+        id: u32,
+        path: &str,
+        side: crate::worktree::Side,
+    ) -> Result<UnityYamlDiff, Error> {
+        let open = self.get(id)?;
+        unity_yaml::worktree_unity_diff(&open.repo, path, side)
+    }
+
+    /// Structural property diff of a Unity YAML file in a historical commit.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`], [`Error::Refused`], or [`Error::Read`].
+    pub fn commit_unity_diff(
+        &self,
+        id: u32,
+        commit: &str,
+        path: &str,
+    ) -> Result<UnityYamlDiff, Error> {
+        let open = self.get(id)?;
+        unity_yaml::commit_unity_diff(&open.repo, commit, path)
+    }
+
+    /// Builds an R4-A 3-way property conflict table for conflicted Unity YAML `path`.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`] or [`Error::Refused`] when binary, deleted on one side, or non-Unity YAML.
+    pub fn unity_conflict_table(&self, id: u32, path: &str) -> Result<UnityConflictTable, Error> {
+        if !unity_yaml::is_unity_yaml_path(path) {
+            return Err(Error::Refused(format!("{path} is not a Unity YAML file")));
+        }
+        let open = self.get(id)?;
+        let [base, yours, theirs] = open.repo.stages(path)?;
+        let (Some(yours), Some(theirs)) = (yours, theirs) else {
+            return Err(Error::Refused(format!(
+                "{path} was deleted on one side: pick a side"
+            )));
+        };
+        let base = base.unwrap_or_default();
+        if is_binary(&yours) || is_binary(&theirs) || is_binary(&base) {
+            return Err(Error::Refused(format!("{path} is binary: pick a side")));
+        }
+        let b = String::from_utf8_lossy(&base);
+        let o = String::from_utf8_lossy(&yours);
+        let t = String::from_utf8_lossy(&theirs);
+        let guids = unity_yaml::repo_guid_index(&open.repo);
+        unity_yaml::build_conflict_table(path, &b, &o, &t, &guids)
+    }
+
+    /// Applies R4-A property picks on conflicted Unity YAML `path`, writes, stages, and records undoable resolve.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`], [`Error::Refused`], or git write failure.
+    pub fn resolve_unity_conflict(
+        &self,
+        id: u32,
+        path: &str,
+        picks: &[UnityPropertyPick],
+    ) -> Result<Opened, Error> {
+        let open = self.get(id)?;
+        let [base, yours, theirs] = open.repo.stages(path)?;
+        let (Some(yours), Some(theirs)) = (yours, theirs) else {
+            return Err(Error::Refused(format!(
+                "{path} was deleted on one side: pick a side"
+            )));
+        };
+        let base = base.unwrap_or_default();
+        if is_binary(&yours) || is_binary(&theirs) || is_binary(&base) {
+            return Err(Error::Refused(format!("{path} is binary: pick a side")));
+        }
+        let b = String::from_utf8_lossy(&base);
+        let o = String::from_utf8_lossy(&yours);
+        let t = String::from_utf8_lossy(&theirs);
+        let merged = unity_yaml::apply_unity_conflict_picks(&b, &o, &t, picks)?;
+        self.resolve_with(id, path, &merged, "property table")
+    }
+
+    /// Runs post-merge Unity YAML integrity verification over `paths` in repo `id`.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`].
+    pub fn unity_post_merge_check(
+        &self,
+        id: u32,
+        paths: &[String],
+    ) -> Result<Vec<UnityIntegrityIssue>, Error> {
+        let open = self.get(id)?;
+        Ok(unity_yaml::check_repo_unity_integrity(&open.repo, paths))
+    }
+
+    /// Inspects `.gitignore`, `.gitattributes`, and Unity EditorSettings `Force Text` status.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`] or [`Error::Read`].
+    pub fn unity_repo_setup_status(&self, id: u32) -> Result<UnityRepoSetupStatus, Error> {
+        let open = self.get(id)?;
+        unity_yaml::unity_repo_setup_status(&open.repo)
+    }
+
+    /// Writes missing standard Unity `.gitignore` and/or `.gitattributes` entries.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`] or [`Error::Read`].
+    pub fn unity_apply_repo_setup(
+        &self,
+        id: u32,
+        write_gitignore: bool,
+        write_gitattributes: bool,
+    ) -> Result<UnityRepoSetupStatus, Error> {
+        self.exclusive(id, |open, _| {
+            unity_yaml::apply_unity_repo_setup(&open.repo, write_gitignore, write_gitattributes)
+        })
     }
 
     /// Runs `f` as the only write on repo `id`, with its watcher paused.

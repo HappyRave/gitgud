@@ -742,7 +742,7 @@ fn find_yaml_merge_tools(preferred: Option<&str>) -> Vec<String> {
     found
 }
 
-fn read_meta_guid(path: &Path) -> Option<String> {
+pub(crate) fn read_meta_guid(path: &Path) -> Option<String> {
     let content = fs::read_to_string(path).ok()?;
     for line in content.lines().take(12) {
         if let Some(rest) = line.trim().strip_prefix("guid:") {
@@ -755,11 +755,20 @@ fn read_meta_guid(path: &Path) -> Option<String> {
     None
 }
 
-fn collect_asset_guids(repo_root: &Path, dir: &Path, out: &mut HashMap<String, Vec<String>>) {
+pub(crate) fn collect_asset_guids(
+    repo_root: &Path,
+    dir: &Path,
+    out: &mut HashMap<String, Vec<String>>,
+) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
     };
     for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if name_str.starts_with('.') || name_str.ends_with('~') {
+            continue;
+        }
         let p = entry.path();
         if p.is_dir() {
             collect_asset_guids(repo_root, &p, out);

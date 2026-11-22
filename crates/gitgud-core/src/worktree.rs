@@ -47,9 +47,9 @@ pub struct LineSelect {
 }
 
 /// Both versions of a path for one side, `None` where the path doesn't exist.
-struct Versions {
-    old: Option<Vec<u8>>,
-    new: Option<Vec<u8>>,
+pub(crate) struct Versions {
+    pub(crate) old: Option<Vec<u8>>,
+    pub(crate) new: Option<Vec<u8>>,
 }
 
 impl Repo {
@@ -264,7 +264,7 @@ impl Repo {
             .map(drop)
     }
 
-    fn versions(&self, path: &str, side: Side) -> Result<Versions, Error> {
+    pub(crate) fn versions(&self, path: &str, side: Side) -> Result<Versions, Error> {
         let repo = self.gix();
         let index = repo.index_or_empty().map_err(read_err)?;
         let entry = index.entry_by_path(BStr::new(path));

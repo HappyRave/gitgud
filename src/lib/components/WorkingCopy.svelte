@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { CommitOptions, Hunk, LfsLock, LineSelect, MetaIssue, Status } from "$lib/api";
   import { workingKey } from "$lib/keys";
+  import { matchesLfsPattern } from "$lib/unity";
   import { fileOrder, stepFile, type FileRef } from "$lib/working";
   import CommitBox from "./CommitBox.svelte";
   import StatusList from "./StatusList.svelte";
@@ -153,7 +154,19 @@
   </div>
   {#if selected}
     {@const file = selected}
+    {@const suggestLock =
+      locksSupported &&
+      file.side === "unstaged" &&
+      !!onlock &&
+      lfsPatterns.some((pat) => matchesLfsPattern(file.path, pat)) &&
+      !locks.some((l) => l.path === file.path)}
     <div class="diffbox">
+      {#if suggestLock}
+        <div class="lock-suggest" role="status">
+          <span>This LFS asset isn't locked yet.</span>
+          <button type="button" class="lsbtn" disabled={busy} onclick={() => onlock?.(file.path)}>Lock file</button>
+        </div>
+      {/if}
       <WorkingFileDiff
         bind:this={diffView}
         {repoId}
@@ -210,6 +223,22 @@
   }
   .diffbox :global(.diff) {
     flex: 1;
+  }
+  .lock-suggest {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 5px 10px;
+    background: var(--warn);
+    color: var(--warn-ink);
+    border-bottom: 1px solid var(--line);
+    font-size: 11.5px;
+  }
+  .lsbtn {
+    height: 20px;
+    padding: 0 8px;
+    font-size: 11px;
   }
   .hint {
     margin: 0;

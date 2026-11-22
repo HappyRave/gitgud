@@ -1,9 +1,19 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { worktreeFileDiff, type FileDiff, type Hunk, type LineSelect, type Side } from "$lib/api";
+  import {
+    worktreeFileDiff,
+    worktreeUnityDiff,
+    type FileDiff,
+    type Hunk,
+    type LineSelect,
+    type Side,
+    type UnityYamlDiff,
+  } from "$lib/api";
   import { imageUrl, isImage } from "$lib/images";
   import { prefs, setDiffLayout, toggleIgnoreWhitespace } from "$lib/prefs.svelte";
+  import { isUnityYaml } from "$lib/unity";
   import DiffView, { type LineAction } from "./DiffView.svelte";
+  import UnityDiffView from "./UnityDiffView.svelte";
 
   let {
     repoId,
@@ -75,9 +85,12 @@
   );
 
   let diff = $state<FileDiff | null>(null);
+  let unityDiff = $state<UnityYamlDiff | null>(null);
+  let preferStructural = $state(true);
   let error = $state<string | null>(null);
   /** The hunk Alt+↑↓ moved to; S / U / ⌫ act on it. */
   let focused = $state(0);
+  const isUnityFile = $derived(isUnityYaml(path));
 
   onMount(() => {
     if (!container || typeof ResizeObserver === "undefined") {
@@ -95,17 +108,44 @@
 
   $effect(() => {
     const ws = prefs.ignoreWhitespace;
-    const key = `${repoId}:${path}:${side}:${revision}:${ws}`;
+    const structural = isUnityFile && preferStructural;
+    const key = `${repoId}:${path}:${side}:${revision}:${ws}:${structural}`;
+    const stale = () =>
+      key !== `${repoId}:${path}:${side}:${revision}:${prefs.ignoreWhitespace}:${isUnityYaml(path) && preferStructural}`;
     error = null;
-    worktreeFileDiff(repoId, path, side, ws).then(
-      (d) => {
-        if (key === `${repoId}:${path}:${side}:${revision}:${prefs.ignoreWhitespace}`) {
-          diff = d;
-          focused = Math.min(focused, Math.max(0, d.hunks.length - 1));
-        }
-      },
-      (err) => (error = String(err)),
-    );
+    const loadRaw = () => {
+      unityDiff = null;
+      worktreeFileDiff(repoId, path, side, ws).then(
+        (d) => {
+          if (!stale()) {
+            diff = d;
+            focused = Math.min(focused, Math.max(0, d.hunks.length - 1));
+          }
+        },
+        (err) => {
+          if (!stale()) {
+            error = String(err);
+          }
+        },
+      );
+    };
+    if (structural) {
+      worktreeUnityDiff(repoId, path, side).then(
+        (u) => {
+          if (!stale()) {
+            unityDiff = u;
+            diff = null;
+          }
+        },
+        () => {
+          if (!stale()) {
+            loadRaw();
+          }
+        },
+      );
+    } else {
+      loadRaw();
+    }
   });
 
   $effect(() => {
@@ -117,7 +157,7 @@
   /** Runs a hunk key; false when it doesn't apply here (wrong side, no hunks). */
   export function hunkKey(action: "next" | "prev" | "stage" | "unstage" | "discard"): boolean {
     const hunks = diff?.hunks ?? [];
-    if (!perHunk || hunks.length === 0) {
+    if (!perHunk || (isUnityFile && preferStructural && unityDiff) || hunks.length === 0) {
       return false;
     }
     if (action === "next" || action === "prev") {
@@ -142,6 +182,16 @@
     <span class="name">{path}</span> <span class="side">{side === "staged" ? "staged" : "unstaged"}</span>
     <span class="keys">
       {#if perHunk && (diff?.hunks.length ?? 0) > 1}Alt+↑↓ hunks ·{/if}
+      {#if isUnityFile}
+        <button
+          type="button"
+          class="bare mode"
+          class:active={preferStructural}
+          aria-pressed={preferStructural}
+          title="Toggle Unity structural property diff vs raw YAML diff"
+          onclick={() => (preferStructural = !preferStructural)}>{preferStructural ? "Structural" : "Raw"}</button
+        > ·
+      {/if}
       {#if onhistory}
         <button type="button" class="bare mode" title="File history" onclick={() => onhistory(path)}>History</button> ·
       {/if}
@@ -164,6 +214,8 @@
   </h3>
   {#if error}
     <p role="alert">{error}</p>
+  {:else if isUnityFile && preferStructural && unityDiff}
+    <UnityDiffView diff={unityDiff} />
   {:else if diff}
     <DiffView
       {diff}
