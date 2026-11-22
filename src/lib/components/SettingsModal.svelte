@@ -8,12 +8,15 @@
     hasCommitGraph,
     lfsCacheStats,
     lfsPrune,
+    recentTimings,
+    refreshIndex,
     toolDiagnostics,
     unityApplyRepoSetup,
     unityRepoSetupStatus,
     writeCommitGraph,
     type AiProviderStatus,
     type LfsCacheStats,
+    type TimingSample,
     type ToolDiagnostics,
     type UnityRepoSetupStatus,
   } from "$lib/api";
@@ -55,6 +58,27 @@
   let agentTarget = $state<"claude" | "codex" | "cursor" | "generic">("claude");
   let writingAgentSetup = $state(false);
   let agentSetupPath = $state<string | null>(null);
+  let timings = $state<TimingSample[]>([]);
+  let refreshingIndex = $state(false);
+  let indexRefreshedMsg = $state<string | null>(null);
+
+  async function runRefreshIndex() {
+    if (activeRepoId == null || refreshingIndex) {
+      return;
+    }
+    refreshingIndex = true;
+    error = null;
+    indexRefreshedMsg = null;
+    try {
+      await refreshIndex(activeRepoId);
+      indexRefreshedMsg = "Refreshed";
+      timings = await recentTimings().catch(() => timings);
+    } catch (err) {
+      error = String(err);
+    } finally {
+      refreshingIndex = false;
+    }
+  }
 
   function formatBytes(bytes: number) {
     if (bytes >= 1024 * 1024) {
@@ -169,6 +193,9 @@
     aiProviders()
       .then((a) => (aiStatus = a))
       .catch(() => (aiStatus = null));
+    recentTimings()
+      .then((t) => (timings = t))
+      .catch(() => (timings = []));
     if (activeRepoId != null) {
       hasCommitGraph(activeRepoId).then(
         (built) => (commitGraph = built),
@@ -303,6 +330,10 @@
               <button type="button" disabled={optimizingGraph} onclick={optimizeGraph}>
                 {optimizingGraph ? "Building…" : commitGraph ? "Rebuild graph cache" : "Optimize graph cache"}
               </button>
+              <button type="button" disabled={refreshingIndex} onclick={runRefreshIndex}>
+                {refreshingIndex ? "Refreshing…" : "Refresh index"}
+              </button>
+              {#if indexRefreshedMsg}<span class="ok">{indexRefreshedMsg}</span>{/if}
             </dd>
             {#if lfsStats && (lfsStats.objectCount > 0 || diag.lfsVersion)}
               <dt>LFS cache</dt>
@@ -322,6 +353,16 @@
         </dl>
       {:else}
         <p class="ab">Checking installed tools…</p>
+      {/if}
+      {#if timings.length > 0}
+        <details class="latency">
+          <summary>Local latency ({timings.length} recent ops)</summary>
+          <ul class="lat-list">
+            {#each timings.slice(0, 10) as sample, i (`${sample.op}:${sample.at}:${i}`)}
+              <li><span class="lat-op">{sample.op}</span><span class="mono">{sample.elapsedMs} ms</span></li>
+            {/each}
+          </ul>
+        </details>
       {/if}
     </section>
 
@@ -548,6 +589,31 @@
     margin: 8px 0 0;
     font-size: 11.5px;
     color: var(--muted);
+  }
+  .latency {
+    margin-top: 8px;
+    font-size: 11.5px;
+  }
+  .latency summary {
+    cursor: default;
+    color: var(--muted);
+  }
+  .lat-list {
+    list-style: none;
+    margin: 6px 0 0;
+    padding: 0;
+    display: grid;
+    gap: 2px;
+  }
+  .lat-list li {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .lat-op {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .x {
     padding: 2px 6px;

@@ -811,7 +811,7 @@ fn nul_pathspec(paths: &[String]) -> Vec<u8> {
 }
 
 fn proposals_dir(repo: &Repo) -> PathBuf {
-    repo.git_dir().join("gitgud").join("proposals")
+    repo.gix().common_dir().join("gitgud").join("proposals")
 }
 
 fn summary_path(repo: &Repo, id: &str) -> PathBuf {
@@ -898,4 +898,143 @@ pub fn write_agent_setup(repo_root: &Path, target: &str) -> Result<String, Error
     }
     fs::write(&dest, agent_setup_text()).map_err(read_err)?;
     Ok(rel.to_owned())
+}
+
+/// A git worktree attached to the repository (including the main working tree).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorktreeInfo {
+    pub path: String,
+    pub branch: Option<String>,
+    pub head: String,
+    pub dirty_count: usize,
+    pub is_main: bool,
+}
+
+/// Parses `git worktree list --porcelain` blocks into `(path, branch, head)` tuples.
+#[must_use]
+pub fn parse_worktree_porcelain(stdout: &str) -> Vec<(String, Option<String>, String)> {
+    let mut out = Vec::new();
+    let mut path: Option<String> = None;
+    let mut branch: Option<String> = None;
+    let mut head = String::new();
+
+    for raw in stdout.lines().chain(std::iter::once("")) {
+        let line = raw.trim();
+        if line.is_empty() {
+            if let Some(p) = path.take() {
+                out.push((p, branch.take(), std::mem::take(&mut head)));
+            }
+            branch = None;
+            head.clear();
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("worktree ") {
+            path = Some(rest.replace('\\', "/"));
+        } else if let Some(rest) = line.strip_prefix("HEAD ") {
+            head = rest.to_owned();
+        } else if let Some(rest) = line.strip_prefix("branch ") {
+            let short = rest.strip_prefix("refs/heads/").unwrap_or(rest);
+            branch = Some(short.to_owned());
+        }
+    }
+    out
+}
+
+/// Lists all git worktrees attached to `repo`, computing dirty file counts.
+///
+/// # Errors
+/// [`Error::Command`] if `git worktree list` fails.
+pub fn list_worktrees(git: &GitCli, repo: &Repo) -> Result<Vec<WorktreeInfo>, Error> {
+    let out = git.run(repo.root(), &["worktree", "list", "--porcelain"], None)?;
+    let main_canon = fs::canonicalize(repo.root()).unwrap_or_else(|_| repo.root().to_path_buf());
+    let mut infos = Vec::new();
+    for (path, branch, head) in parse_worktree_porcelain(&out) {
+        let wt_path = Path::new(&path);
+        let wt_canon = fs::canonicalize(wt_path).unwrap_or_else(|_| wt_path.to_path_buf());
+        let is_main = wt_canon == main_canon;
+        let dirty_count = repo::open(wt_path)
+            .and_then(|r| r.status())
+            .map(|s| s.entries.len())
+            .unwrap_or(0);
+        infos.push(WorktreeInfo {
+            path,
+            branch,
+            head,
+            dirty_count,
+            is_main,
+        });
+    }
+    Ok(infos)
+}
+
+/// Captures uncommitted changes inside linked `worktree_path` into a shared proposal on `main_repo`.
+///
+/// # Errors
+/// [`Error::Refused`] if the worktree is clean or message empty; [`Error::Command`] / [`Error::Read`] on git failure.
+pub fn propose_from_worktree(
+    main_repo: &Repo,
+    git: &GitCli,
+    worktree_path: &Path,
+    message: &str,
+    why: Option<&str>,
+    agent: Option<&str>,
+) -> Result<ProposalSummary, Error> {
+    let wt_repo = repo::open(worktree_path)?;
+    if wt_repo.status()?.entries.is_empty() {
+        return Err(Error::Refused(
+            "Selected worktree has no uncommitted changes to propose".into(),
+        ));
+    }
+    let input = CreateProposalInput {
+        message: message.to_owned(),
+        why: why.map(str::to_owned),
+        agent: Some(
+            agent
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or("worktree")
+                .to_owned(),
+        ),
+        paths: Vec::new(),
+        hunk_ids: Vec::new(),
+    };
+    let summary = create_proposal(&wt_repo, git, &input)?;
+    // Verify it is readable via main_repo immediately.
+    let _ = get_proposal(main_repo, &summary.id)?;
+    Ok(summary)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_worktree_porcelain_output() {
+        let raw = "\
+worktree C:\\repos\\boat
+HEAD 1111111111111111111111111111111111111111
+branch refs/heads/main
+
+worktree C:\\repos\\boat-agent
+HEAD 2222222222222222222222222222222222222222
+branch refs/heads/agent/physics
+
+worktree C:\\repos\\boat-detached
+HEAD 3333333333333333333333333333333333333333
+detached
+";
+        let parsed = parse_worktree_porcelain(raw);
+        assert_eq!(parsed.len(), 3);
+        assert_eq!(
+            parsed[0],
+            (
+                "C:/repos/boat".into(),
+                Some("main".into()),
+                "1111111111111111111111111111111111111111".into()
+            )
+        );
+        assert_eq!(parsed[1].1.as_deref(), Some("agent/physics"));
+        assert_eq!(parsed[2].1, None);
+    }
 }

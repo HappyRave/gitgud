@@ -1,8 +1,8 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 
@@ -18,7 +18,7 @@ use crate::lfs::{self, LfsCacheStats, LfsInfo, LfsLock};
 use crate::merge::{MergeOutcome, MergeState, Side};
 use crate::oplog::{OpEntry, OpLog, OpLogStats, ReflogEntry, label_amend, label_commit};
 use crate::ops::{CommitOptions, ResetMode};
-use crate::proposals::{self, ProposalSummary};
+use crate::proposals::{self, ProposalSummary, WorktreeInfo};
 use crate::rebase::{RebaseOutcome, RebaseState, RebaseStep};
 use crate::remote::{PullOutcome, PullStrategy};
 use crate::repo::{self, Error, Repo};
@@ -34,6 +34,17 @@ use crate::unity_yaml::{
 use crate::watch::RepoWatcher;
 use crate::worktree::LineSelect;
 
+/// Local operation timing sample for diagnostics (no external telemetry).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimingSample {
+    pub op: String,
+    pub elapsed_ms: u64,
+    pub at: i64,
+}
+
+const MAX_TIMING_SAMPLES: usize = 50;
+
 /// The repositories the app has open, by id, and the git CLI it writes with.
 #[derive(Default)]
 pub struct Session {
@@ -46,6 +57,8 @@ pub struct Session {
     previews: Mutex<HashMap<u32, Arc<Graph>>>,
     /// Last silent background refresh timestamp per repo id.
     last_bg_refresh: Mutex<HashMap<u32, Instant>>,
+    /// Recent local operation timings (oldest evicted past 50).
+    timings: Mutex<VecDeque<TimingSample>>,
     git: OnceLock<GitCli>,
 }
 
@@ -110,6 +123,7 @@ impl Session {
     /// # Errors
     /// See [`repo::open`], [`Repo::status`] and [`Graph::build`].
     pub fn open(&self, path: impl AsRef<Path>) -> Result<Opened, Error> {
+        let started = Instant::now();
         let repo = repo::open(path)?;
         let dirty = !repo.status()?.entries.is_empty();
         let graph = Graph::build(&repo, dirty)?;
@@ -123,7 +137,31 @@ impl Session {
         };
         let opened = opened(id, &open);
         self.lock().insert(id, open);
+        self.record_timing("open", started);
         Ok(opened)
+    }
+
+    /// Reads working-copy status of repo `id` and records a local latency sample.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`] or [`Error::Read`].
+    pub fn repo_status(&self, id: u32) -> Result<crate::repo::Status, Error> {
+        let started = Instant::now();
+        let status = self.get(id)?.repo.status()?;
+        self.record_timing("status", started);
+        Ok(status)
+    }
+
+    /// Reads a slice of commit graph rows for repo `id` and records a local latency sample.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`] or [`Error::Read`].
+    pub fn graph_rows(&self, id: u32, start: usize, count: usize) -> Result<Vec<Row>, Error> {
+        let started = Instant::now();
+        let open = self.get(id)?;
+        let rows = open.graph.rows(&open.repo, start, count)?;
+        self.record_timing("graph_rows", started);
+        Ok(rows)
     }
 
     /// Re-reads a repository after something changed it. The graph is rebuilt only
@@ -136,6 +174,7 @@ impl Session {
     }
 
     fn refresh_inner(&self, id: u32, force_reload: bool) -> Result<Opened, Error> {
+        let started = Instant::now();
         let open = self.get(id)?;
         let stamp = config_stamp(&open.repo);
         let reload = force_reload || stamp != open.config_stamp;
@@ -169,6 +208,7 @@ impl Session {
         };
         let opened = opened(id, &fresh);
         self.lock().insert(id, fresh);
+        self.record_timing("refresh", started);
         Ok(opened)
     }
 
@@ -221,9 +261,11 @@ impl Session {
         action: &str,
         op: impl FnOnce(&Repo, &GitCli) -> Result<(), Error>,
     ) -> Result<Opened, Error> {
+        let started = Instant::now();
         self.exclusive(id, |open, git| {
             OpLog::for_repo(&open.repo).record(&open.repo, action, || op(&open.repo, git))
         })?;
+        self.record_timing(action, started);
         self.refresh(id)
     }
 
@@ -239,10 +281,12 @@ impl Session {
         paths: &[String],
         op: impl FnOnce(&Repo, &GitCli) -> Result<(), Error>,
     ) -> Result<Opened, Error> {
+        let started = Instant::now();
         self.exclusive(id, |open, git| {
             OpLog::for_repo(&open.repo)
                 .record_destructive(&open.repo, git, action, paths, || op(&open.repo, git))
         })?;
+        self.record_timing(action, started);
         self.refresh(id)
     }
 
@@ -1717,6 +1761,86 @@ impl Session {
     pub fn agent_setup(&self, id: u32, target: &str) -> Result<String, Error> {
         let open = self.get(id)?;
         proposals::write_agent_setup(open.repo.root(), target)
+    }
+
+    /// Returns recent local operation timings, newest first (capped at 50).
+    #[must_use]
+    pub fn recent_timings(&self) -> Vec<TimingSample> {
+        self.timings
+            .lock()
+            .expect("timings lock poisoned")
+            .iter()
+            .rev()
+            .cloned()
+            .collect()
+    }
+
+    /// Commits still reachable from `upstream` that are no longer ancestors of `HEAD` after a rewrite.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`] or [`Error::Read`].
+    pub fn stale_origin_commits(&self, id: u32, upstream: &str) -> Result<Vec<String>, Error> {
+        let open = self.get(id)?;
+        open.repo.commits_only_in(upstream, "HEAD", 200)
+    }
+
+    /// Refreshes index stat metadata (`git update-index -q --refresh`) and reloads status.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`] or [`Error::Command`].
+    pub fn refresh_index(&self, id: u32) -> Result<Opened, Error> {
+        let started = Instant::now();
+        self.exclusive(id, |open, git| open.repo.refresh_index(git))?;
+        self.record_timing("refresh_index", started);
+        self.refresh(id)
+    }
+
+    /// Lists linked git worktrees attached to repo `id` (with dirty file counts).
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`] or [`Error::Command`].
+    pub fn worktrees_list(&self, id: u32) -> Result<Vec<WorktreeInfo>, Error> {
+        let open = self.get(id)?;
+        proposals::list_worktrees(self.git()?, &open.repo)
+    }
+
+    /// Captures uncommitted edits in linked `worktree_path` into a proposal on repo `id` and refreshes the graph.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`], [`Error::Refused`], or [`Error::Command`].
+    pub fn propose_from_worktree(
+        &self,
+        id: u32,
+        worktree_path: &Path,
+        message: &str,
+        why: Option<&str>,
+        agent: Option<&str>,
+    ) -> Result<ProposalSummary, Error> {
+        let summary = self.exclusive(id, |open, git| {
+            proposals::propose_from_worktree(&open.repo, git, worktree_path, message, why, agent)
+        })?;
+        self.refresh(id)?;
+        Ok(summary)
+    }
+
+    fn record_timing(&self, op: &str, started: Instant) {
+        let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        let at = i64::try_from(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+        )
+        .unwrap_or(0);
+        let mut timings = self.timings.lock().expect("timings lock poisoned");
+        if timings.len() >= MAX_TIMING_SAMPLES {
+            timings.pop_front();
+        }
+        timings.push_back(TimingSample {
+            op: op.to_owned(),
+            elapsed_ms,
+            at,
+        });
     }
 
     /// Runs `f` as the only write on repo `id`, with its watcher paused.

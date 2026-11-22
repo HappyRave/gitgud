@@ -178,6 +178,26 @@ function app(extra: Handlers = {}) {
     ai_providers: () => ({ cliAvailable: [], configuredEnvKey: false }),
     ai_draft_commit_message: () => "Drafted commit",
     agent_setup: () => "GITGUD_AGENT.md",
+    stale_origin_commits: () => [],
+    refresh_index: () => ({ id: 1, root: "C:/work/repo", rows: 1, graphVersion: 0 }),
+    recent_timings: () => [],
+    worktrees_list: () => [],
+    propose_from_worktree: ({ worktreePath, message, why, agent }) => ({
+      id: "p-wt-1",
+      commitId: "e".repeat(40),
+      shortCommit: "eeeeeee",
+      baseId: "a".repeat(40),
+      message,
+      why: why ?? `Imported from ${worktreePath}`,
+      agent: agent ?? "worktree",
+      status: "pending",
+      createdAt: 1_700_000_000,
+      updatedAt: 1_700_000_000,
+      files: ["a.txt"],
+      riskFlags: [],
+      comments: [],
+      headMoved: false,
+    }),
     ...extra,
   };
   return mockCommands(handlers);
@@ -2777,5 +2797,113 @@ describe("Unity, LFS locks, Smart Merge verify, and open-editor guard", () => {
       action: "drop",
     });
     expect(await screen.findByRole("button", { name: "Force-push with lease…" })).toBeInTheDocument();
+  });
+
+  it("fades commits still on origin after rewriting a pushed branch", async () => {
+    const staleRow: Row = {
+      id: "f".repeat(40),
+      shortId: "fffffff",
+      subject: "still on origin",
+      author: "Ada",
+      time: 1_700_000_000,
+      labels: [{ kind: "remote", name: "origin/main" }],
+      wip: false,
+      layout: { node: 0, segments: [], overflow: false },
+    };
+    app({
+      launch_path: () => "C:/work/repo",
+      open_repo: () => ({ id: 1, root: "C:/work/repo", rows: 2, graphVersion: 0 }),
+      graph_rows: () => [ROW, staleRow],
+      branches: () => ({
+        local: [{ name: "main", current: true, upstream: "origin/main", ahead: 1, behind: 0 }],
+        remotes: [{ name: "origin", branches: ["origin/main"] }],
+        fetched: null,
+      }),
+      quick_edit: () => ({ id: 1, root: "C:/work/repo", rows: 2, graphVersion: 1 }),
+      stale_origin_commits: () => ["f".repeat(40)],
+    });
+    render(Page);
+
+    const commits = await screen.findByRole("listbox", { name: "Commits" });
+    await fireEvent.click(await within(commits).findByText("first commit"));
+    await fireEvent.keyDown(commits, { key: "d" });
+
+    await screen.findByRole("button", { name: "Force-push with lease…" });
+    const refreshed = screen.getByRole("listbox", { name: "Commits" });
+    const staleLabel = await within(refreshed).findByText("still on origin");
+    await vi.waitFor(() => expect(staleLabel.closest("li")).toHaveClass("faded"));
+  });
+
+  it("lists linked agent worktrees and turns one into a proposal", async () => {
+    let created: import("$lib/api").ProposalSummary[] = [];
+    const calls = app({
+      launch_path: () => "C:/work/repo",
+      worktrees_list: () => [
+        {
+          path: "C:/work/repo",
+          branch: "main",
+          head: "a".repeat(40),
+          dirtyCount: 0,
+          isMain: true,
+        },
+        {
+          path: "C:/work/repo-agent",
+          branch: "agent/physics",
+          head: "b".repeat(40),
+          dirtyCount: 2,
+          isMain: false,
+        },
+      ],
+      proposals_list: () => created,
+      propose_from_worktree: ({ worktreePath, message, why, agent }) => {
+        const p: ProposalSummary = {
+          id: "p-wt-1",
+          commitId: "e".repeat(40),
+          shortCommit: "eeeeeee",
+          baseId: "a".repeat(40),
+          message,
+          why: why ?? `Imported from ${worktreePath}`,
+          agent: agent ?? "worktree",
+          status: "pending",
+          createdAt: 1_700_000_000,
+          updatedAt: 1_700_000_000,
+          files: ["a.txt"],
+          riskFlags: [],
+          comments: [],
+          headMoved: false,
+        };
+        created = [p];
+        return p;
+      },
+      proposal_file_diff: ({ path }) => ({
+        path,
+        binary: false,
+        hunks: [],
+      }),
+    });
+    render(Page);
+
+    const wtSection = await screen.findByRole("region", { name: "Agent Worktrees" });
+    expect(within(wtSection).getByText("agent/physics")).toBeInTheDocument();
+    await fireEvent.click(within(wtSection).getByRole("button", { name: "Propose" }));
+
+    expect(calls.find((c) => c.cmd === "propose_from_worktree")?.args).toMatchObject({
+      id: 1,
+      worktreePath: "C:/work/repo-agent",
+    });
+    expect(await screen.findByLabelText("Proposal review")).toBeInTheDocument();
+  });
+
+  it("offers one-click commit-graph creation when opening a large repository", async () => {
+    const calls = app({
+      launch_path: () => "C:/work/big",
+      open_repo: () => ({ id: 1, root: "C:/work/big", rows: 650, graphVersion: 0 }),
+      has_commit_graph: () => false,
+    });
+    render(Page);
+
+    expect(await screen.findByText(/Large history \(650 rows\)/)).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Build cache" }));
+    expect(calls.some((c) => c.cmd === "write_commit_graph")).toBe(true);
   });
 });

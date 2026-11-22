@@ -250,6 +250,10 @@
   }
 
   function onGlobalKeydown(event: KeyboardEvent) {
+    if (event.key === "F5" || event.key === "F7") {
+      event.preventDefault();
+      return;
+    }
     if (isCommandPaletteKey(event)) {
       event.preventDefault();
       quickSwitchOpen = false;

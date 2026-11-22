@@ -43,7 +43,7 @@ describe("SettingsModal", () => {
     expect(calls.some((c) => c.cmd === "write_commit_graph")).toBe(true);
   });
 
-  it("displays AI providers, prunes LFS cache, and writes agent instructions", async () => {
+  it("displays AI providers, prunes LFS cache, writes agent instructions, refreshes index, and shows latency", async () => {
     let pruned = false;
     const calls = mockCommands({
       config_get_identity: () => ({ userName: "Max", userEmail: "max@example.com" }),
@@ -59,6 +59,8 @@ describe("SettingsModal", () => {
         return { objectCount: 1, totalBytes: 2048, prunableCount: 0, prunableBytes: 0 };
       },
       agent_setup: ({ target }) => (target === "cursor" ? ".cursor/rules/gitgud.mdc" : ".claude/skills/gitgud/SKILL.md"),
+      refresh_index: () => ({ id: 7, root: "C:/work/boat", rows: 1, graphVersion: 0 }),
+      recent_timings: () => [{ op: "status", elapsedMs: 12, at: 1_700_000_000 }],
     });
 
     render(SettingsModal, { activeRepoId: 7, activeRepoName: "boat", onclose: vi.fn() });
@@ -74,5 +76,12 @@ describe("SettingsModal", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Write agent instructions" }));
     expect(await screen.findByText("Wrote .cursor/rules/gitgud.mdc")).toBeInTheDocument();
     expect(calls.find((c) => c.cmd === "agent_setup")?.args).toEqual({ id: 7, target: "cursor" });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Refresh index" }));
+    expect(await screen.findByText("Refreshed")).toBeInTheDocument();
+    expect(calls.find((c) => c.cmd === "refresh_index")?.args).toEqual({ id: 7 });
+
+    expect(await screen.findByText(/Local latency \(1 recent ops\)/)).toBeInTheDocument();
+    expect(screen.getByText("12 ms")).toBeInTheDocument();
   });
 });

@@ -1,6 +1,8 @@
+use std::collections::HashSet;
+
 use serde::Deserialize;
 
-use crate::cli::GitCli;
+use crate::cli::{GitCli, command_error, failure_message};
 use crate::repo::{EntryKind, Error, Repo, read_err};
 
 /// Options for creating or amending a commit (spec §3.2).
@@ -148,6 +150,51 @@ impl Repo {
         .map(drop)
     }
 
+    /// Commits reachable from `tip_ref` (e.g. `origin/main`) that are not in `exclude_ref` (e.g. `HEAD`).
+    /// Returns an empty list if either ref does not resolve.
+    ///
+    /// # Errors
+    /// [`Error::Read`] when commits cannot be traversed.
+    pub fn commits_only_in(
+        &self,
+        tip_ref: &str,
+        exclude_ref: &str,
+        limit: usize,
+    ) -> Result<Vec<String>, Error> {
+        let repo = self.gix();
+        let Some(tip) = resolve_oid(&repo, tip_ref)? else {
+            return Ok(Vec::new());
+        };
+        let Some(exclude) = resolve_oid(&repo, exclude_ref)? else {
+            return Ok(Vec::new());
+        };
+        let walk = repo
+            .rev_walk([tip])
+            .with_hidden([exclude])
+            .all()
+            .map_err(read_err)?;
+        let mut out = Vec::new();
+        for info in walk.take(limit) {
+            let info = info.map_err(read_err)?;
+            out.push(info.id.to_string());
+        }
+        Ok(out)
+    }
+
+    /// Refreshes index stat info (`git update-index -q --refresh`) after bulk IDE/Unity file touches.
+    ///
+    /// # Errors
+    /// [`Error::Command`] when git fails with an unexpected status code.
+    pub fn refresh_index(&self, git: &GitCli) -> Result<(), Error> {
+        let args = ["update-index", "-q", "--refresh"];
+        let (code, stdout, stderr) = git.run_status(self.root(), &args, None)?;
+        if code == 0 || code == 1 {
+            Ok(())
+        } else {
+            Err(command_error(&args, failure_message(&stdout, &stderr)))
+        }
+    }
+
     fn with_paths(&self, git: &GitCli, args: &[&str], paths: &[String]) -> Result<(), Error> {
         if paths.is_empty() {
             return Ok(());
@@ -159,4 +206,31 @@ impl Repo {
         git.run(self.root(), &full, Some(paths.join("\0").as_bytes()))
             .map(drop)
     }
+}
+
+fn resolve_oid(repo: &gix::Repository, spec: &str) -> Result<Option<gix::ObjectId>, Error> {
+    let trimmed = spec.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    if trimmed == "HEAD" {
+        return Ok(repo.head_id().ok().map(gix::Id::detach));
+    }
+    let candidates = [
+        trimmed.to_owned(),
+        format!("refs/remotes/{trimmed}"),
+        format!("refs/heads/{trimmed}"),
+    ];
+    let mut seen = HashSet::new();
+    for name in candidates {
+        if !seen.insert(name.clone()) {
+            continue;
+        }
+        if let Ok(Some(mut r)) = repo.try_find_reference(&name)
+            && let Ok(oid) = r.peel_to_id()
+        {
+            return Ok(Some(oid.detach()));
+        }
+    }
+    Ok(gix::ObjectId::from_hex(trimmed.as_bytes()).ok())
 }

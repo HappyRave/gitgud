@@ -768,6 +768,43 @@ export function installMock(scenario: string) {
           : target === "cursor"
             ? ".cursor/rules/gitgud.mdc"
             : "GITGUD_AGENT.md",
+    stale_origin_commits: () => ["4592a21000000000000000000000000000000000"],
+    refresh_index: () => opened(),
+    recent_timings: () => [
+      { op: "status", elapsedMs: 14, at: now - 10 },
+      { op: "graph_rows", elapsedMs: 6, at: now - 20 },
+      { op: "open", elapsedMs: 42, at: now - 60 },
+    ],
+    worktrees_list: () => [
+      {
+        path: "C:/Users/Max/Documents/Projects/boat-agent",
+        branch: "agent/steering",
+        head: "95e25c8000000000000000000000000000000000",
+        dirtyCount: 2,
+        isMain: false,
+      },
+    ],
+    propose_from_worktree: ({ worktreePath, message, why, agent }) => {
+      const created: ProposalSummary = {
+        id: `p-wt-${mockProposals.length + 1}`,
+        commitId: "e".repeat(40),
+        shortCommit: "eeeeeee",
+        baseId: "95e25c8000000000000000000000000000000000",
+        message,
+        why: why ?? `Imported from ${worktreePath}`,
+        agent: agent ?? "worktree",
+        status: "pending",
+        createdAt: now,
+        updatedAt: now,
+        files: ["Assets/Scripts/Boat/Steering.cs"],
+        riskFlags: [],
+        comments: [],
+        headMoved: false,
+      };
+      mockProposals = [created, ...mockProposals];
+      graphVersion += 1;
+      return created;
+    },
     open_external_url: () => null,
     library_load: () => mockLib,
     library_summaries: () => mockLib.repos.map((r) => r.cached!).filter(Boolean),

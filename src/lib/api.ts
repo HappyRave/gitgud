@@ -724,6 +724,20 @@ export interface AiProviderStatus {
   configuredEnvKey: boolean;
 }
 
+export interface TimingSample {
+  op: string;
+  elapsedMs: number;
+  at: number;
+}
+
+export interface WorktreeInfo {
+  path: string;
+  branch: string | null;
+  head: string;
+  dirtyCount: number;
+  isMain: boolean;
+}
+
 /** Every command the frontend invokes: its arguments and its Ok value. Errors arrive as strings. */
 export interface Commands {
   git_info: { args: Record<string, never>; result: GitInfo };
@@ -850,6 +864,14 @@ export interface Commands {
   ai_providers: { args: Record<string, never>; result: AiProviderStatus };
   ai_draft_commit_message: { args: { id: number; provider?: string | null }; result: string };
   agent_setup: { args: { id: number; target: string }; result: string };
+  stale_origin_commits: { args: { id: number; upstream: string }; result: string[] };
+  refresh_index: { args: { id: number }; result: Opened };
+  recent_timings: { args: Record<string, never>; result: TimingSample[] };
+  worktrees_list: { args: { id: number }; result: WorktreeInfo[] };
+  propose_from_worktree: {
+    args: { id: number; worktreePath: string; message: string; why?: string | null; agent?: string | null };
+    result: ProposalSummary;
+  };
   pr_url: { args: { id: number; branch: string }; result: string | null };
   open_external_url: { args: { url: string }; result: null };
   predict_merge: { args: { id: number; branch: string }; result: string[] };
@@ -1138,6 +1160,17 @@ export const aiProviders = () => call("ai_providers", {});
 export const aiDraftCommitMessage = (id: number, provider: string | null = null) =>
   call("ai_draft_commit_message", { id, provider });
 export const agentSetup = (id: number, target: string) => call("agent_setup", { id, target });
+export const staleOriginCommits = (id: number, upstream: string) => call("stale_origin_commits", { id, upstream });
+export const refreshIndex = (id: number) => call("refresh_index", { id });
+export const recentTimings = () => call("recent_timings", {});
+export const worktreesList = (id: number) => call("worktrees_list", { id });
+export const proposeFromWorktree = (
+  id: number,
+  worktreePath: string,
+  message: string,
+  why: string | null = null,
+  agent: string | null = null,
+) => call("propose_from_worktree", { id, worktreePath, message, why, agent });
 
 export const onCloneProgress = (handler: (progress: CloneProgress) => void) =>
   listen<CloneProgress>("clone-progress", (e) => handler(e.payload));

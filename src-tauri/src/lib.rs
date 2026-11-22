@@ -19,12 +19,12 @@ use gitgud_core::library::{
 use gitgud_core::merge::{ConflictSides, ConflictText, MergeState, Side as MergeSide};
 use gitgud_core::oplog::{OpEntry, OpLogStats, ReflogEntry};
 use gitgud_core::ops::{CommitOptions, ResetMode};
-use gitgud_core::proposals::ProposalSummary;
+use gitgud_core::proposals::{ProposalSummary, WorktreeInfo};
 use gitgud_core::rebase::{RebasePlan, RebaseState, RebaseStep};
 use gitgud_core::remote::{PullStrategy, PushInfo};
 use gitgud_core::repo::{self, Error, Status};
 use gitgud_core::sequencer::{SequencerState, SequencerStep};
-use gitgud_core::session::{Opened, PlanPreview, PullResult, Reverted, Session};
+use gitgud_core::session::{Opened, PlanPreview, PullResult, Reverted, Session, TimingSample};
 use gitgud_core::stacks::BranchStack;
 use gitgud_core::stash::StashEntry;
 use gitgud_core::tags::TagInfo;
@@ -92,7 +92,7 @@ async fn close_repo(session: State<'_, Session>, id: u32) -> Result<(), Error> {
 
 #[tauri::command]
 async fn repo_status(session: State<'_, Session>, id: u32) -> Result<Status, Error> {
-    session.get(id)?.repo.status()
+    session.repo_status(id)
 }
 
 #[tauri::command]
@@ -102,8 +102,7 @@ async fn graph_rows(
     start: usize,
     count: usize,
 ) -> Result<Vec<Row>, Error> {
-    let open = session.get(id)?;
-    open.graph.rows(&open.repo, start, count)
+    session.graph_rows(id, start, count)
 }
 
 #[tauri::command]
@@ -1462,6 +1461,48 @@ async fn agent_setup(
 }
 
 #[tauri::command]
+async fn stale_origin_commits(
+    session: State<'_, Session>,
+    id: u32,
+    upstream: String,
+) -> Result<Vec<String>, Error> {
+    session.stale_origin_commits(id, &upstream)
+}
+
+#[tauri::command]
+async fn refresh_index(session: State<'_, Session>, id: u32) -> Result<Opened, Error> {
+    session.refresh_index(id)
+}
+
+#[tauri::command]
+async fn recent_timings(session: State<'_, Session>) -> Result<Vec<TimingSample>, Error> {
+    Ok(session.recent_timings())
+}
+
+#[tauri::command]
+async fn worktrees_list(session: State<'_, Session>, id: u32) -> Result<Vec<WorktreeInfo>, Error> {
+    session.worktrees_list(id)
+}
+
+#[tauri::command]
+async fn propose_from_worktree(
+    session: State<'_, Session>,
+    id: u32,
+    worktree_path: String,
+    message: String,
+    why: Option<String>,
+    agent: Option<String>,
+) -> Result<ProposalSummary, Error> {
+    session.propose_from_worktree(
+        id,
+        Path::new(&worktree_path),
+        &message,
+        why.as_deref(),
+        agent.as_deref(),
+    )
+}
+
+#[tauri::command]
 async fn background_refresh(
     session: State<'_, Session>,
     id: u32,
@@ -1628,7 +1669,12 @@ fn app_with_library<R: Runtime>(builder: Builder<R>, library: Option<LibraryStor
             lfs_prune,
             ai_providers,
             ai_draft_commit_message,
-            agent_setup
+            agent_setup,
+            stale_origin_commits,
+            refresh_index,
+            recent_timings,
+            worktrees_list,
+            propose_from_worktree
         ])
 }
 
@@ -3195,5 +3241,60 @@ mod tests {
             .unwrap();
         assert_eq!(written, "GITGUD_AGENT.md");
         assert!(repo.path().join("GITGUD_AGENT.md").is_file());
+    }
+
+    #[test]
+    fn stale_origin_timings_refresh_index_and_worktree_proposal_through_ipc() {
+        let ipc = Ipc::new();
+        let main = TestRepo::init();
+        main.write("app.txt", "v1\n").commit_all("initial");
+        let wt_parent = tempfile::tempdir().unwrap();
+        let wt_dir = wt_parent.path().join("agent-wt");
+        main.git(&[
+            "worktree",
+            "add",
+            "-b",
+            "agent/wt",
+            wt_dir.to_str().unwrap(),
+        ]);
+        std::fs::write(wt_dir.join("app.txt"), "v2\n").unwrap();
+
+        let id = open(&ipc, &main)["id"].clone();
+        ipc.call("repo_status", json!({ "id": id })).unwrap();
+        ipc.call("refresh_index", json!({ "id": id })).unwrap();
+
+        let timings = ipc.call("recent_timings", json!({})).unwrap();
+        assert!(!timings.as_array().unwrap().is_empty());
+
+        let stale = ipc
+            .call(
+                "stale_origin_commits",
+                json!({ "id": id, "upstream": "origin/main" }),
+            )
+            .unwrap();
+        assert_eq!(stale.as_array().unwrap().len(), 0);
+
+        let wts = ipc.call("worktrees_list", json!({ "id": id })).unwrap();
+        assert!(
+            wts.as_array()
+                .unwrap()
+                .iter()
+                .any(|w| w["isMain"] == false && w["dirtyCount"] == 1)
+        );
+
+        let prop = ipc
+            .call(
+                "propose_from_worktree",
+                json!({
+                    "id": id,
+                    "worktreePath": wt_dir,
+                    "message": "feat: wt ipc",
+                    "why": "ipc test",
+                    "agent": "codex"
+                }),
+            )
+            .unwrap();
+        assert_eq!(prop["status"], "pending");
+        main.git(&["worktree", "remove", "--force", wt_dir.to_str().unwrap()]);
     }
 }

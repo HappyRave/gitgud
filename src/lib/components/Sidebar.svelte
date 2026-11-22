@@ -11,6 +11,7 @@
     type ProposalSummary,
     type StashEntry,
     type TagInfo,
+    type WorktreeInfo,
   } from "$lib/api";
   import { aheadBehind, branchTree, visibleRows } from "$lib/sidebar/tree";
   import ContextMenu, { type MenuItem } from "./ContextMenu.svelte";
@@ -53,6 +54,8 @@
     stacks = [],
     onrestack,
     onopenstackpr,
+    worktrees = [],
+    onproposeworktree,
   }: {
     /** "Rebase current onto" from a branch's context menu. */
     onrebase: (branch: string) => void;
@@ -97,6 +100,8 @@
     stacks?: BranchStack[];
     onrestack?: (topBranch: string, onto: string) => void;
     onopenstackpr?: (url: string) => void;
+    worktrees?: WorktreeInfo[];
+    onproposeworktree?: (wt: WorktreeInfo) => void;
   } = $props();
 
   let error = $state<string | null>(null);
@@ -306,6 +311,35 @@
                 <span class="r">{proposal.agent}</span>
               {/if}
             </button>
+          </li>
+        {/each}
+      </ul>
+    </section>
+  {/if}
+
+  {#if worktrees.length > 0}
+    <section aria-label="Agent Worktrees">
+      <h3>Agent Worktrees <span class="ct">{worktrees.length}</span></h3>
+      <ul>
+        {#each worktrees as wt (wt.path)}
+          {@const label = wt.branch ?? wt.path.split(/[\\/]/).pop() ?? wt.path}
+          <li>
+            <div class="it" title={wt.path}>
+              <span class="ic">⌥</span>
+              <span class="nm">{label}</span>
+              {#if wt.dirtyCount > 0}
+                <span class="r">{wt.dirtyCount}</span>
+                {#if onproposeworktree}
+                  <button
+                    type="button"
+                    class="sact"
+                    disabled={busy || merging}
+                    title="Import dirty changes as a gitgud proposal"
+                    onclick={() => onproposeworktree(wt)}>Propose</button
+                  >
+                {/if}
+              {/if}
+            </div>
           </li>
         {/each}
       </ul>

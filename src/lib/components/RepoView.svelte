@@ -101,6 +101,7 @@
     type TaskOp,
     type UnityInfo,
     type UnityPropertyPick,
+    type WorktreeInfo,
   } from "$lib/api";
   import {
     aiDraftCommitMessage,
@@ -108,6 +109,7 @@
     createTag,
     deleteRemoteTag,
     deleteTag,
+    hasCommitGraph,
     opLogPrune,
     opLogStats,
     outsideReflog,
@@ -115,9 +117,11 @@
     proposalReject,
     proposalRequestChanges,
     proposalsList,
+    proposeFromWorktree,
     pushTag,
     resolveUnityConflict,
     restack,
+    staleOriginCommits,
     tags,
     unityCheckOpenAssets,
     unityConfigureSmartMerge,
@@ -125,6 +129,7 @@
     unityInfo,
     unityMetaIssues,
     unityRemergeConflicts,
+    worktreesList,
     writeCommitGraph,
   } from "$lib/api";
   import BranchDialog from "$lib/components/BranchDialog.svelte";
@@ -271,6 +276,11 @@
   let tagList = $state<TagInfo[]>([]);
   let stackList = $state<BranchStack[]>([]);
   let proposalList = $state<ProposalSummary[]>([]);
+  let worktreeList = $state<WorktreeInfo[]>([]);
+  const linkedWorktrees = $derived(worktreeList.filter((w) => !w.isMain));
+  let staleOriginIds = $state<ReadonlySet<string>>(new Set());
+  let commitGraphPrompt = $state<number | null>(null);
+  let checkedCommitGraphRepo = $state<number | null>(null);
   const activeProposals = $derived(
     proposalList.filter((p) => p.status === "pending" || p.status === "changesRequested"),
   );
@@ -349,7 +359,10 @@
       tagList = [];
       stackList = [];
       proposalList = [];
+      worktreeList = [];
       selectedProposal = null;
+      staleOriginIds = new Set();
+      commitGraphPrompt = null;
       fileInspect = null;
       opStats = null;
       reflogEntries = [];
@@ -379,6 +392,54 @@
         }
       })
       .catch(() => {});
+    worktreesList(id)
+      .then((list) => {
+        if (!stale && opened?.id === id && revision === rev) {
+          worktreeList = list;
+        }
+      })
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+  });
+
+  $effect(() => {
+    if (!opened) {
+      return;
+    }
+    const id = opened.id;
+    if (opened.rows >= 500 && checkedCommitGraphRepo !== id) {
+      checkedCommitGraphRepo = id;
+      hasCommitGraph(id)
+        .then((built) => {
+          if (opened?.id === id && !built) {
+            commitGraphPrompt = id;
+          }
+        })
+        .catch(() => {});
+    }
+  });
+
+  $effect(() => {
+    const id = opened?.id;
+    const pushed = planDone?.pushed;
+    if (!id || !pushed) {
+      staleOriginIds = new Set();
+      return;
+    }
+    let stale = false;
+    staleOriginCommits(id, pushed)
+      .then((ids) => {
+        if (!stale && opened?.id === id && planDone?.pushed === pushed) {
+          staleOriginIds = new Set(ids);
+        }
+      })
+      .catch(() => {
+        if (!stale) {
+          staleOriginIds = new Set();
+        }
+      });
     return () => {
       stale = true;
     };
@@ -1237,6 +1298,35 @@
     }
   }
 
+  function proposeWorktree(wt: WorktreeInfo) {
+    return enqueue(async () => {
+      if (!opened) {
+        return;
+      }
+      error = null;
+      try {
+        const created = await proposeFromWorktree(
+          opened.id,
+          wt.path,
+          `Worktree changes from ${wt.branch ?? "detached"}`,
+          "Imported from linked agent worktree",
+          "worktree",
+        );
+        proposalList = [created, ...proposalList.filter((p) => p.id !== created.id)];
+        fileInspect = null;
+        selectedCommit = null;
+        selectedStash = null;
+        planDone = null;
+        inspector = "working";
+        selectedProposal = created.id;
+        revision += 1;
+        notice = `Proposed changes from ${wt.branch ?? wt.path}`;
+      } catch (err) {
+        error = String(err);
+      }
+    });
+  }
+
   async function onDeleteBranch(branch: string, remote?: string) {
     if (remote) {
       deleteAsk = { kind: "remote", branch, remote };
@@ -1613,6 +1703,7 @@
           merging={!!conflicted}
           {selectedStash}
           proposals={activeProposals}
+          worktrees={linkedWorktrees}
           stacks={stackList}
           {selectedProposal}
           oplogOpen={inspector === "oplog" && !selectedCommit && selectedStash === null && !selectedProposal && !fileInspect}
@@ -1648,6 +1739,7 @@
           }}
           onrestack={runRestack}
           onopenstackpr={openStackPr}
+          onproposeworktree={proposeWorktree}
           onstashselect={(idx) => {
             selectedStash = idx;
             selectedProposal = null;
@@ -1742,6 +1834,22 @@
               <button class="bare findbtn r" title="Find commits (Ctrl+F)" onclick={() => (finding = true)}>⌕ Find <span class="k">Ctrl+F</span></button>
             {/if}
           </div>
+          {#if commitGraphPrompt === opened.id}
+            <div class="cgraph" role="status">
+              <span>Large history ({opened.rows} rows) — build a git commit-graph cache for faster loads?</span>
+              <span class="sp"></span>
+              <button
+                type="button"
+                class="pri"
+                disabled={busy}
+                onclick={async () => {
+                  await optimizeCommitGraph();
+                  commitGraphPrompt = null;
+                }}>Build cache</button
+              >
+              <button type="button" onclick={() => (commitGraphPrompt = null)}>Dismiss</button>
+            </div>
+          {/if}
           {#key `${opened.id}:${opened.graphVersion}`}
             {@const id = opened.id}
             <Graph
@@ -1772,6 +1880,7 @@
               }}
               oncopy={copyHash}
               hits={finding ? findHits : null}
+              fadedIds={staleOriginIds}
               onedit={planning ? undefined : editRow}
               onmenu={planning ? undefined : (row, x, y) => (rowMenu = { row, x, y })}
               renaming={renaming?.index ?? null}
@@ -2179,6 +2288,15 @@
   }
   .center > :global(.graph) {
     flex: 1;
+  }
+  .cgraph {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    background: var(--sel);
+    border-bottom: 1px solid var(--line);
+    font-size: 11.5px;
   }
   .inspector {
     overflow: hidden;

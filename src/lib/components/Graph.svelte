@@ -21,9 +21,12 @@
     renaming = null,
     onrename,
     rowsVersion = 0,
+    fadedIds = null,
   }: {
     /** Bump to drop loaded rows and fetch them again (a new plan preview). */
     rowsVersion?: number;
+    /** Commit OIDs to render faded (e.g. still-on-origin commits after rewrite). */
+    fadedIds?: ReadonlySet<string> | null;
     /** Rows matching the find bar, marked in the gutter. */
     hits?: ReadonlySet<number> | null;
     repoId: number;
@@ -102,7 +105,7 @@
         layout: row.layout,
         wip: row.wip,
         ghost: row.after != null || row.proposal != null,
-        faded: row.faded,
+        faded: !!row.faded || !!fadedIds?.has(row.id),
         stash: row.stash != null,
       })),
       scrollTop,
@@ -282,7 +285,7 @@
           data-index={index}
           class:wip={row.wip}
           class:ghost={row.after != null || row.proposal != null}
-          class:faded={row.faded}
+          class:faded={!!row.faded || !!fadedIds?.has(row.id)}
           class:selected={selected === index}
           class:hit={hits?.has(index)}
           aria-selected={selected === index}
