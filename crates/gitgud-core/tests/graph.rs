@@ -157,6 +157,98 @@ fn session_get_and_close() {
 }
 
 #[test]
+fn refresh_keeps_the_graph_while_history_is_unchanged() {
+    let repo = history();
+    repo.write("a.txt", "dirty");
+    let session = Session::default();
+    let id = session.open(repo.path()).unwrap().id;
+    let before = session.get(id).unwrap().graph;
+
+    repo.git(&["add", "a.txt"]);
+    repo.write("b.txt", "more");
+    let opened = session.refresh(id).unwrap();
+
+    assert_eq!(opened.graph_version, 0);
+    assert!(std::sync::Arc::ptr_eq(
+        &before,
+        &session.get(id).unwrap().graph
+    ));
+}
+
+#[test]
+fn refresh_rebuilds_after_a_commit() {
+    let repo = history();
+    let session = Session::default();
+    let opened = session.open(repo.path()).unwrap();
+
+    repo.write("a.txt", "new").commit_all("one more");
+    let refreshed = session.refresh(opened.id).unwrap();
+
+    assert_eq!(refreshed.id, opened.id);
+    assert_eq!(refreshed.rows, opened.rows + 1);
+    assert_eq!(refreshed.graph_version, 1);
+    let open = session.get(opened.id).unwrap();
+    assert_eq!(
+        open.graph.rows(&open.repo, 0, 1).unwrap()[0].subject,
+        "one more"
+    );
+}
+
+#[test]
+fn refresh_adds_and_drops_the_wip_row() {
+    let repo = history();
+    let session = Session::default();
+    let id = session.open(repo.path()).unwrap().id;
+
+    repo.write("a.txt", "dirty");
+    let dirty = session.refresh(id).unwrap();
+    assert_eq!((dirty.rows, dirty.graph_version), (5, 1));
+
+    repo.git(&["checkout", "--", "a.txt"]);
+    let clean = session.refresh(id).unwrap();
+    assert_eq!((clean.rows, clean.graph_version), (4, 2));
+}
+
+#[test]
+fn refresh_rebuilds_when_refs_move() {
+    let repo = history();
+    let session = Session::default();
+    let id = session.open(repo.path()).unwrap().id;
+
+    for change in [
+        &["tag", "v2", "HEAD~1"][..],
+        &["branch", "topic"],
+        &["checkout", "-q", "topic"],
+        &["checkout", "-q", "--detach"],
+        &["update-ref", "refs/remotes/origin/main", "HEAD"],
+    ] {
+        let before = session.get(id).unwrap().graph_version;
+        repo.git(change);
+        assert_eq!(
+            session.refresh(id).unwrap().graph_version,
+            before + 1,
+            "{change:?}"
+        );
+    }
+}
+
+#[test]
+fn refresh_of_an_unknown_repo_fails() {
+    assert!(matches!(
+        Session::default().refresh(3),
+        Err(Error::UnknownRepo(3))
+    ));
+}
+
+#[test]
+fn session_locates_git_once() {
+    let session = Session::default();
+    let first: *const _ = session.git().unwrap();
+    let second: *const _ = session.git().unwrap();
+    assert_eq!(first, second);
+}
+
+#[test]
 fn session_rejects_a_plain_folder() {
     let dir = tempfile::tempdir().unwrap();
     assert!(matches!(

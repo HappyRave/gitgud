@@ -5,6 +5,8 @@ use std::process::Command;
 
 use serde::{Serialize, Serializer};
 
+use crate::cli::no_console_window;
+
 /// Oldest system git gitgud accepts (spec §2).
 pub const MIN_GIT: GitVersion = GitVersion {
     major: 2,
@@ -126,16 +128,6 @@ fn version_of(git: &Path) -> Result<GitVersion, Error> {
     }
     GitVersion::parse(&String::from_utf8_lossy(&out.stdout))
 }
-
-#[cfg(windows)]
-fn no_console_window(cmd: &mut Command) {
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    cmd.creation_flags(CREATE_NO_WINDOW);
-}
-
-#[cfg(not(windows))]
-fn no_console_window(_: &mut Command) {}
 
 #[cfg(test)]
 mod tests {

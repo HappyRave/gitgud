@@ -1,4 +1,5 @@
 import "@testing-library/jest-dom/vitest";
+import { cleanup } from "@testing-library/svelte";
 import { clearMocks } from "@tauri-apps/api/mocks";
 import { afterEach } from "vitest";
 import { fakeContext } from "./canvas";
@@ -8,4 +9,8 @@ HTMLCanvasElement.prototype.getContext = function (this: HTMLCanvasElement & { _
   return this.__fake;
 } as typeof HTMLCanvasElement.prototype.getContext;
 
-afterEach(() => clearMocks());
+// Unmount first: components unsubscribe from mocked events on destroy.
+afterEach(() => {
+  cleanup();
+  clearMocks();
+});

@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, within } from "@testing-library/svelte";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Row } from "$lib/api";
 import { contextOf } from "$lib/test/canvas";
 import { mockCommands } from "$lib/test/ipc";
@@ -134,6 +134,31 @@ describe("Graph", () => {
     expect(selectedSubjects()).toEqual([expect.stringContaining("commit 2")]);
     await fireEvent.keyDown(list(), { key: "ArrowUp" });
     expect(selectedSubjects()).toEqual([expect.stringContaining("commit 1")]);
+  });
+
+  it("reports the selected row, and null when Escape clears it", async () => {
+    serve(3);
+    const onselect = vi.fn();
+    render(Graph, { repoId: 1, rowCount: 3, onselect });
+    await screen.findByText("commit 2");
+
+    await fireEvent.click(screen.getByText("commit 1"));
+    await fireEvent.keyDown(list(), { key: "ArrowDown" });
+    await fireEvent.keyDown(list(), { key: "Escape" });
+
+    expect(onselect.mock.calls.map(([row]) => row?.subject ?? null)).toEqual(["commit 1", "commit 2", null]);
+    expect(selectedSubjects()).toEqual([]);
+  });
+
+  it("follows a selection set from outside", async () => {
+    serve(3);
+    const view = render(Graph, { repoId: 1, rowCount: 3, selected: 2 });
+    await screen.findByText("commit 2");
+    expect(selectedSubjects()).toEqual([expect.stringContaining("commit 2")]);
+
+    await view.rerender({ repoId: 1, rowCount: 3, selected: null });
+
+    expect(selectedSubjects()).toEqual([]);
   });
 
   it("scrolls a row selected by keyboard into view", async () => {

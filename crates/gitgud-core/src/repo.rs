@@ -219,6 +219,18 @@ pub enum Error {
     Read(String),
     #[error("repository {0} is not open")]
     UnknownRepo(u32),
+    #[error("{0} changed since its diff was shown; look again and retry")]
+    Stale(String),
+    /// gitgud won't do this, for a reason the message gives in plain words.
+    #[error("{0}")]
+    Refused(String),
+    #[error("cancelled")]
+    Cancelled,
+    #[error(transparent)]
+    Git(#[from] crate::git::Error),
+    /// A git CLI call failed; `message` is git's own output.
+    #[error("{message}")]
+    Command { command: String, message: String },
 }
 
 impl Serialize for Error {

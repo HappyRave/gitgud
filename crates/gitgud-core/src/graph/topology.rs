@@ -7,7 +7,7 @@ use serde::Serialize;
 use crate::repo::{Error, Repo, read_err};
 
 /// A ref pointing at a commit, as drawn on its graph row.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum RefLabel {
     /// HEAD when detached.
@@ -33,9 +33,36 @@ pub struct Topology {
     parents: Vec<u32>,
     labels: HashMap<u32, Vec<RefLabel>>,
     wip: bool,
+    asked_wip: bool,
+    refs: RefSnapshot,
+}
+
+/// Every drawn ref and where it points, sorted: equal snapshots mean equal history.
+type RefSnapshot = Vec<(ObjectId, RefLabel)>;
+
+fn snapshot(labels_by_id: &HashMap<ObjectId, Vec<RefLabel>>) -> RefSnapshot {
+    let mut refs: RefSnapshot = labels_by_id
+        .iter()
+        .flat_map(|(id, labels)| labels.iter().map(|l| (*id, l.clone())))
+        .collect();
+    refs.sort();
+    refs
 }
 
 impl Topology {
+    /// Whether walking `repo` with `wip` now would give this same topology: no
+    /// ref, tag or HEAD has moved, and the WIP row is still wanted (or not).
+    ///
+    /// # Errors
+    /// [`Error::Read`] when refs can't be read.
+    pub fn is_current(&self, repo: &Repo, wip: bool) -> Result<bool, Error> {
+        if wip != self.asked_wip {
+            return Ok(false);
+        }
+        let (_, labels_by_id) = tips(&repo.gix())?;
+        Ok(snapshot(&labels_by_id) == self.refs)
+    }
+
     /// Walks the whole history of `repo`, using its commit-graph file if present.
     /// With `wip`, row 0 is the working copy, on top of HEAD; it is left out when
     /// HEAD has no commit yet.
@@ -76,6 +103,8 @@ impl Topology {
             parents: Vec::with_capacity(rows + rows / 8),
             labels: HashMap::new(),
             wip: wip_parent.is_some(),
+            asked_wip: wip,
+            refs: snapshot(&labels_by_id),
         };
         if let Some(head) = wip_parent {
             topology.parent_start.push(0);
@@ -137,6 +166,8 @@ impl Topology {
             parents: Vec::new(),
             labels: HashMap::new(),
             wip: false,
+            asked_wip: false,
+            refs: Vec::new(),
         };
         for (row, ps) in parents.iter().enumerate() {
             assert!(

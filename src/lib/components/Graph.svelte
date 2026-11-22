@@ -5,7 +5,19 @@
   import { RowStore } from "$lib/graph/rows.svelte";
   import { ROW_HEIGHT, visibleRange } from "$lib/graph/window";
 
-  let { repoId, rowCount }: { repoId: number; rowCount: number } = $props();
+  let {
+    repoId,
+    rowCount,
+    selected = $bindable(null),
+    onselect,
+  }: {
+    repoId: number;
+    rowCount: number;
+    /** Index of the selected row. */
+    selected?: number | null;
+    /** The selected row once it is loaded, or `null` when the selection is cleared. */
+    onselect?: (row: Row | null) => void;
+  } = $props();
 
   const store = new RowStore((start, count) => graphRows(repoId, start, count));
 
@@ -14,7 +26,6 @@
   let scrollTop = $state(0);
   let height = $state(0);
   let lanes = $state(1);
-  let selected = $state<number | null>(null);
 
   const range = $derived(visibleRange(scrollTop, height, rowCount));
   const visible = $derived.by(() => {
@@ -66,18 +77,28 @@
   function onClick(event: MouseEvent) {
     const li = (event.target as HTMLElement).closest<HTMLElement>("li[data-index]");
     if (li) {
-      selected = Number(li.dataset.index);
+      select(Number(li.dataset.index));
     }
   }
 
+  function select(index: number | null) {
+    selected = index;
+    onselect?.(index === null ? null : (store.get(index) ?? null));
+  }
+
   function onKey(event: KeyboardEvent) {
+    if (event.key === "Escape") {
+      select(null);
+      return;
+    }
     const step = event.key === "ArrowDown" ? 1 : event.key === "ArrowUp" ? -1 : 0;
     if (step === 0 || rowCount === 0) {
       return;
     }
     event.preventDefault();
-    selected = Math.min(rowCount - 1, Math.max(0, (selected ?? -1) + step));
-    const top = selected * ROW_HEIGHT;
+    const next = Math.min(rowCount - 1, Math.max(0, (selected ?? -1) + step));
+    select(next);
+    const top = next * ROW_HEIGHT;
     if (top < viewport.scrollTop) {
       viewport.scrollTop = top;
     } else if (top + ROW_HEIGHT > viewport.scrollTop + height) {

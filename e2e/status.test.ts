@@ -22,11 +22,14 @@ test("opens GITGUD_OPEN and lists its working copy", async (t) => {
 
   await page.getByTestId("head").waitFor({ timeout: 10_000 });
   assert.equal(await page.getByTestId("head").innerText(), "main");
-  assert.deepEqual(await page.getByRole("list", { name: "Staged" }).getByRole("listitem").allInnerTexts(), ["Mb.txt"]);
-  assert.deepEqual(await page.getByRole("list", { name: "Changes" }).getByRole("listitem").allInnerTexts(), ["Ma.txt"]);
-  assert.deepEqual(await page.getByRole("list", { name: "Untracked" }).getByRole("listitem").allInnerTexts(), [
-    "?new dir/ünï.txt",
-  ]);
+  const rows = (group: string) =>
+    page
+      .getByRole("list", { name: group })
+      .getByRole("listitem")
+      .evaluateAll((lis) => lis.map((li) => li.querySelector(".badge")!.textContent! + li.querySelector(".path")!.textContent!));
+  assert.deepEqual(await rows("Staged"), ["Mb.txt"]);
+  assert.deepEqual(await rows("Changes"), ["Ma.txt"]);
+  assert.deepEqual(await rows("Untracked"), ["?new dir/ünï.txt"]);
 
   mkdirSync(SHOTS, { recursive: true });
   await page.screenshot({ path: join(SHOTS, "status.png") });

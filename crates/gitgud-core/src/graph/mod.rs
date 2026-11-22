@@ -41,6 +41,14 @@ impl Graph {
         Ok(Self { topology, layout })
     }
 
+    /// Whether [`Graph::build`] with `wip` would give this same graph now.
+    ///
+    /// # Errors
+    /// [`Error::Read`] when refs can't be read.
+    pub fn is_current(&self, repo: &Repo, wip: bool) -> Result<bool, Error> {
+        self.topology.is_current(repo, wip)
+    }
+
     /// Number of rows, the working-copy row included.
     pub fn len(&self) -> usize {
         self.topology.len()

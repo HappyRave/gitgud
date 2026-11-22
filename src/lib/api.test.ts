@@ -1,5 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { closeRepo, gitInfo, graphRows, launchPath, openRepo, pickFolder, repoStatus } from "./api";
+import {
+  closeRepo,
+  commit,
+  gitInfo,
+  graphRows,
+  launchPath,
+  openRepo,
+  pickFolder,
+  refreshRepo,
+  repoStatus,
+  stage,
+  unstage,
+} from "./api";
 import { mockCommands } from "./test/ipc";
 
 describe("gitInfo", () => {
@@ -23,22 +35,35 @@ describe("gitInfo", () => {
 
 describe("repo commands", () => {
   it("send their arguments under the names Rust expects", async () => {
+    const opened = { id: 3, root: "C:/r", rows: 10, graphVersion: 0 };
     const calls = mockCommands({
-      open_repo: () => ({ id: 3, root: "C:/r", rows: 10 }),
+      open_repo: () => opened,
       repo_status: () => ({ root: "C:/r", head: { kind: "branch", name: "main" }, entries: [] }),
       graph_rows: () => [],
+      refresh_repo: () => opened,
+      stage: () => opened,
+      unstage: () => opened,
+      commit: () => opened,
       close_repo: () => null,
     });
 
-    await expect(openRepo("C:/r")).resolves.toEqual({ id: 3, root: "C:/r", rows: 10 });
+    await expect(openRepo("C:/r")).resolves.toEqual(opened);
     await repoStatus(3);
     await graphRows(3, 200, 100);
+    await refreshRepo(3);
+    await stage(3, ["a b.txt"]);
+    await unstage(3, ["a b.txt"]);
+    await commit(3, "msg\n\nbody");
     await closeRepo(3);
 
     expect(calls).toEqual([
       { cmd: "open_repo", args: { path: "C:/r" } },
       { cmd: "repo_status", args: { id: 3 } },
       { cmd: "graph_rows", args: { id: 3, start: 200, count: 100 } },
+      { cmd: "refresh_repo", args: { id: 3 } },
+      { cmd: "stage", args: { id: 3, paths: ["a b.txt"] } },
+      { cmd: "unstage", args: { id: 3, paths: ["a b.txt"] } },
+      { cmd: "commit", args: { id: 3, message: "msg\n\nbody" } },
       { cmd: "close_repo", args: { id: 3 } },
     ]);
   });
