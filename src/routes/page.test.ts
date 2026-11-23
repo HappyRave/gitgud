@@ -1719,6 +1719,8 @@ describe("start page: Milestone 1 workflows", () => {
 
     await fireEvent.keyDown(window, { key: "P", ctrlKey: true, shiftKey: true });
     const pushDlg = await screen.findByRole("dialog", { name: "Push main" });
+    await within(pushDlg).findByRole("button", { name: "Push" });
+    expect(within(pushDlg).queryByRole("checkbox", { name: /force-with-lease/ })).not.toBeInTheDocument();
     await fireEvent.click(within(pushDlg).getByRole("button", { name: "Push" }));
     expect(await screen.findByRole("status")).toHaveTextContent("Pushed main to origin/main");
     expect(calls.find((c) => c.cmd === "push")?.args).toEqual({
@@ -1745,6 +1747,7 @@ describe("start page: Milestone 1 workflows", () => {
 
     await fireEvent.click(within(done).getByRole("button", { name: "Force-push with lease…" }));
     const forceDlg = await screen.findByRole("dialog", { name: "Push main" });
+    expect(await within(forceDlg).findByRole("checkbox", { name: /force-with-lease/ })).toBeChecked();
     await fireEvent.click(within(forceDlg).getByRole("button", { name: "Force-push with lease" }));
     await vi.waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Force-pushed main to origin/main"));
     const pushes = calls.filter((c): c is { cmd: "push"; args: Commands["push"]["args"] } => c.cmd === "push");

@@ -154,10 +154,12 @@
           <span>Set upstream tracking (<code>--set-upstream</code>)</span>
         </label>
       {/if}
-      <label class="chk">
-        <input type="checkbox" bind:checked={forceWithLease} />
-        <span>Force-push safely (<code>--force-with-lease</code>)</span>
-      </label>
+      {#if initialForce || info.needsForce}
+        <label class="chk">
+          <input type="checkbox" bind:checked={forceWithLease} />
+          <span>Force-push safely (<code>--force-with-lease</code>)</span>
+        </label>
+      {/if}
       {#if pushLocks.length > 0}
         <div class="locklist" aria-label="LFS locks in push">
           <div class="ab">Unlock LFS files after push:</div>
