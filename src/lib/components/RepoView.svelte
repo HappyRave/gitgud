@@ -158,6 +158,7 @@
   import TagDialog from "$lib/components/TagDialog.svelte";
   import SequencerBanner from "$lib/components/SequencerBanner.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
+  import Splitter from "$lib/components/Splitter.svelte";
   import StashDetail from "$lib/components/StashDetail.svelte";
   import StashDialog from "$lib/components/StashDialog.svelte";
   import WorkingCopy from "$lib/components/WorkingCopy.svelte";
@@ -175,7 +176,7 @@
   import { mergeMessage } from "$lib/merge/resolve";
   import type { FixId } from "$lib/errors";
   import { describe, steps, type PlanRow } from "$lib/plan/plan";
-  import { toggleSplit } from "$lib/prefs.svelte";
+  import { prefs, setPaneSize, toggleSplit } from "$lib/prefs.svelte";
   import { middleTruncate } from "$lib/text";
   import { age } from "$lib/time";
 
@@ -200,6 +201,31 @@
   } = $props();
 
   let rootEl = $state<HTMLElement | null>(null);
+  let bodyEl = $state<HTMLElement | null>(null);
+  let inspEl = $state<HTMLElement | null>(null);
+  let dragStartSidebar = 210;
+  let dragStartInspector = 420;
+
+  function measuredSidebarW(): number {
+    return prefs.panes.sidebarWidth ?? (Math.round(bodyEl?.querySelector<HTMLElement>(".side")?.getBoundingClientRect().width || 0) || 210);
+  }
+
+  function measuredInspectorW(): number {
+    return prefs.panes.inspectorWidth ?? (Math.round(inspEl?.getBoundingClientRect().width || 0) || 420);
+  }
+
+  function clampSidebar(w: number): number {
+    const bodyW = bodyEl?.clientWidth || 1280;
+    const inspW = conflicted ? 0 : measuredInspectorW();
+    const maxW = Math.min(440, Math.max(150, bodyW - inspW - 260));
+    return Math.max(150, Math.min(maxW, Math.round(w)));
+  }
+
+  function clampInspector(w: number): number {
+    const bodyW = bodyEl?.clientWidth || 1280;
+    const maxW = Math.max(300, bodyW - measuredSidebarW() - 260);
+    return Math.max(300, Math.min(maxW, Math.round(w)));
+  }
   let opened = $state<Opened | null>(null);
   let status = $state<Status | null>(null);
   let error = $state<string | null>(null);
@@ -1469,6 +1495,10 @@
       planDone = null;
       return;
     }
+    if (event.key === "Escape" && inspector === "oplog" && !inTextField(event.target)) {
+      inspector = "working";
+      return;
+    }
     const kind = opLogKey(event);
     if (kind && opened && !planning) {
       event.preventDefault();
@@ -1693,7 +1723,13 @@
         onabort={() => stepSequencer("abort")}
       />
     {/if}
-    <div class="body" class:merging={!!conflicted}>
+    <div
+      class="body"
+      bind:this={bodyEl}
+      class:merging={!!conflicted}
+      style:--side-w={prefs.panes.sidebarWidth != null ? `${prefs.panes.sidebarWidth}px` : undefined}
+      style:--insp-w={prefs.panes.inspectorWidth != null ? `${prefs.panes.inspectorWidth}px` : undefined}
+    >
       <div class="contents" data-pane="sidebar">
         <Sidebar
           repoId={opened.id}
@@ -1706,6 +1742,8 @@
           worktrees={linkedWorktrees}
           stacks={stackList}
           {selectedProposal}
+          workingOpen={inspector === "working" && !selectedCommit && selectedStash === null && !selectedProposal && !fileInspect && !planning && !planDone}
+          changesCount={status.entries.length}
           oplogOpen={inspector === "oplog" && !selectedCommit && selectedStash === null && !selectedProposal && !fileInspect}
           lfsInfo={lfs}
           {locks}
@@ -1751,13 +1789,26 @@
           onstashdrop={(idx) => write((id) => stashDrop(id, idx), `Dropped stash@{${idx}} · Ctrl+Z undoes it`)}
           onrefreshlocks={() => opened && refreshLocks(opened.id)}
           onunlock={onUnlockFile}
+          onworking={() => {
+            inspector = "working";
+            planDone = null;
+            closeDetail();
+          }}
           onoplog={() => {
             inspector = inspector === "oplog" ? "working" : "oplog";
             closeDetail();
           }}
         />
       </div>
-      {#snippet opLog(repoId: number)}
+      <Splitter
+        orientation="vertical"
+        label="Resize sidebar"
+        onstart={() => (dragStartSidebar = measuredSidebarW())}
+        ondrag={(d) => setPaneSize("sidebarWidth", clampSidebar(dragStartSidebar + d))}
+        onstep={(d) => setPaneSize("sidebarWidth", clampSidebar(measuredSidebarW() + d))}
+        onreset={() => setPaneSize("sidebarWidth", null)}
+      />
+      {#snippet opLog(repoId: number, onclose?: () => void)}
         <OpLogPanel
           {repoId}
           {revision}
@@ -1769,6 +1820,7 @@
           onrestorefiles={(entry) => write((id) => restoreFiles(id, entry.id))}
           onprune={pruneOpLog}
           onrestorereflog={(entry) => inspectCommit(entry.id)}
+          {onclose}
         />
       {/snippet}
       {#if conflicted}
@@ -1811,7 +1863,7 @@
           onsetupSmartMerge={setupAndRemergeUnity}
           onremergeUnity={runRemergeUnity}
           onconfirmVerify={onConfirmVerify}
-          children={inspector === "oplog" ? () => opLog(repoId) : undefined}
+          children={inspector === "oplog" ? () => opLog(repoId, () => (inspector = "working")) : undefined}
           whenResolved={merging ? undefined : continueOp}
         />
       {:else}
@@ -1874,6 +1926,9 @@
                     selectedStash = null;
                     selectedProposal = null;
                     selectedCommit = row && !row.wip ? row.id : null;
+                    if (row?.wip) {
+                      inspector = "working";
+                    }
                   }
                   planDone = null;
                 }
@@ -1888,7 +1943,15 @@
             />
           {/key}
         </section>
-        <aside class="pane inspector" data-pane="inspector">
+        <Splitter
+          orientation="vertical"
+          label="Resize inspector"
+          onstart={() => (dragStartInspector = measuredInspectorW())}
+          ondrag={(d) => setPaneSize("inspectorWidth", clampInspector(dragStartInspector - d))}
+          onstep={(d) => setPaneSize("inspectorWidth", clampInspector(measuredInspectorW() - d))}
+          onreset={() => setPaneSize("inspectorWidth", null)}
+        />
+        <aside class="pane inspector" bind:this={inspEl} data-pane="inspector">
           {#if planning}
             {#key planning}
               <PlanEditor
@@ -1958,7 +2021,7 @@
               {@render opLog(repoId)}
             </PlanDone>
           {:else if inspector === "oplog"}
-            {@render opLog(opened.id)}
+            {@render opLog(opened.id, () => (inspector = "working"))}
           {:else}
             <WorkingCopy
               bind:this={workingCopy}
@@ -2247,18 +2310,24 @@
     flex: none;
   }
   .body {
+    --side-w: 210px;
+    --insp-w: clamp(380px, 36vw, 560px);
     flex: 1;
     min-height: 0;
     display: grid;
-    grid-template-columns: 210px minmax(0, 1fr) clamp(380px, 36vw, 560px);
+    grid-template-columns: var(--side-w) 5px minmax(0, 1fr) 5px var(--insp-w);
   }
   .body.merging {
-    grid-template-columns: 210px minmax(0, 1fr);
+    grid-template-columns: var(--side-w) 5px minmax(0, 1fr);
   }
   @media (min-width: 2400px) {
     .body:not(.merging) {
-      grid-template-columns: 240px minmax(0, 1fr) min(1150px, 46vw);
+      --side-w: 240px;
+      --insp-w: min(1150px, 46vw);
     }
+  }
+  .body > .contents > :global(.side) {
+    border-right: 0;
   }
   .pane {
     display: flex;
@@ -2282,9 +2351,6 @@
   .findbtn:hover {
     background: var(--hover);
     color: var(--fg);
-  }
-  .center {
-    border-right: 1px solid var(--line);
   }
   .center > :global(.graph) {
     flex: 1;

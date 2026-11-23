@@ -172,4 +172,40 @@ describe("StatusList actions", () => {
       expect(button).toBeDisabled();
     }
   });
+
+  it("shows batch Stage/Discard bar when multiple unstaged files are selected and forwards Shift/Ctrl mods", async () => {
+    const onstage = vi.fn();
+    const ondiscard = vi.fn();
+    const onselectfile = vi.fn();
+    const onclearselection = vi.fn();
+    const selectedKeys = new Set(["unstaged:both.txt", "unstaged:stray.txt"]);
+
+    renderComponent(StatusList, {
+      status: status(ENTRIES),
+      selected: { path: "stray.txt", side: "unstaged" },
+      selectedKeys,
+      onstage,
+      onunstage: vi.fn(),
+      ondiscard,
+      onselectfile,
+      onclearselection,
+    });
+
+    const bar = screen.getByRole("region", { name: "Selected files" });
+    expect(bar).toHaveTextContent("2 selected");
+
+    await fireEvent.click(within(bar).getByRole("button", { name: "Stage 2" }));
+    expect(onstage).toHaveBeenCalledWith(["both.txt", "stray.txt"]);
+
+    await fireEvent.click(within(bar).getByRole("button", { name: "Discard 2" }));
+    expect(ondiscard).toHaveBeenCalledWith(["both.txt", "stray.txt"]);
+
+    await fireEvent.click(within(bar).getByRole("button", { name: "Clear" }));
+    expect(onclearselection).toHaveBeenCalledTimes(1);
+
+    await fireEvent.click(within(screen.getByRole("list", { name: "Changes" })).getByRole("button", { name: "gone.txt" }), {
+      shiftKey: true,
+    });
+    expect(onselectfile).toHaveBeenCalledWith("gone.txt", "unstaged", { ctrl: false, shift: true });
+  });
 });

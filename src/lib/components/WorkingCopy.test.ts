@@ -150,4 +150,48 @@ describe("WorkingCopy keys", () => {
     expect(onstage).not.toHaveBeenCalled();
     outside.remove();
   });
+
+  it("supports Ctrl+click, Shift+click, Space batch stage, Shift+Backspace batch discard, and Esc collapse", async () => {
+    const multiStatus: Status = {
+      root: "C:/r",
+      head: { kind: "branch", name: "main" },
+      entries: [
+        { path: "a.txt", kind: "tracked", index: null, worktree: "modified" },
+        { path: "b.txt", kind: "tracked", index: null, worktree: "modified" },
+        { path: "u.txt", kind: "untracked", index: null, worktree: null },
+      ],
+    };
+    mockCommands({ worktree_file_diff: ({ path }) => ({ ...DIFF, path }) });
+    const onstage = vi.fn();
+    const ondiscard = vi.fn();
+    render(WorkingCopy, {
+      repoId: 1,
+      status: multiStatus,
+      revision: 0,
+      branch: "main",
+      onstage,
+      onunstage: vi.fn(),
+      ondiscard,
+      onhunk: vi.fn(),
+      oncommit: vi.fn(async () => {}),
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "a.txt" }));
+    await fireEvent.click(screen.getByRole("button", { name: "u.txt" }), { shiftKey: true });
+
+    expect(screen.getByRole("region", { name: "Selected files" })).toHaveTextContent("3 selected");
+    await fireEvent.keyDown(screen.getByRole("button", { name: "u.txt" }), { key: " " });
+    expect(onstage).toHaveBeenCalledWith(["a.txt", "b.txt", "u.txt"]);
+
+    await key({ key: "Backspace", shiftKey: true });
+    expect(ondiscard).toHaveBeenCalledWith(["a.txt", "b.txt", "u.txt"]);
+
+    await key({ key: "Escape" });
+    expect(screen.queryByRole("region", { name: "Selected files" })).not.toBeInTheDocument();
+
+    // Ctrl+click adds b.txt alongside u.txt, then Stage 2 sends both in display order.
+    await fireEvent.click(screen.getByRole("button", { name: "b.txt" }), { ctrlKey: true });
+    await fireEvent.click(screen.getByRole("button", { name: "Stage 2" }));
+    expect(onstage).toHaveBeenLastCalledWith(["b.txt", "u.txt"]);
+  });
 });

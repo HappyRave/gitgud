@@ -10,10 +10,12 @@
     type UnityPropertyPick,
   } from "$lib/api";
   import { groupByKind } from "$lib/merge/resolve";
+  import { prefs, setPaneSize } from "$lib/prefs.svelte";
   import { isUnityYaml } from "$lib/unity";
   import ConflictList from "./ConflictList.svelte";
   import MergeSummary from "./MergeSummary.svelte";
   import SidePick from "./SidePick.svelte";
+  import Splitter from "./Splitter.svelte";
   import TextMerge from "./TextMerge.svelte";
   import UnityMergeTable from "./UnityMergeTable.svelte";
 
@@ -147,12 +149,37 @@
       advance(path);
     }
   }
+
+  let cvEl = $state<HTMLElement | null>(null);
+  let listWrap = $state<HTMLElement | null>(null);
+  let dragStartListW = 272;
+
+  function measuredConflictListW(): number {
+    return prefs.panes.conflictListWidth ?? (Math.round(listWrap?.getBoundingClientRect().width || 0) || 272);
+  }
+
+  function clampConflictList(w: number): number {
+    const maxW = Math.min(460, Math.max(180, (cvEl?.clientWidth || 1000) - 320));
+    return Math.max(180, Math.min(maxW, Math.round(w)));
+  }
 </script>
 
-<div class="cv">
-  <div class="contents" data-pane="conflicts">
+<div
+  class="cv"
+  bind:this={cvEl}
+  style:--cv-list-w={prefs.panes.conflictListWidth != null ? `${prefs.panes.conflictListWidth}px` : undefined}
+>
+  <div class="contents" data-pane="conflicts" bind:this={listWrap}>
     <ConflictList conflicts={ordered} selected={left.length ? (selected?.path ?? null) : null} {how} onselect={(p) => (chosen = p)} />
   </div>
+  <Splitter
+    orientation="vertical"
+    label="Resize conflicts list"
+    onstart={() => (dragStartListW = measuredConflictListW())}
+    ondrag={(d) => setPaneSize("conflictListWidth", clampConflictList(dragStartListW + d))}
+    onstep={(d) => setPaneSize("conflictListWidth", clampConflictList(measuredConflictListW() + d))}
+    onreset={() => setPaneSize("conflictListWidth", null)}
+  />
   <div class="res" data-pane="resolver">
     {#if children}
       {@render children()}
@@ -314,17 +341,16 @@
 
 <style>
   .cv {
+    --cv-list-w: 17rem;
     display: grid;
-    grid-template-columns: 17rem minmax(0, 1fr);
+    grid-template-columns: var(--cv-list-w) 5px minmax(0, 1fr);
     min-height: 0;
     height: 100%;
-    border-left: 1px solid var(--line);
   }
   .contents {
     display: flex;
     flex-direction: column;
     min-height: 0;
-    border-right: 1px solid var(--line);
   }
   .res {
     display: flex;

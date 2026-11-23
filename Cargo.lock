@@ -1362,7 +1362,7 @@ dependencies = [
 
 [[package]]
 name = "gitgud"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "gitgud-core",
  "serde",
@@ -1377,7 +1377,7 @@ dependencies = [
 
 [[package]]
 name = "gitgud-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "gitgud-core",
  "serde",
@@ -1387,7 +1387,7 @@ dependencies = [
 
 [[package]]
 name = "gitgud-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "gitgud-core",
  "gix",

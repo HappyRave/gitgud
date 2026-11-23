@@ -80,6 +80,28 @@ describe("Sidebar", () => {
     expect(screen.getByRole("button", { name: "Op log" })).toHaveAttribute("aria-pressed", "true");
   });
 
+  it("shows Working copy with change count when onworking is provided", async () => {
+    mockCommands({ branches: () => DATA, stashes: () => [] });
+    const onworking = vi.fn();
+    render(Sidebar, {
+      repoId: 4,
+      revision: 0,
+      workingOpen: false,
+      changesCount: 3,
+      onworking,
+      oncheckout: vi.fn(),
+      onmerge: vi.fn(),
+      onrebase: vi.fn(),
+      onoplog: vi.fn(),
+    });
+    const btn = await screen.findByRole("button", { name: "Working copy" });
+    expect(btn).toHaveTextContent("3");
+    expect(btn).toHaveAttribute("aria-pressed", "false");
+
+    await fireEvent.click(btn);
+    expect(onworking).toHaveBeenCalledTimes(1);
+  });
+
   it("reloads with the revision", async () => {
     const { calls, view } = setup();
     await screen.findByText("stack");

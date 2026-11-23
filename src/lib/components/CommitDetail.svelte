@@ -9,9 +9,10 @@
     type UnityYamlDiff,
   } from "$lib/api";
   import { imageUrl, isImage } from "$lib/images";
-  import { prefs, toggleIgnoreWhitespace } from "$lib/prefs.svelte";
+  import { prefs, setPaneSize, toggleIgnoreWhitespace } from "$lib/prefs.svelte";
   import { isUnityYaml } from "$lib/unity";
   import DiffView from "./DiffView.svelte";
+  import Splitter from "./Splitter.svelte";
   import UnityDiffView from "./UnityDiffView.svelte";
 
   let {
@@ -29,6 +30,19 @@
   } = $props();
 
   const LETTER: Record<Change, string> = { added: "A", modified: "M", deleted: "D", typeChange: "T" };
+
+  let detailEl = $state<HTMLElement | null>(null);
+  let filesEl = $state<HTMLElement | null>(null);
+  let dragStartFilesH = 180;
+
+  function measuredCommitFilesH(): number {
+    return prefs.panes.commitFilesHeight ?? (Math.round(filesEl?.getBoundingClientRect().height || 0) || 180);
+  }
+
+  function clampCommitFiles(h: number): number {
+    const maxH = Math.max(120, (detailEl?.clientHeight || 600) - 220);
+    return Math.max(64, Math.min(Math.min(480, maxH), Math.round(h)));
+  }
 
   let detail = $state<CommitDetail | null>(null);
   let file = $state<string | null>(null);
@@ -110,7 +124,7 @@
   }
 </script>
 
-<section class="detail" aria-label="Commit">
+<section class="detail" bind:this={detailEl} aria-label="Commit">
   <div class="ph">
     Commit <span class="ct">· {detail?.shortId ?? commit.slice(0, 7)}</span>
     <span class="r">
@@ -171,7 +185,13 @@
       </div>
 
       <div class="grp">{detail.files.length} {detail.files.length === 1 ? "file" : "files"}</div>
-      <ul class="files" aria-label="Changed files">
+      <ul
+        class="files"
+        bind:this={filesEl}
+        aria-label="Changed files"
+        style:height={prefs.panes.commitFilesHeight != null ? `${prefs.panes.commitFilesHeight}px` : undefined}
+        style:max-height={prefs.panes.commitFilesHeight != null ? "none" : undefined}
+      >
         {#each detail.files as f (f.path)}
           {@const cut = f.path.lastIndexOf("/") + 1}
           <li>
@@ -182,6 +202,16 @@
         {/each}
       </ul>
     </div>
+
+    <Splitter
+      orientation="horizontal"
+      label="Resize changed files list"
+      class="cd-split"
+      onstart={() => (dragStartFilesH = measuredCommitFilesH())}
+      ondrag={(d) => setPaneSize("commitFilesHeight", clampCommitFiles(dragStartFilesH + d))}
+      onstep={(d) => setPaneSize("commitFilesHeight", clampCommitFiles(measuredCommitFilesH() + d))}
+      onreset={() => setPaneSize("commitFilesHeight", null)}
+    />
 
     <div class="diff-col">
       {#if unityDiff && file && isUnityYaml(file) && preferStructural}
@@ -266,7 +296,6 @@
     padding: 2px 0;
     max-height: 180px;
     overflow-y: auto;
-    border-bottom: 1px solid var(--line);
     flex: none;
   }
   .files button {
@@ -320,6 +349,9 @@
       grid-template-columns: minmax(320px, 2fr) 3fr;
       grid-template-rows: auto minmax(0, 1fr);
     }
+    :global(.cd-split) {
+      display: none;
+    }
     .ph {
       grid-column: 1 / -1;
     }
@@ -328,6 +360,8 @@
       overflow-y: auto;
     }
     .meta-col .files {
+      grid-area: auto;
+      height: auto !important;
       max-height: none;
       flex: 1;
       border-bottom: 0;

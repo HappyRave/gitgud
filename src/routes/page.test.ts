@@ -496,6 +496,39 @@ describe("start page: op log panel", () => {
     expect(screen.getByRole("form", { name: "Commit" })).toBeInTheDocument();
   });
 
+  it("can leave Op log via its Close button, Sidebar Working copy, Escape, or WIP row", async () => {
+    const WIP: Row = { ...ROW, id: "", shortId: "", subject: "Uncommitted changes", wip: true, labels: [] };
+    app({
+      launch_path: () => "C:/work/repo",
+      open_repo: () => ({ id: 1, root: "C:/work/repo", rows: 2, graphVersion: 0 }),
+      graph_rows: () => [WIP, ROW],
+      op_log: () => [ENTRY],
+    });
+    render(Page);
+    await screen.findByText("first commit");
+
+    await fireEvent.click(screen.getByRole("button", { name: "Op log" }));
+    expect(await screen.findByRole("region", { name: "Op log" })).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Back to working copy" }));
+    expect(screen.queryByRole("region", { name: "Op log" })).not.toBeInTheDocument();
+    expect(screen.getByRole("form", { name: "Commit" })).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Op log" }));
+    expect(await screen.findByRole("region", { name: "Op log" })).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Working copy" }));
+    expect(screen.queryByRole("region", { name: "Op log" })).not.toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Op log" }));
+    expect(await screen.findByRole("region", { name: "Op log" })).toBeInTheDocument();
+    await fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("region", { name: "Op log" })).not.toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Op log" }));
+    expect(await screen.findByRole("region", { name: "Op log" })).toBeInTheDocument();
+    await fireEvent.click(screen.getByText("Uncommitted changes"));
+    expect(screen.queryByRole("region", { name: "Op log" })).not.toBeInTheDocument();
+  });
+
   it("Ctrl+F opens find in the history; a match opens that commit; Esc closes it", async () => {
     const calls = app({
       launch_path: () => "C:/work/repo",
@@ -2905,5 +2938,31 @@ describe("Unity, LFS locks, Smart Merge verify, and open-editor guard", () => {
     expect(await screen.findByText(/Large history \(650 rows\)/)).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "Build cache" }));
     expect(calls.some((c) => c.cmd === "write_commit_graph")).toBe(true);
+  });
+
+  it("resizes sidebar and inspector splitters and persists pane sizes", async () => {
+    localStorage.removeItem("gitgud.ui.panes");
+    app({ launch_path: () => "C:/work/repo" });
+    render(Page);
+    await screen.findByText("first commit");
+
+    const sideSep = screen.getByRole("separator", { name: "Resize sidebar" });
+    const body = sideSep.closest(".body") as HTMLElement;
+    await fireEvent.keyDown(sideSep, { key: "ArrowRight" });
+    expect(body.style.getPropertyValue("--side-w")).toBe("226px");
+
+    const inspSep = screen.getByRole("separator", { name: "Resize inspector" });
+    await fireEvent.keyDown(inspSep, { key: "ArrowLeft" });
+    expect(body.style.getPropertyValue("--insp-w")).toBe("436px");
+    expect(JSON.parse(localStorage.getItem("gitgud.ui.panes") ?? "{}")).toMatchObject({
+      sidebarWidth: 226,
+      inspectorWidth: 436,
+    });
+
+    await fireEvent.dblClick(sideSep);
+    expect(body.style.getPropertyValue("--side-w")).toBe("");
+    await fireEvent.keyDown(inspSep, { key: "Home" });
+    expect(body.style.getPropertyValue("--insp-w")).toBe("");
+    localStorage.removeItem("gitgud.ui.panes");
   });
 });

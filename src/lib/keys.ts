@@ -17,6 +17,8 @@ export function paneKey(event: KeyboardEvent): "working" | "graph" | "oplog" | n
 export type WorkingAction =
   | "up"
   | "down"
+  | "extendUp"
+  | "extendDown"
   | "toggle"
   | "discardFile"
   | "stageAll"
@@ -28,9 +30,9 @@ export type WorkingAction =
   | "discardHunk";
 
 /**
- * Working-copy keys (spec §5): ↑↓ files, Alt+↑↓ hunks, Space stage / unstage the
- * file, S / U stage / unstage the hunk, ⌫ discard the hunk, Shift+⌫ the file,
- * A stage all, C the commit message. Off in text fields.
+ * Working-copy keys (spec §5): ↑↓ files, Shift+↑↓ extend selection, Alt+↑↓ hunks,
+ * Space stage / unstage, S / U stage / unstage the hunk, ⌫ discard the hunk,
+ * Shift+⌫ the file, A stage all, C the commit message. Off in text fields.
  */
 export function workingKey(event: KeyboardEvent): WorkingAction | null {
   if (event.ctrlKey || event.metaKey || inTextField(event.target)) {
@@ -42,6 +44,9 @@ export function workingKey(event: KeyboardEvent): WorkingAction | null {
   }
   if (key === "Backspace") {
     return shift ? "discardFile" : "discardHunk";
+  }
+  if (shift && (key === "ArrowDown" || key === "ArrowUp")) {
+    return key === "ArrowDown" ? "extendDown" : "extendUp";
   }
   if (shift) {
     return null;

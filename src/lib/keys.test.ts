@@ -128,6 +128,8 @@ describe("workingKey", () => {
     const cases: [KeyboardEventInit, string][] = [
       [{ key: "ArrowDown" }, "down"],
       [{ key: "ArrowUp" }, "up"],
+      [{ key: "ArrowDown", shiftKey: true }, "extendDown"],
+      [{ key: "ArrowUp", shiftKey: true }, "extendUp"],
       [{ key: " " }, "toggle"],
       [{ key: "Backspace", shiftKey: true }, "discardFile"],
       [{ key: "Backspace" }, "discardHunk"],

@@ -1,10 +1,12 @@
 <script lang="ts">
   import type { Change, Entry, Head, LfsLock, MetaIssue, Side, Status } from "$lib/api";
+  import { fileKey, fileOrder, selectedPathsForSide } from "$lib/working";
 
   let {
     status,
     busy = false,
     selected = null,
+    selectedKeys = null,
     lastAction = null,
     metaIssues = [],
     locks = [],
@@ -13,6 +15,7 @@
     onstage,
     onunstage,
     onselectfile,
+    onclearselection,
     ondiscard,
     onlock,
     onunlock,
@@ -21,6 +24,8 @@
     busy?: boolean;
     /** The file whose diff is shown, and on which side. */
     selected?: { path: string; side: Side } | null;
+    /** All selected rows (`${side}:${path}`) when multi-selecting. */
+    selectedKeys?: ReadonlySet<string> | null;
     /** What Ctrl+Z would undo, named on the clean state (R1 state 5). */
     lastAction?: string | null;
     metaIssues?: MetaIssue[];
@@ -29,7 +34,8 @@
     locksSupported?: boolean;
     onstage: (paths: string[]) => void;
     onunstage: (paths: string[]) => void;
-    onselectfile?: (path: string, side: Side) => void;
+    onselectfile?: (path: string, side: Side, mods?: { ctrl: boolean; shift: boolean }) => void;
+    onclearselection?: () => void;
     /** Throws away unstaged changes; undoable with Ctrl+Z. */
     ondiscard?: (paths: string[]) => void;
     onlock?: (path: string) => void;
@@ -39,6 +45,39 @@
   const LETTER: Record<Change, string> = { added: "A", modified: "M", deleted: "D", typeChange: "T" };
 
   const lockByPath = $derived(new Map(locks.map((l) => [l.path, l])));
+
+  function isRowSelected(path: string, side: Side | null): boolean {
+    if (!side) {
+      return false;
+    }
+    if (selectedKeys && selectedKeys.size > 0) {
+      return selectedKeys.has(fileKey(path, side));
+    }
+    return selected?.path === path && selected.side === side;
+  }
+
+  const multiSide = $derived.by<Side | null>(() => {
+    if (!selectedKeys || selectedKeys.size < 2) {
+      return null;
+    }
+    const order = fileOrder(status);
+    if (selectedPathsForSide(order, selectedKeys, "unstaged").length > 1) {
+      return "unstaged";
+    }
+    if (selectedPathsForSide(order, selectedKeys, "staged").length > 1) {
+      return "staged";
+    }
+    return null;
+  });
+
+  const multiPaths = $derived(multiSide && selectedKeys ? selectedPathsForSide(fileOrder(status), selectedKeys, multiSide) : []);
+
+  function batchFor(path: string, side: Side | null): string[] {
+    if (side && multiSide === side && multiPaths.length > 1 && selectedKeys?.has(fileKey(path, side))) {
+      return multiPaths;
+    }
+    return [path];
+  }
 
   function isLfsPath(path: string): boolean {
     if (lfsPatterns.length === 0) {
@@ -138,6 +177,31 @@
     </div>
   {/if}
 
+  {#if multiPaths.length > 1 && multiSide}
+    <div class="selbar" role="region" aria-label="Selected files">
+      <span>{multiPaths.length} selected</span>
+      <span class="sel-acts">
+        {#if multiSide === "unstaged"}
+          <button type="button" class="pri sm" disabled={busy} onclick={() => onstage(multiPaths)}>
+            Stage {multiPaths.length}
+          </button>
+          {#if ondiscard}
+            <button type="button" class="sm" disabled={busy} onclick={() => ondiscard(multiPaths)}>
+              Discard {multiPaths.length}
+            </button>
+          {/if}
+        {:else}
+          <button type="button" class="pri sm" disabled={busy} onclick={() => onunstage(multiPaths)}>
+            Unstage {multiPaths.length}
+          </button>
+        {/if}
+        {#if onclearselection}
+          <button type="button" class="sm" disabled={busy} onclick={onclearselection}>Clear</button>
+        {/if}
+      </span>
+    </div>
+  {/if}
+
   {#each groups as group (group.title)}
     <h2 class="grp">
       {group.title} <span class="count">{group.rows.length}</span>
@@ -156,16 +220,31 @@
         {@const cut = entry.path.lastIndexOf("/") + 1}
         {@const lock = lockByPath.get(entry.path)}
         {@const lfs = isLfsPath(entry.path)}
-        <li>
+        {@const rowSelected = isRowSelected(entry.path, group.side)}
+        <li class:selected={rowSelected}>
           <span class="badge l-{letter === '?' ? 'q' : letter === '!' ? 'x' : letter}">{letter}</span>
           {#if group.side && onselectfile}
             {@const side = group.side}
             <button
               class="bare path"
+              data-file-row
               class:current={selected?.path === entry.path && selected.side === side}
-              aria-pressed={selected?.path === entry.path && selected.side === side}
+              aria-pressed={rowSelected}
               title={entry.path}
-              onclick={() => onselectfile(entry.path, side)}><span class="dir">{entry.path.slice(0, cut)}</span>{entry.path.slice(cut)}</button
+              onmousedown={(e) => {
+                if (e.shiftKey) {
+                  e.preventDefault();
+                }
+              }}
+              onclick={(e) => {
+                const ctrl = e.ctrlKey || e.metaKey;
+                const shift = e.shiftKey;
+                if (ctrl || shift) {
+                  onselectfile(entry.path, side, { ctrl, shift });
+                } else {
+                  onselectfile(entry.path, side);
+                }
+              }}><span class="dir">{entry.path.slice(0, cut)}</span>{entry.path.slice(cut)}</button
             >
           {:else}
             <span class="path" title={entry.path}><span class="dir">{entry.path.slice(0, cut)}</span>{entry.path.slice(cut)}</span>
@@ -198,12 +277,18 @@
             {/if}
           {/if}
           {#if group.side === "unstaged" && ondiscard}
-            <button class="act" disabled={busy} aria-label="Discard {entry.path}" onclick={() => ondiscard([entry.path])}
-              >Discard</button
+            <button
+              class="act"
+              disabled={busy}
+              aria-label="Discard {entry.path}"
+              onclick={() => ondiscard(batchFor(entry.path, group.side))}>Discard</button
             >
           {/if}
-          <button class="act" disabled={busy} aria-label="{group.verb} {entry.path}" onclick={() => group.act([entry.path])}
-            >{group.verb}</button
+          <button
+            class="act"
+            disabled={busy}
+            aria-label="{group.verb} {entry.path}"
+            onclick={() => group.act(batchFor(entry.path, group.side))}>{group.verb}</button
           >
         </li>
       {/each}
@@ -281,8 +366,35 @@
   li:hover {
     background: var(--hover);
   }
+  li.selected,
   li:has(.current) {
     background: var(--sel);
+  }
+  li.selected:has(.current) {
+    box-shadow: inset 2px 0 0 var(--l0);
+  }
+  .selbar {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 4px 10px;
+    background: var(--sel);
+    border-bottom: 1px solid var(--line);
+    font-size: 11px;
+  }
+  .sel-acts {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .sm {
+    height: 20px;
+    padding: 0 7px;
+    font-size: 11px;
   }
   .badge {
     all: unset;

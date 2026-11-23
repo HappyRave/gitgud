@@ -1,9 +1,21 @@
 <script lang="ts">
-  import type { CommitOptions, Hunk, LfsLock, LineSelect, MetaIssue, Status } from "$lib/api";
+  import type { CommitOptions, Hunk, LfsLock, LineSelect, MetaIssue, Side, Status } from "$lib/api";
   import { workingKey } from "$lib/keys";
+  import { prefs, setPaneSize } from "$lib/prefs.svelte";
   import { matchesLfsPattern } from "$lib/unity";
-  import { fileOrder, stepFile, type FileRef } from "$lib/working";
+  import {
+    applyFileClick,
+    extendFileSelection,
+    fileKey,
+    fileOrder,
+    selectedPathsForSide,
+    singleFileSelection,
+    stepFile,
+    type FileRef,
+    type FileSelection,
+  } from "$lib/working";
   import CommitBox from "./CommitBox.svelte";
+  import Splitter from "./Splitter.svelte";
   import StatusList from "./StatusList.svelte";
   import WorkingFileDiff from "./WorkingFileDiff.svelte";
 
@@ -62,8 +74,52 @@
   } = $props();
 
   let pane = $state<HTMLElement | null>(null);
+  let filesEl = $state<HTMLElement | null>(null);
+  let dragStartFilesH = 200;
+
+  function measuredFilesH(): number {
+    return prefs.panes.workingFilesHeight ?? (Math.round(filesEl?.getBoundingClientRect().height || 0) || 200);
+  }
+
+  function clampFilesHeight(h: number): number {
+    const maxH = Math.max(120, (pane?.clientHeight || 600) - 180);
+    return Math.max(96, Math.min(maxH, Math.round(h)));
+  }
   let diffView = $state<ReturnType<typeof WorkingFileDiff> | null>(null);
   let commitBox = $state<ReturnType<typeof CommitBox> | null>(null);
+
+  let anchor = $state<FileRef | null>(null);
+  let multiSide = $state<Side | null>(null);
+  let multiKeys = $state<Set<string>>(new Set());
+
+  const selectedKeys = $derived.by(() => {
+    const order = fileOrder(status);
+    const valid = new Set(order.map((f) => fileKey(f.path, f.side)));
+    if (!selected || !valid.has(fileKey(selected.path, selected.side))) {
+      return new Set<string>();
+    }
+    const out = new Set<string>();
+    if (multiSide === selected.side) {
+      for (const k of multiKeys) {
+        if (valid.has(k)) {
+          out.add(k);
+        }
+      }
+    }
+    out.add(fileKey(selected.path, selected.side));
+    return out;
+  });
+
+  function applySelection(next: FileSelection) {
+    selected = next.active;
+    anchor = next.anchor;
+    multiSide = next.active?.side ?? null;
+    multiKeys = next.keys;
+  }
+
+  function currentSelection(): FileSelection {
+    return { active: selected, anchor, keys: new Set(selectedKeys) };
+  }
 
   const stagedCount = $derived(status.entries.filter((e) => e.index).length);
 
@@ -87,8 +143,13 @@
     if (suspended || (target instanceof Node && target !== document.body && !pane?.contains(target))) {
       return;
     }
+    if (event.key === "Escape" && selectedKeys.size > 1 && selected) {
+      event.preventDefault();
+      applySelection(singleFileSelection(selected));
+      return;
+    }
     const action = workingKey(event);
-    if (!action || (action === "toggle" && target instanceof HTMLButtonElement)) {
+    if (!action || (action === "toggle" && target instanceof HTMLButtonElement && !target.hasAttribute("data-file-row"))) {
       return;
     }
     const order = fileOrder(status);
@@ -97,16 +158,22 @@
     switch (action) {
       case "down":
       case "up":
-        selected = stepFile(order, file, action === "down" ? 1 : -1);
+        applySelection(singleFileSelection(stepFile(order, file, action === "down" ? 1 : -1)));
+        break;
+      case "extendDown":
+      case "extendUp":
+        applySelection(extendFileSelection(order, currentSelection(), action === "extendDown" ? 1 : -1));
         break;
       case "toggle":
         if (file && !busy) {
-          (file.side === "staged" ? onunstage : onstage)([file.path]);
+          const paths = selectedPathsForSide(order, selectedKeys, file.side);
+          (file.side === "staged" ? onunstage : onstage)(paths.length ? paths : [file.path]);
         }
         break;
       case "discardFile":
         if (file?.side === "unstaged" && !busy) {
-          ondiscard([file.path]);
+          const paths = selectedPathsForSide(order, selectedKeys, "unstaged");
+          ondiscard(paths.length ? paths : [file.path]);
         }
         break;
       case "stageAll": {
@@ -136,11 +203,18 @@
 <svelte:window onkeydown={onKeydown} />
 
 <div class="wc" bind:this={pane} tabindex="-1" role="group" aria-label="Working copy pane">
-  <div class="files">
+  <div
+    class="files"
+    bind:this={filesEl}
+    style:height={selected && prefs.panes.workingFilesHeight != null ? `${prefs.panes.workingFilesHeight}px` : undefined}
+    style:flex={selected && prefs.panes.workingFilesHeight != null ? "none" : undefined}
+    style:max-height={selected && prefs.panes.workingFilesHeight != null ? "none" : undefined}
+  >
     <StatusList
       {status}
       {busy}
       {selected}
+      {selectedKeys}
       {lastAction}
       {metaIssues}
       {locks}
@@ -148,13 +222,23 @@
       {locksSupported}
       {onstage}
       {onunstage}
-      onselectfile={(path, side) => (selected = { path, side })}
+      onselectfile={(path, side, mods) => applySelection(applyFileClick(fileOrder(status), currentSelection(), { path, side }, mods))}
+      onclearselection={() => applySelection(singleFileSelection(null))}
       {ondiscard}
       {onlock}
       {onunlock}
     />
   </div>
   {#if selected}
+    <Splitter
+      orientation="horizontal"
+      label="Resize file list"
+      class="wc-split"
+      onstart={() => (dragStartFilesH = measuredFilesH())}
+      ondrag={(d) => setPaneSize("workingFilesHeight", clampFilesHeight(dragStartFilesH + d))}
+      onstep={(d) => setPaneSize("workingFilesHeight", clampFilesHeight(measuredFilesH() + d))}
+      onreset={() => setPaneSize("workingFilesHeight", null)}
+    />
     {@const file = selected}
     {@const suggestLock =
       locksSupported &&
@@ -223,6 +307,9 @@
   .diffbox > :global(section) {
     flex: 1;
   }
+  .diffbox > :global(.working-diff) {
+    border-top: 0;
+  }
   .diffbox :global(.diff) {
     flex: 1;
   }
@@ -263,8 +350,12 @@
       grid-template-columns: minmax(320px, 2fr) 3fr;
       grid-template-rows: minmax(0, 1fr) auto;
     }
+    :global(.wc-split) {
+      display: none;
+    }
     .files {
       grid-area: 1 / 1;
+      height: auto !important;
       max-height: none;
     }
     .hint {

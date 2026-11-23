@@ -20,6 +20,8 @@
     repoId,
     revision,
     busy = false,
+    workingOpen = false,
+    changesCount = 0,
     oplogOpen = false,
     merging = false,
     selectedStash = null,
@@ -29,6 +31,7 @@
     oncheckout,
     onmerge,
     onrebase,
+    onworking,
     onoplog,
     oncreatebranch,
     onrenamebranch,
@@ -65,6 +68,8 @@
     /** Changes after every write or outside change, so the lists reload. */
     revision: number;
     busy?: boolean;
+    workingOpen?: boolean;
+    changesCount?: number;
     oplogOpen?: boolean;
     /** A merge or rebase is in progress: no checkout, merge or rebase. */
     merging?: boolean;
@@ -75,6 +80,7 @@
     oncheckout: (branch: string) => void;
     /** "Merge into current" from a branch's context menu. */
     onmerge: (branch: string) => void;
+    onworking?: () => void;
     onoplog: () => void;
     oncreatebranch?: (at?: string) => void;
     onrenamebranch?: (branch: string) => void;
@@ -546,8 +552,15 @@
   {/if}
 
   <section aria-label="History">
-    <h3>History</h3>
+    <h3>Workspace</h3>
     <ul>
+      {#if onworking}
+        <li>
+          <button class="it" class:sel={workingOpen} aria-label="Working copy" aria-pressed={workingOpen} onclick={onworking}>
+            <span class="ic">✎</span>Working copy{#if changesCount > 0}<span class="wcount">{changesCount}</span>{/if}<span class="r">Ctrl+1</span>
+          </button>
+        </li>
+      {/if}
       <li>
         <button class="it" class:sel={oplogOpen} aria-label="Op log" aria-pressed={oplogOpen} onclick={onoplog}>
           <span class="ic">↶</span>Op log<span class="r">Ctrl+3</span>
@@ -650,6 +663,10 @@
   }
   .warn-ct {
     color: var(--warn-ink);
+  }
+  .wcount {
+    font: 600 10px var(--mono);
+    color: var(--l0);
   }
   .stack-grp {
     margin-bottom: 4px;

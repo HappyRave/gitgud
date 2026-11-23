@@ -3,10 +3,29 @@ const LAYOUT_KEY = "gitgud.diff.layout";
 const WS_KEY = "gitgud.diff.ignoreWs";
 const DENSITY_KEY = "gitgud.ui.density";
 const THEME_KEY = "gitgud.ui.theme";
+const PANES_KEY = "gitgud.ui.panes";
 
 export type DiffLayout = "auto" | "unified" | "split";
 export type Density = "standard" | "compact";
 export type ThemeMode = "system" | "light" | "dark";
+
+export interface PaneSizes {
+  sidebarWidth: number | null;
+  inspectorWidth: number | null;
+  librarySidebarWidth: number | null;
+  workingFilesHeight: number | null;
+  commitFilesHeight: number | null;
+  conflictListWidth: number | null;
+}
+
+const DEFAULT_PANES: PaneSizes = {
+  sidebarWidth: null,
+  inspectorWidth: null,
+  librarySidebarWidth: null,
+  workingFilesHeight: null,
+  commitFilesHeight: null,
+  conflictListWidth: null,
+};
 
 function readStorage(key: string): string | null {
   return typeof localStorage !== "undefined" ? localStorage.getItem(key) : null;
@@ -15,6 +34,30 @@ function readStorage(key: string): string | null {
 function writeStorage(key: string, value: string) {
   if (typeof localStorage !== "undefined") {
     localStorage.setItem(key, value);
+  }
+}
+
+function readPanes(): PaneSizes {
+  const raw = readStorage(PANES_KEY);
+  if (!raw) {
+    return { ...DEFAULT_PANES };
+  }
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const pick = (k: keyof PaneSizes) => {
+      const v = parsed?.[k];
+      return typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.round(v) : null;
+    };
+    return {
+      sidebarWidth: pick("sidebarWidth"),
+      inspectorWidth: pick("inspectorWidth"),
+      librarySidebarWidth: pick("librarySidebarWidth"),
+      workingFilesHeight: pick("workingFilesHeight"),
+      commitFilesHeight: pick("commitFilesHeight"),
+      conflictListWidth: pick("conflictListWidth"),
+    };
+  } catch {
+    return { ...DEFAULT_PANES };
   }
 }
 
@@ -37,7 +80,13 @@ export const prefs = $state({
   ignoreWhitespace: readStorage(WS_KEY) === "1",
   density: (storedDensity === "compact" ? "compact" : "standard") as Density,
   theme: (storedTheme === "light" || storedTheme === "dark" ? storedTheme : "system") as ThemeMode,
+  panes: readPanes(),
 });
+
+export function setPaneSize<K extends keyof PaneSizes>(key: K, value: number | null) {
+  prefs.panes[key] = value != null && Number.isFinite(value) && value > 0 ? Math.round(value) : null;
+  writeStorage(PANES_KEY, JSON.stringify(prefs.panes));
+}
 
 export function toggleSplit() {
   prefs.split = !prefs.split;

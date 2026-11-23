@@ -12,6 +12,7 @@
     onrestorefiles,
     onprune,
     onrestorereflog,
+    onclose,
   }: {
     repoId: number;
     /** Changes after every write, so the list reloads. */
@@ -26,6 +27,7 @@
     onrestorefiles: (entry: OpEntry) => void;
     onprune?: () => void;
     onrestorereflog?: (entry: ReflogEntry) => void;
+    onclose?: () => void;
   } = $props();
 
   let entries = $state<OpEntry[] | null>(null);
@@ -65,7 +67,17 @@
 </script>
 
 <section class="oplog" aria-label="Op log">
-  <h2 class="ph">Op log <span class="ct">· every action, discards included</span><span class="r">Ctrl+3</span></h2>
+  <h2 class="ph">
+    Op log <span class="ct">· every action, discards included</span>
+    <span class="r">
+      <span>Ctrl+3</span>
+      {#if onclose}
+        <button type="button" class="close" onclick={onclose} aria-label="Back to working copy" title="Back to working copy (Esc)"
+          >✕ Close</button
+        >
+      {/if}
+    </span>
+  </h2>
 
   {#if error}
     <p role="alert">{error}</p>
@@ -283,5 +295,15 @@
   }
   .mono {
     font-family: var(--mono);
+  }
+  .ph .r {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .close {
+    height: 20px;
+    padding: 0 7px;
+    font-size: 11px;
   }
 </style>

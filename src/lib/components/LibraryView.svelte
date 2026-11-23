@@ -16,7 +16,9 @@
     type LibrarySnapshot,
   } from "$lib/api";
   import ContextMenu, { type MenuItem } from "$lib/components/ContextMenu.svelte";
+  import Splitter from "$lib/components/Splitter.svelte";
   import { inTextField, opLogKey } from "$lib/keys";
+  import { prefs, setPaneSize } from "$lib/prefs.svelte";
   import {
     buildFolderTree,
     filterAndGroupRepos,
@@ -240,13 +242,30 @@
     if (host === "other") return "GIT";
     return "";
   }
+
+  let libBody = $state<HTMLElement | null>(null);
+  let libSideEl = $state<HTMLElement | null>(null);
+  let dragStartSideW = 230;
+
+  function measuredLibSideW(): number {
+    return prefs.panes.librarySidebarWidth ?? (Math.round(libSideEl?.getBoundingClientRect().width || 0) || 230);
+  }
+
+  function clampLibSidebar(w: number): number {
+    const maxW = Math.min(420, Math.max(160, (libBody?.clientWidth || 1200) - 360));
+    return Math.max(160, Math.min(maxW, Math.round(w)));
+  }
 </script>
 
 <svelte:window onkeydown={onKeydown} />
 
 <main class="app lib">
-  <div class="body">
-    <nav class="side" aria-label="Library navigation">
+  <div
+    class="body"
+    bind:this={libBody}
+    style:--lib-side-w={prefs.panes.librarySidebarWidth != null ? `${prefs.panes.librarySidebarWidth}px` : undefined}
+  >
+    <nav class="side" bind:this={libSideEl} aria-label="Library navigation">
       <section class="sec">
         <button
           type="button"
@@ -408,6 +427,15 @@
         {/each}
       </section>
     </nav>
+
+    <Splitter
+      orientation="vertical"
+      label="Resize library sidebar"
+      onstart={() => (dragStartSideW = measuredLibSideW())}
+      ondrag={(d) => setPaneSize("librarySidebarWidth", clampLibSidebar(dragStartSideW + d))}
+      onstep={(d) => setPaneSize("librarySidebarWidth", clampLibSidebar(measuredLibSideW() + d))}
+      onreset={() => setPaneSize("librarySidebarWidth", null)}
+    />
 
     <section class="main" aria-label="Repositories">
       <header class="top">
@@ -591,14 +619,14 @@
     background: var(--bg);
   }
   .body {
+    --lib-side-w: 230px;
     flex: 1;
     min-height: 0;
     display: grid;
-    grid-template-columns: 230px minmax(0, 1fr);
+    grid-template-columns: var(--lib-side-w) 5px minmax(0, 1fr);
   }
   .side {
     background: var(--panel);
-    border-right: 1px solid var(--line);
     overflow-y: auto;
     padding: 6px 0;
     display: grid;

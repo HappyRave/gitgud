@@ -115,4 +115,21 @@ describe("OpLogPanel", () => {
     await fireEvent.click(btn);
     expect(onprune).toHaveBeenCalledTimes(1);
   });
+
+  it("renders a Close button when onclose is provided", async () => {
+    mockCommands({ op_log: () => ENTRIES });
+    const onclose = vi.fn();
+    render(OpLogPanel, {
+      repoId: 2,
+      revision: 0,
+      onundo: vi.fn(),
+      onrestoreto: vi.fn(),
+      onrestorefiles: vi.fn(),
+      onclose,
+    });
+    await screen.findByText("Discard Engine.cs");
+
+    await fireEvent.click(screen.getByRole("button", { name: "Back to working copy" }));
+    expect(onclose).toHaveBeenCalledTimes(1);
+  });
 });
