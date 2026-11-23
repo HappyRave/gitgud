@@ -2042,6 +2042,7 @@ describe("start page: Milestone 2 Library & multi-tab workspace", () => {
             branch: "main",
             detached: false,
             dirtyCount: 0,
+            untrackedCount: 0,
             ahead: 0,
             behind: 0,
             fetchedAt: null,

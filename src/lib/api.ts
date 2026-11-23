@@ -569,6 +569,7 @@ export interface RepoSummary {
   branch: string | null;
   detached: boolean;
   dirtyCount: number;
+  untrackedCount: number;
   ahead: number;
   behind: number;
   fetchedAt: number | null;

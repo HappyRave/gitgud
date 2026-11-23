@@ -293,3 +293,15 @@ export function scoreRepoMatch(repo: LibraryRepo, folderLabel: string, query: st
   if (repo.pinned) score += 40;
   return score;
 }
+
+export function changesTitle(c: RepoSummary): string {
+  const tracked = c.dirtyCount - c.untrackedCount;
+  const parts: string[] = [];
+  if (tracked > 0) {
+    parts.push(`${tracked} modified`);
+  }
+  if (c.untrackedCount > 0) {
+    parts.push(`${c.untrackedCount} untracked`);
+  }
+  return parts.join(" · ");
+}

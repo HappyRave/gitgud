@@ -21,6 +21,7 @@
   import { prefs, setPaneSize } from "$lib/prefs.svelte";
   import {
     buildFolderTree,
+    changesTitle,
     filterAndGroupRepos,
     pathKey,
     smartCounts,
@@ -534,7 +535,7 @@
                   {#if missing}
                     <span class="bad" title="Repository folder missing">⚠</span>
                   {:else if c && c.dirtyCount > 0}
-                    <span class="dot" title="{c.dirtyCount} uncommitted changes"></span>
+                    <span class="dot" class:hollow={c.dirtyCount === c.untrackedCount} title={changesTitle(c)}></span>
                   {:else if isOpen}
                     <span class="ab" title="Open in tab">⇥</span>
                   {/if}
@@ -565,7 +566,13 @@
                   {/if}
                 </span>
                 <span class="br">{c?.branch ?? "—"}</span>
-                <span class="ch">{c && c.dirtyCount > 0 ? `${c.dirtyCount} changed` : ""}</span>
+                <span class="ch" title={c && c.dirtyCount > 0 ? changesTitle(c) : undefined}>
+                  {#if c && c.dirtyCount > c.untrackedCount}
+                    {c.dirtyCount} changed
+                  {:else if c && c.untrackedCount > 0}
+                    {c.untrackedCount} untracked
+                  {/if}
+                </span>
                 <span class="ab2" title={c?.fetchedAt ? `Last fetched ${age(c.fetchedAt)} ago` : undefined}>
                   {#if c && (c.ahead || c.behind)}
                     {c.ahead ? `↑${c.ahead} ` : ""}{c.behind ? `↓${c.behind}` : ""}{#if c.behind && c.fetchedAt} · {age(c.fetchedAt)}{/if}
@@ -799,6 +806,10 @@
     height: 7px;
     border-radius: 50%;
     background: var(--l0);
+  }
+  .dot.hollow {
+    background: none;
+    box-shadow: inset 0 0 0 1.5px var(--l0);
   }
   .nm {
     display: flex;

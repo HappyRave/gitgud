@@ -32,6 +32,7 @@ fn library_crud_persistence_and_undo_redo() {
     .unwrap();
     repo_b.commit_all("add unity settings");
     repo_b.write("dirty.txt", "wip");
+    repo_b.write("b.txt", "edited");
 
     let store = LibraryStore::load(lib_file.clone()).unwrap();
     let snap = store
@@ -72,7 +73,8 @@ fn library_crud_persistence_and_undo_redo() {
 
     let sum_b = summaries.iter().find(|s| s.is_unity).unwrap();
     assert!(!sum_b.missing);
-    assert_eq!(sum_b.dirty_count, 1);
+    assert_eq!(sum_b.dirty_count, 2);
+    assert_eq!(sum_b.untracked_count, 1);
 
     // Pin, move, rename folder, delete folder re-parents repos, undo/redo restores.
     let id_a = snap.state.repos[0].id.clone();

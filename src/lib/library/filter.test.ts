@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { LibraryFolder, LibraryRepo } from "$lib/api";
 import {
   buildFolderTree,
+  changesTitle,
   descendantFolderIds,
   filterAndGroupRepos,
   folderPathLabel,
@@ -29,6 +30,7 @@ const mkRepo = (id: string, name: string, folderId: string | null, over: Partial
     branch: "main",
     detached: false,
     dirtyCount: 0,
+    untrackedCount: 0,
     ahead: 0,
     behind: 0,
     fetchedAt: null,
@@ -53,6 +55,7 @@ const REPOS: LibraryRepo[] = [
       branch: "develop",
       detached: false,
       dirtyCount: 2,
+      untrackedCount: 0,
       ahead: 1,
       behind: 0,
       fetchedAt: null,
@@ -72,6 +75,7 @@ const REPOS: LibraryRepo[] = [
       branch: null,
       detached: false,
       dirtyCount: 0,
+      untrackedCount: 0,
       ahead: 0,
       behind: 0,
       fetchedAt: null,
@@ -132,5 +136,16 @@ describe("library filter & tree helpers", () => {
     const openBonus = scoreRepoMatch(REPOS[1], "Tools", "git", true)!;
     const closedScore = scoreRepoMatch(REPOS[1], "Tools", "git", false)!;
     expect(openBonus).toBeGreaterThan(closedScore);
+  });
+});
+
+describe("changesTitle", () => {
+  const summary = (dirtyCount: number, untrackedCount: number) =>
+    mkRepo("r", "r", null, { cached: { ...mkRepo("r", "r", null).cached!, dirtyCount, untrackedCount } }).cached!;
+
+  it("splits modified from untracked", () => {
+    expect(changesTitle(summary(3, 1))).toBe("2 modified · 1 untracked");
+    expect(changesTitle(summary(3, 0))).toBe("3 modified");
+    expect(changesTitle(summary(2, 2))).toBe("2 untracked");
   });
 });

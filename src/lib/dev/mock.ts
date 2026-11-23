@@ -80,6 +80,7 @@ export function installMock(scenario: string) {
           branch: "master",
           detached: false,
           dirtyCount: 3,
+          untrackedCount: 1,
           ahead: 1,
           behind: 0,
           fetchedAt: now - 300,

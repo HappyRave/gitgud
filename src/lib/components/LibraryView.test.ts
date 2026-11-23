@@ -27,6 +27,7 @@ const SNAP: LibrarySnapshot = {
         branch: "develop",
         detached: false,
         dirtyCount: 4,
+        untrackedCount: 1,
         ahead: 1,
         behind: 2,
         fetchedAt: 900,
@@ -52,6 +53,7 @@ const SNAP: LibrarySnapshot = {
         branch: null,
         detached: false,
         dirtyCount: 0,
+        untrackedCount: 0,
         ahead: 0,
         behind: 0,
         fetchedAt: null,
@@ -108,6 +110,24 @@ function setup(snap = SNAP) {
 }
 
 describe("LibraryView", () => {
+  it("draws a hollow dot when a repo only has untracked files", () => {
+    const repo = SNAP.repos[0];
+    setup({
+      ...SNAP,
+      repos: [{ ...repo, cached: { ...repo.cached!, dirtyCount: 2, untrackedCount: 2 } }],
+    });
+    const [dot, cell] = screen.getAllByTitle("2 untracked");
+    expect(dot).toHaveClass("dot", "hollow");
+    expect(cell).toHaveTextContent("2 untracked");
+  });
+
+  it("draws a solid dot when tracked files changed", () => {
+    setup();
+    const [dot, cell] = screen.getAllByTitle("3 modified · 1 untracked");
+    expect(dot).not.toHaveClass("hollow");
+    expect(cell).toHaveTextContent("4 changed");
+  });
+
   it("filters by smart filter, creates folders, handles missing Locate, fetch visible, and Ctrl+Z undo", async () => {
     const { calls, onopen, onlocate, onfetchvisible, onlibrarychange } = setup();
 

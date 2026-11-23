@@ -36,6 +36,8 @@ pub struct RepoSummary {
     pub branch: Option<String>,
     pub detached: bool,
     pub dirty_count: usize,
+    #[serde(default)]
+    pub untracked_count: usize,
     pub ahead: u32,
     pub behind: u32,
     pub fetched_at: Option<i64>,
@@ -764,6 +766,7 @@ pub fn inspect_repo_summary(path: &Path, prev_locks: Option<(usize, Option<i64>)
             branch: None,
             detached: false,
             dirty_count: 0,
+            untracked_count: 0,
             ahead: 0,
             behind: 0,
             fetched_at: None,
@@ -784,7 +787,12 @@ pub fn inspect_repo_summary(path: &Path, prev_locks: Option<(usize, Option<i64>)
         Some(repo::Head::Detached { id }) => (Some(id.clone()), true),
         None => (None, false),
     };
-    let dirty_count = status.map_or(0, |s| s.entries.len());
+    let entries = status.as_ref().map_or(&[][..], |s| &s.entries[..]);
+    let dirty_count = entries.len();
+    let untracked_count = entries
+        .iter()
+        .filter(|e| e.kind == repo::EntryKind::Untracked)
+        .count();
 
     let gix_repo = repo.gix();
     let (ahead, behind) = local_head_ahead_behind(&gix_repo);
@@ -805,6 +813,7 @@ pub fn inspect_repo_summary(path: &Path, prev_locks: Option<(usize, Option<i64>)
         branch,
         detached,
         dirty_count,
+        untracked_count,
         ahead,
         behind,
         fetched_at,
