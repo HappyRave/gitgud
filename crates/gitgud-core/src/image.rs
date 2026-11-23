@@ -831,14 +831,20 @@ mod tests {
             .write_to(&mut Cursor::new(&mut exr_bytes), ImageFormat::OpenExr)
             .unwrap();
         let exr_png = decode_hdr_format_to_png(&exr_bytes, ImageFormat::OpenExr).unwrap();
-        assert_eq!(image::load_from_memory(&exr_png).unwrap().dimensions(), (2, 2));
+        assert_eq!(
+            image::load_from_memory(&exr_png).unwrap().dimensions(),
+            (2, 2)
+        );
 
         let mut hdr_bytes = Vec::new();
         hdr_img
             .write_to(&mut Cursor::new(&mut hdr_bytes), ImageFormat::Hdr)
             .unwrap();
         let hdr_png = decode_hdr_format_to_png(&hdr_bytes, ImageFormat::Hdr).unwrap();
-        assert_eq!(image::load_from_memory(&hdr_png).unwrap().dimensions(), (2, 2));
+        assert_eq!(
+            image::load_from_memory(&hdr_png).unwrap().dimensions(),
+            (2, 2)
+        );
 
         // 4) TIFF
         let tiff_img = image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(

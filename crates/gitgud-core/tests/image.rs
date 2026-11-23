@@ -103,8 +103,9 @@ fn large_unhydrated_lfs_pointer_refuses_auto_fetch_and_prompts_fetch() {
     let repo = TestRepo::init();
     let oid = "cd".repeat(32);
     let large_size = gitgud_core::lfs::AUTO_FETCH_MAX_BYTES + 1024;
-    let pointer =
-        format!("version https://git-lfs.github.com/spec/v1\noid sha256:{oid}\nsize {large_size}\n");
+    let pointer = format!(
+        "version https://git-lfs.github.com/spec/v1\noid sha256:{oid}\nsize {large_size}\n"
+    );
     repo.write("big.png", &pointer).commit_all("large lfs");
     repo.git(&["remote", "add", "origin", "https://example.invalid/r.git"]);
     let r = repo::open(repo.path()).unwrap();

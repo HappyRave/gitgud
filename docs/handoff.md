@@ -39,15 +39,16 @@ Written 2026-11-22, updated 2026-11-23 (through `62c6239`, v0.1.2) for the next 
 
 The v0.1.1 / v0.1.2 commits don't record which checks ran; re-run the full list below before trusting them.
 
-## Latest verified checks (at `3aa28c1`; E2E at `4a739be`)
+## Latest verified checks (v0.1.2, `62c6239`, run 2026-11-23)
 
-- `pnpm check` (`svelte-check`): **0 errors, 0 warnings**
-- `pnpm vitest run`: **43 test files / 339 tests passed**
-- `pnpm build`: clean `@sveltejs/adapter-static` production bundle (`build/`)
-- `cargo fmt --all --check`: passed
+- `pnpm check` (`svelte-check`): **0 errors, 0 warnings** (484 files)
+- `pnpm vitest run`: **47 test files / 362 tests passed**
+- `cargo fmt --all --check`: passed after formatting v0.1.2's unformatted `image.rs`, `lfs.rs`, `session.rs`, `tests/diff.rs`, `tests/image.rs`
 - `cargo clippy --workspace --all-targets -- -D warnings`: passed (0 warnings)
 - `cargo test -p gitgud-core --test fetch -- --test-threads=1`: **6 passed**
-- `cargo test --workspace -- --test-threads=2 --skip cancel_kills_git_and_everything_it_started`: passed (`gitgud_lib` 35/35, `gitgud_cli` `cli_and_mcp` 2/2, `gitgud_core` lib 56/56, `stacks` 1/1, `worktrees` 2/2, plus all existing core integration suites)
+- `cargo test --workspace -- --test-threads=2 --skip cancel_kills_git_and_everything_it_started`: passed (`gitgud_lib` 36/36, `cli_and_mcp` 3/3, `gitgud_core` lib 58/58, all 31 core integration suites)
+- `pnpm e2e`: **33/33 passed** in 84.6 s; 10k-commit open + first rows **97.4 ms** (≤ 300), outside edit visible **201 ms** (≤ 300)
+- `pnpm build` not re-run separately since `3aa28c1`
 
 ## Known caveats & conventions
 
@@ -78,7 +79,6 @@ The v0.1.1 / v0.1.2 commits don't record which checks ran; re-run the full list 
 
 ## Things to do next (recommended first session order)
 
-1. Re-run the full check list on v0.1.2 (fmt, clippy, cargo tests, `pnpm check`, vitest, `pnpm e2e`) and update "Latest verified checks".
-2. Build with `pnpm package` and test `target/release/bundle/nsis/gitgud_0.1.2_x64-setup.exe` interactively on a Windows user profile (install, CLI `PATH`, uninstall).
-3. Start `pnpm tauri dev`, open a real Unity + LFS repo plus a multi-repo Library folder, and do a structured walkthrough of M1–M9 themes/density, WebView2 accelerator keys (`Ctrl+P`/`Ctrl+F`/`Ctrl+R`), Settings' **Local latency** timings, and the v0.1.1/v0.1.2 pieces (splitters, multi-select staging, texture viewer on real DDS/EXR/PSD, LFS auto-fetch, LFS conflict inspector).
-4. Address any layout polish or Unity YAML parser edge cases uncovered on real `.unity`/`.prefab` assets, plus live GitHub/Bitbucket remote LFS lock checks (`O1`) and Sourcetree baseline (`O9`).
+1. Build with `pnpm package` and test `target/release/bundle/nsis/gitgud_0.1.2_x64-setup.exe` interactively on a Windows user profile (install, CLI `PATH`, uninstall).
+2. Start `pnpm tauri dev`, open a real Unity + LFS repo plus a multi-repo Library folder, and do a structured walkthrough of M1–M9 themes/density, WebView2 accelerator keys (`Ctrl+P`/`Ctrl+F`/`Ctrl+R`), Settings' **Local latency** timings, and the v0.1.1/v0.1.2 pieces (splitters, multi-select staging, texture viewer on real DDS/EXR/PSD, LFS auto-fetch, LFS conflict inspector).
+3. Address any layout polish or Unity YAML parser edge cases uncovered on real `.unity`/`.prefab` assets, plus live GitHub/Bitbucket remote LFS lock checks (`O1`) and Sourcetree baseline (`O9`).

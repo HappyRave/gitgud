@@ -1759,10 +1759,7 @@ impl Session {
         let git = self.git()?;
         let normalized = oid.trim().to_ascii_lowercase();
         let gate = {
-            let mut map = self
-                .lfs_fetches
-                .lock()
-                .expect("lfs fetches lock poisoned");
+            let mut map = self.lfs_fetches.lock().expect("lfs fetches lock poisoned");
             Arc::clone(
                 map.entry((id, normalized.clone()))
                     .or_insert_with(|| Arc::new(Mutex::new(()))),

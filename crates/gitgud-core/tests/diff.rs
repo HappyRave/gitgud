@@ -316,8 +316,14 @@ fn binary_files_have_no_hunks() {
     assert!(diff.binary);
     assert!(diff.hunks.is_empty());
     let meta = diff.binary_meta.unwrap();
-    assert_eq!(meta.before.as_ref().map(|s| (s.size, s.lfs, s.hydrated)), Some((4, false, true)));
-    assert_eq!(meta.after.as_ref().map(|s| (s.size, s.lfs, s.hydrated)), Some((3, false, true)));
+    assert_eq!(
+        meta.before.as_ref().map(|s| (s.size, s.lfs, s.hydrated)),
+        Some((4, false, true))
+    );
+    assert_eq!(
+        meta.after.as_ref().map(|s| (s.size, s.lfs, s.hydrated)),
+        Some((3, false, true))
+    );
 }
 
 #[test]
@@ -325,8 +331,10 @@ fn lfs_pointers_diff_as_binary_with_hydration_meta() {
     let repo = TestRepo::init();
     let oid1 = "1".repeat(64);
     let oid2 = "2".repeat(64);
-    let ptr1 = format!("version https://git-lfs.github.com/spec/v1\noid sha256:{oid1}\nsize 1024\n");
-    let ptr2 = format!("version https://git-lfs.github.com/spec/v1\noid sha256:{oid2}\nsize 2048\n");
+    let ptr1 =
+        format!("version https://git-lfs.github.com/spec/v1\noid sha256:{oid1}\nsize 1024\n");
+    let ptr2 =
+        format!("version https://git-lfs.github.com/spec/v1\noid sha256:{oid2}\nsize 2048\n");
 
     repo.write("Art/Hero.png", &ptr1).commit_all("add lfs");
     repo.write("Art/Hero.png", &ptr2).commit_all("update lfs");

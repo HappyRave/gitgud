@@ -132,7 +132,8 @@ pub fn lfs_fetch_object(
         return Ok(false);
     }
 
-    let pointer = format!("version https://git-lfs.github.com/spec/v1\noid sha256:{lower}\nsize {size}\n");
+    let pointer =
+        format!("version https://git-lfs.github.com/spec/v1\noid sha256:{lower}\nsize {size}\n");
     let mut args = vec![
         "-c",
         "lfs.fetchinclude=",
@@ -154,7 +155,10 @@ pub fn lfs_fetch_object(
     if !lfs_is_hydrated(repo, &lower) {
         return Err(Error::Command {
             command: "git lfs smudge".into(),
-            message: format!("LFS object {} was not downloaded into local cache", &lower[..12]),
+            message: format!(
+                "LFS object {} was not downloaded into local cache",
+                &lower[..12]
+            ),
         });
     }
     Ok(true)
