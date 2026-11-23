@@ -530,6 +530,13 @@ pub fn diff_unity_yaml(
     }
 }
 
+// LFS pointers become the locally cached object; never downloads (a missing one is Refused).
+fn resolve_lfs(repo: &Repo, path: &str, bytes: Option<Vec<u8>>) -> Result<Option<Vec<u8>>, Error> {
+    bytes
+        .map(|b| repo.lfs_resolve_with_fetch(None, path, b, 0))
+        .transpose()
+}
+
 /// Builds the structural diff for a working-copy Unity YAML file (staged or unstaged).
 ///
 /// # Errors
@@ -543,17 +550,15 @@ pub fn worktree_unity_diff(
         return Err(Error::Refused(format!("{path} is not a Unity YAML file")));
     }
     let versions = repo.versions(path, side)?;
-    let old_bytes = versions.old.as_deref().unwrap_or(&[]);
-    let new_bytes = versions.new.as_deref().unwrap_or(&[]);
+    let old = resolve_lfs(repo, path, versions.old)?;
+    let new = resolve_lfs(repo, path, versions.new)?;
+    let old_bytes = old.as_deref().unwrap_or(&[]);
+    let new_bytes = new.as_deref().unwrap_or(&[]);
     if is_binary(old_bytes) || is_binary(new_bytes) {
         return Err(Error::Refused(format!("{path} is binary")));
     }
-    let old_s = versions
-        .old
-        .map(|b| String::from_utf8_lossy(&b).into_owned());
-    let new_s = versions
-        .new
-        .map(|b| String::from_utf8_lossy(&b).into_owned());
+    let old_s = old.map(|b| String::from_utf8_lossy(&b).into_owned());
+    let new_s = new.map(|b| String::from_utf8_lossy(&b).into_owned());
     if !old_s.as_deref().is_some_and(|s| s.contains("--- !u!"))
         && !new_s.as_deref().is_some_and(|s| s.contains("--- !u!"))
     {
@@ -579,13 +584,15 @@ pub fn commit_unity_diff(repo: &Repo, id: &str, path: &str) -> Result<UnityYamlD
         return Err(Error::Refused(format!("{path} is not a Unity YAML file")));
     }
     let v = repo.commit_file_versions(id, path)?;
-    let old_bytes = v.old.as_deref().unwrap_or(&[]);
-    let new_bytes = v.new.as_deref().unwrap_or(&[]);
+    let old = resolve_lfs(repo, path, v.old)?;
+    let new = resolve_lfs(repo, path, v.new)?;
+    let old_bytes = old.as_deref().unwrap_or(&[]);
+    let new_bytes = new.as_deref().unwrap_or(&[]);
     if is_binary(old_bytes) || is_binary(new_bytes) {
         return Err(Error::Refused(format!("{path} is binary")));
     }
-    let old_s = v.old.map(|b| String::from_utf8_lossy(&b).into_owned());
-    let new_s = v.new.map(|b| String::from_utf8_lossy(&b).into_owned());
+    let old_s = old.map(|b| String::from_utf8_lossy(&b).into_owned());
+    let new_s = new.map(|b| String::from_utf8_lossy(&b).into_owned());
     if !old_s.as_deref().is_some_and(|s| s.contains("--- !u!"))
         && !new_s.as_deref().is_some_and(|s| s.contains("--- !u!"))
     {

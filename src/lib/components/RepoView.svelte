@@ -644,7 +644,9 @@
   }
 
   function guardedCheckout(branch: string) {
-    guardAssets(`Check out ${branch}`, `HEAD..${branch}`, () => write((id) => checkout(id, branch)));
+    guardAssets(`Check out ${branch}`, `HEAD..${branch}`, () =>
+      write((id) => checkout(id, branch), undefined, `Checking out ${branch}…`),
+    );
   }
 
   async function onLockFile(filePath: string) {
@@ -683,29 +685,39 @@
     error = null;
     try {
       unityState = await unityConfigureSmartMerge(id, null);
-      await write((rid) => unityRemergeConflicts(rid), "Configured Smart Merge and re-merged Unity files");
+      await write((rid) => unityRemergeConflicts(rid), "Configured Smart Merge and re-merged Unity files", "Re-merging Unity files…");
     } catch (err) {
       error = String(err);
     }
   }
 
   function runRemergeUnity() {
-    write((id) => unityRemergeConflicts(id), "Re-merged Unity files with UnityYAMLMerge");
+    write((id) => unityRemergeConflicts(id), "Re-merged Unity files with UnityYAMLMerge", "Re-merging Unity files…");
   }
 
   function onConfirmVerify(filePath: string, fileId: string | null, property: string | null, confirmed: boolean) {
-    write((id) => unityConfirmVerify(id, filePath, fileId, property, confirmed));
+    write((id) => unityConfirmVerify(id, filePath, fileId, property, confirmed), undefined, "Saving check…");
+  }
+
+  const partLabel = { stage: "Staging", unstage: "Unstaging", discard: "Discarding" };
+
+  const files = (paths: string[]) => (paths.length === 1 ? paths[0] : `${paths.length} files`);
+
+  function stashWrite(kind: "apply" | "pop" | "drop", idx: number) {
+    const run = { apply: stashApply, pop: stashPop, drop: stashDrop }[kind];
+    const [doing, done] = { apply: ["Applying", "Applied"], pop: ["Popping", "Popped"], drop: ["Dropping", "Dropped"] }[kind];
+    return write((id) => run(id, idx), `${done} stash@{${idx}} · Ctrl+Z undoes it`, `${doing} stash@{${idx}}…`);
   }
 
   function onHunk(filePath: string, action: "stage" | "unstage" | "discard", hunk: Hunk) {
     const header = hunkHeader(hunk);
     const run = { stage: stageHunk, unstage: unstageHunk, discard: discardHunk }[action];
-    write((id) => run(id, filePath, header));
+    write((id) => run(id, filePath, header), undefined, `${partLabel[action]} hunk…`);
   }
 
   function onLines(filePath: string, action: "stage" | "unstage" | "discard", select: LineSelect) {
     const run = { stage: stageLines, unstage: unstageLines, discard: discardLines }[action];
-    write((id) => run(id, filePath, select));
+    write((id) => run(id, filePath, select), undefined, `${partLabel[action]} lines…`);
   }
 
   function handleErrorFix(fix: FixId) {
@@ -723,7 +735,7 @@
     } else if (fix === "forcePush") {
       pushAsk = { initialForce: true };
     } else if (fix === "abortMerge") {
-      write((id) => mergeAbort(id), "Merge aborted · Ctrl+Z brings it back");
+      write((id) => mergeAbort(id), "Merge aborted · Ctrl+Z brings it back", "Aborting merge…");
     }
   }
 
@@ -780,15 +792,21 @@
   let queue: Promise<unknown> = Promise.resolve();
   let pending = $state(0);
   const busy = $derived(pending > 0);
+  let working = $state("Working…");
 
-  function enqueue<T>(job: () => Promise<T>): Promise<T> {
+  function enqueue<T>(job: () => Promise<T>, label: string): Promise<T> {
     pending++;
-    const run = queue.then(job).finally(() => pending--);
+    const run = queue
+      .then(() => {
+        working = label;
+        return job();
+      })
+      .finally(() => pending--);
     queue = run.catch(() => {});
     return run;
   }
 
-  function write(run: (id: number) => Promise<Opened>, done?: string): Promise<boolean> {
+  function write(run: (id: number) => Promise<Opened>, done: string | undefined, label: string): Promise<boolean> {
     return enqueue(async () => {
       if (!opened) {
         return false;
@@ -803,7 +821,7 @@
         error = String(err);
         return false;
       }
-    });
+    }, label);
   }
 
   let notice = $state<string | null>(null);
@@ -822,7 +840,7 @@
       } catch (err) {
         error = String(err);
       }
-    });
+    }, kind === "undo" ? "Undoing…" : "Redoing…");
   }
 
   let fetching = $state<{ op: TaskOp; progress: Progress | null } | null>(null);
@@ -951,14 +969,14 @@
       } catch (err) {
         error = String(err);
       }
-    });
+    }, "Restoring…");
   }
 
   async function startMerge(branch: string) {
     mergeAsk = null;
     const into = branchName;
     guardAssets(`Merge ${branch} into ${into}`, `HEAD...${branch}`, async () => {
-      if ((await write((id) => merge(id, branch))) && !merging) {
+      if ((await write((id) => merge(id, branch), undefined, `Merging ${branch} into ${into}…`)) && !merging) {
         notice = `Merged ${branch} into ${into}`;
       }
     });
@@ -967,7 +985,7 @@
   async function resolveFile(filePath: string, how: string, run: (id: number) => Promise<Opened>) {
     const before = resolvedHow.get(filePath);
     resolvedHow.set(filePath, how);
-    const ok = await write(run);
+    const ok = await write(run, undefined, `Resolving ${filePath}…`);
     if (!ok) {
       if (before === undefined) {
         resolvedHow.delete(filePath);
@@ -991,7 +1009,7 @@
     const unconfirmed =
       merging?.unityVerify?.some((f) => f.verify.some((v) => !v.confirmed)) ?? false;
     if (mergeLeft === 0 && !unconfirmed && mergeDraft.trim()) {
-      write((id) => mergeCommit(id, mergeDraft), "Merge committed · Ctrl+Z undoes it");
+      write((id) => mergeCommit(id, mergeDraft), "Merge committed · Ctrl+Z undoes it", "Committing merge…");
     }
   }
 
@@ -999,7 +1017,7 @@
     rebaseAsk = null;
     const branch = branchName;
     guardAssets(`Rebase ${branch} onto ${onto}`, `${onto}...HEAD`, async () => {
-      if ((await write((id) => rebase(id, onto))) && !rebasing) {
+      if ((await write((id) => rebase(id, onto), undefined, `Rebasing ${branch} onto ${onto}…`)) && !rebasing) {
         notice = `Rebased ${branch} onto ${onto} · Ctrl+Z undoes it`;
       }
     });
@@ -1031,7 +1049,7 @@
       return;
     }
     const plan = planning.plan;
-    const ok = await write((id) => runPlan(id, run.onto, plan.base, steps(run.rows), run.updateRefs));
+    const ok = await write((id) => runPlan(id, run.onto, plan.base, steps(run.rows), run.updateRefs), undefined, "Rewriting history…");
     if (!ok) {
       return;
     }
@@ -1068,7 +1086,11 @@
     } else {
       const done = edit === "fixup" ? `Folded "${row.subject}" into its parent` : `Dropped "${row.subject}"`;
       const branch = currentBranch;
-      const ok = await write((id) => quickEdit(id, row.id, edit), `${done} · Ctrl+Z undoes it`);
+      const ok = await write(
+        (id) => quickEdit(id, row.id, edit),
+        `${done} · Ctrl+Z undoes it`,
+        edit === "fixup" ? `Folding "${row.subject}" into its parent…` : `Dropping "${row.subject}"…`,
+      );
       if (ok && branch?.upstream) {
         planDone = {
           branch: branch.name,
@@ -1100,7 +1122,7 @@
       }
       const message = detail.body ? `${subject}\n\n${detail.body}` : subject;
       const branch = currentBranch;
-      const ok = await write((id) => rewordHead(id, message), "Reworded · Ctrl+Z undoes it");
+      const ok = await write((id) => rewordHead(id, message), "Reworded · Ctrl+Z undoes it", "Rewording…");
       if (ok && branch?.upstream) {
         planDone = {
           branch: branch.name,
@@ -1154,7 +1176,8 @@
 
   async function stepRebase(step: RebaseStep) {
     const done = { continue: "Rebase finished", skip: "Rebase finished", abort: "Rebase aborted · Ctrl+Z brings it back" }[step];
-    if ((await write((id) => rebaseStep(id, step))) && !rebasing) {
+    const label = { continue: "Continuing rebase…", skip: "Skipping commit…", abort: "Aborting rebase…" }[step];
+    if ((await write((id) => rebaseStep(id, step), undefined, label)) && !rebasing) {
       notice = done;
     }
   }
@@ -1162,7 +1185,8 @@
   async function stepSequencer(step: SequencerStep) {
     const verb = sequencer?.kind === "revert" ? "Revert" : "Cherry-pick";
     const done = step === "continue" ? `${verb} finished · Ctrl+Z undoes it` : `${verb} aborted · Ctrl+Z brings it back`;
-    if ((await write((id) => sequencerStep(id, step))) && !sequencer) {
+    const label = step === "continue" ? `Continuing ${verb.toLowerCase()}…` : `Aborting ${verb.toLowerCase()}…`;
+    if ((await write((id) => sequencerStep(id, step), undefined, label)) && !sequencer) {
       notice = done;
     }
   }
@@ -1174,11 +1198,23 @@
       return;
     }
     if (ask.mode === "create") {
-      await write((id) => createBranch(id, name, ask.at ?? null, checkoutNew), `Created ${name} · Ctrl+Z undoes it`);
+      await write(
+        (id) => createBranch(id, name, ask.at ?? null, checkoutNew),
+        `Created ${name} · Ctrl+Z undoes it`,
+        `Creating ${name}…`,
+      );
     } else if (ask.mode === "rename" && ask.currentName) {
-      await write((id) => renameBranch(id, ask.currentName!, name), `Renamed ${ask.currentName} to ${name} · Ctrl+Z undoes it`);
+      await write(
+        (id) => renameBranch(id, ask.currentName!, name),
+        `Renamed ${ask.currentName} to ${name} · Ctrl+Z undoes it`,
+        `Renaming ${ask.currentName}…`,
+      );
     } else if (ask.mode === "checkoutRemote" && ask.remoteBranch) {
-      await write((id) => checkoutRemote(id, ask.remoteBranch!, name), `Checked out ${name} · Ctrl+Z undoes it`);
+      await write(
+        (id) => checkoutRemote(id, ask.remoteBranch!, name),
+        `Checked out ${name} · Ctrl+Z undoes it`,
+        `Checking out ${name}…`,
+      );
     }
   }
 
@@ -1188,11 +1224,11 @@
     if (!ask) {
       return;
     }
-    await write((id) => createTag(id, name, ask.target, message), `Created tag ${name}`);
+    await write((id) => createTag(id, name, ask.target, message), `Created tag ${name}`, `Creating tag ${name}…`);
   }
 
   function onDeleteTag(name: string) {
-    return write((id) => deleteTag(id, name), `Deleted tag ${name}`);
+    return write((id) => deleteTag(id, name), `Deleted tag ${name}`, `Deleting tag ${name}…`);
   }
 
   function onPushTag(remote: string, name: string) {
@@ -1207,7 +1243,7 @@
       } catch (err) {
         error = String(err);
       }
-    });
+    }, `Pushing tag ${name} to ${remote}…`);
   }
 
   function onDeleteRemoteTag(remote: string, name: string) {
@@ -1222,7 +1258,7 @@
       } catch (err) {
         error = String(err);
       }
-    });
+    }, `Deleting tag ${name} on ${remote}…`);
   }
 
   function pruneOpLog() {
@@ -1238,7 +1274,7 @@
       } catch (err) {
         error = String(err);
       }
-    });
+    }, "Pruning op log…");
   }
 
   function optimizeCommitGraph() {
@@ -1253,7 +1289,7 @@
       } catch (err) {
         error = String(err);
       }
-    });
+    }, "Writing commit-graph cache…");
   }
 
   function inspectCommit(commitId: string) {
@@ -1274,6 +1310,7 @@
     const ok = await write(
       (id) => proposalApprove(id, proposalId, selectedPaths, message),
       "Proposal approved and committed · Ctrl+Z undoes it",
+      "Committing proposal…",
     );
     if (ok) {
       selectedProposal = null;
@@ -1293,18 +1330,22 @@
       } catch (err) {
         error = String(err);
       }
-    });
+    }, "Requesting changes…");
   }
 
   async function rejectProposal(proposalId: string) {
-    const ok = await write((id) => proposalReject(id, proposalId), "Proposal rejected");
+    const ok = await write((id) => proposalReject(id, proposalId), "Proposal rejected", "Rejecting proposal…");
     if (ok) {
       selectedProposal = null;
     }
   }
 
   function runRestack(topBranch: string, onto: string) {
-    return write((id) => restack(id, topBranch, onto), `Restacked ${topBranch} onto ${onto} · Ctrl+Z undoes it`);
+    return write(
+      (id) => restack(id, topBranch, onto),
+      `Restacked ${topBranch} onto ${onto} · Ctrl+Z undoes it`,
+      `Restacking ${topBranch} onto ${onto}…`,
+    );
   }
 
   function openStackPr(url: string) {
@@ -1350,7 +1391,7 @@
       } catch (err) {
         error = String(err);
       }
-    });
+    }, `Importing ${wt.branch ?? wt.path}…`);
   }
 
   async function onDeleteBranch(branch: string, remote?: string) {
@@ -1358,7 +1399,7 @@
       deleteAsk = { kind: "remote", branch, remote };
       return;
     }
-    const ok = await write((id) => deleteBranch(id, branch, false), `Deleted ${branch} · Ctrl+Z undoes it`);
+    const ok = await write((id) => deleteBranch(id, branch, false), `Deleted ${branch} · Ctrl+Z undoes it`, `Deleting ${branch}…`);
     if (!ok && error?.includes("not fully merged")) {
       error = null;
       deleteAsk = { kind: "forceLocal", branch };
@@ -1372,9 +1413,13 @@
       return;
     }
     if (ask.kind === "remote" && ask.remote) {
-      await write((id) => deleteRemoteBranch(id, ask.remote!, ask.branch), `Deleted ${ask.remote}/${ask.branch}`);
+      await write(
+        (id) => deleteRemoteBranch(id, ask.remote!, ask.branch),
+        `Deleted ${ask.remote}/${ask.branch}`,
+        `Deleting ${ask.remote}/${ask.branch}…`,
+      );
     } else {
-      await write((id) => deleteBranch(id, ask.branch, true), `Deleted ${ask.branch} · Ctrl+Z undoes it`);
+      await write((id) => deleteBranch(id, ask.branch, true), `Deleted ${ask.branch} · Ctrl+Z undoes it`, `Deleting ${ask.branch}…`);
     }
   }
 
@@ -1384,7 +1429,11 @@
     if (!target) {
       return;
     }
-    await write((id) => resetRepo(id, target.id, mode), `Reset (${mode}) to ${target.shortId} · Ctrl+Z undoes it`);
+    await write(
+      (id) => resetRepo(id, target.id, mode),
+      `Reset (${mode}) to ${target.shortId} · Ctrl+Z undoes it`,
+      `Resetting (${mode}) to ${target.shortId}…`,
+    );
   }
 
   async function runSequencer() {
@@ -1394,12 +1443,12 @@
       return;
     }
     if (ask.kind === "cherryPick") {
-      const ok = await write((id) => cherryPick(id, ask.id));
+      const ok = await write((id) => cherryPick(id, ask.id), undefined, `Cherry-picking ${ask.shortId}…`);
       if (ok && !sequencer) {
         notice = `Cherry-picked ${ask.shortId} · Ctrl+Z undoes it`;
       }
     } else {
-      const ok = await write((id) => revertCommit(id, ask.id));
+      const ok = await write((id) => revertCommit(id, ask.id), undefined, `Reverting ${ask.shortId}…`);
       if (ok && !sequencer) {
         notice = `Reverted ${ask.shortId} · Ctrl+Z undoes it`;
       }
@@ -1527,7 +1576,7 @@
   }
 
   async function onCommit(message: string, options?: CommitOptions) {
-    if (!(await write((id) => commit(id, message, options)))) {
+    if (!(await write((id) => commit(id, message, options), undefined, options?.amend ? "Amending…" : "Committing…"))) {
       throw new Error("commit failed");
     }
   }
@@ -1699,7 +1748,7 @@
         unconfirmed={merging.unityVerify?.reduce((n, f) => n + f.verify.filter((v) => !v.confirmed).length, 0) ?? 0}
         {busy}
         oncommit={commitMerge}
-        onabort={() => write((id) => mergeAbort(id), "Merge aborted · Ctrl+Z brings it back")}
+        onabort={() => write((id) => mergeAbort(id), "Merge aborted · Ctrl+Z brings it back", "Aborting merge…")}
       />
     {:else if planning}
       <div class="banner plan" role="region" aria-label="Planning">
@@ -1764,7 +1813,11 @@
           onrenamebranch={(branch) => (branchAsk = { mode: "rename", currentName: branch })}
           ondeletebranch={onDeleteBranch}
           onsetupstream={(branch, upstream) =>
-            write((id) => setUpstream(id, branch, upstream), upstream ? `Tracking ${upstream}` : `Cleared upstream for ${branch}`)}
+            write(
+              (id) => setUpstream(id, branch, upstream),
+              upstream ? `Tracking ${upstream}` : `Cleared upstream for ${branch}`,
+              "Setting upstream…",
+            )}
           oncheckoutremote={(remoteBranch) => (branchAsk = { mode: "checkoutRemote", remoteBranch })}
           onopenpr={openPrForBranch}
           onselectproposal={(id) => {
@@ -1784,9 +1837,9 @@
             selectedCommit = null;
             planDone = null;
           }}
-          onstashapply={(idx) => write((id) => stashApply(id, idx), `Applied stash@{${idx}} · Ctrl+Z undoes it`)}
-          onstashpop={(idx) => write((id) => stashPop(id, idx), `Popped stash@{${idx}} · Ctrl+Z undoes it`)}
-          onstashdrop={(idx) => write((id) => stashDrop(id, idx), `Dropped stash@{${idx}} · Ctrl+Z undoes it`)}
+          onstashapply={(idx) => stashWrite("apply", idx)}
+          onstashpop={(idx) => stashWrite("pop", idx)}
+          onstashdrop={(idx) => stashWrite("drop", idx)}
           onrefreshlocks={() => opened && refreshLocks(opened.id)}
           onunlock={onUnlockFile}
           onworking={() => {
@@ -1817,7 +1870,7 @@
           reflog={reflogEntries}
           onundo={() => revert("undo")}
           onrestoreto={restoreToEntry}
-          onrestorefiles={(entry) => write((id) => restoreFiles(id, entry.id))}
+          onrestorefiles={(entry) => write((id) => restoreFiles(id, entry.id), undefined, "Restoring files…")}
           onprune={pruneOpLog}
           onrestorereflog={(entry) => inspectCommit(entry.id)}
           {onclose}
@@ -1982,13 +2035,13 @@
               repoId={opened.id}
               index={idx}
               {busy}
-              onapply={() => write((id) => stashApply(id, idx), `Applied stash@{${idx}} · Ctrl+Z undoes it`)}
+              onapply={() => stashWrite("apply", idx)}
               onpop={() =>
-                write((id) => stashPop(id, idx), `Popped stash@{${idx}} · Ctrl+Z undoes it`).then((ok) => {
+                stashWrite("pop", idx).then((ok) => {
                   if (ok) closeDetail();
                 })}
               ondrop={() =>
-                write((id) => stashDrop(id, idx), `Dropped stash@{${idx}} · Ctrl+Z undoes it`).then((ok) => {
+                stashWrite("drop", idx).then((ok) => {
                   if (ok) closeDetail();
                 })}
               onclose={closeDetail}
@@ -2038,9 +2091,9 @@
               lfsPatterns={lfs?.trackedPatterns ?? []}
               locksSupported={lfs?.supportsLocks ?? false}
               bind:selected={selectedFile}
-              onstage={(paths) => write((id) => stage(id, paths))}
-              onunstage={(paths) => write((id) => unstage(id, paths))}
-              ondiscard={(paths) => write((id) => discard(id, paths))}
+              onstage={(paths) => write((id) => stage(id, paths), undefined, `Staging ${files(paths)}…`)}
+              onunstage={(paths) => write((id) => unstage(id, paths), undefined, `Unstaging ${files(paths)}…`)}
+              ondiscard={(paths) => write((id) => discard(id, paths), undefined, `Discarding ${files(paths)}…`)}
               onhunk={onHunk}
               onlines={onLines}
               onlock={onLockFile}
@@ -2151,7 +2204,7 @@
         {busy}
         onsave={(message, includeUntracked) => {
           stashAsk = false;
-          write((id) => stashSave(id, message, includeUntracked), "Stashed changes · Ctrl+Z undoes it");
+          write((id) => stashSave(id, message, includeUntracked), "Stashed changes · Ctrl+Z undoes it", "Stashing…");
         }}
         oncancel={() => (stashAsk = false)}
       />
@@ -2209,10 +2262,13 @@
         <span class="bar" aria-hidden="true"><i style:width="{pct}%"></i></span>
         <button class="bare link" onclick={() => cancelTask(id)}>Cancel</button>
       </span>
+    {:else if busy}
+      <span class="task working" role="progressbar" aria-label={working}>
+        {working}
+        <span class="bar sweep" aria-hidden="true"><i></i></span>
+      </span>
     {:else if notice}
       <span role="status">{notice}</span>
-    {:else if busy}
-      <span>Working…</span>
     {:else if upstreamLine}
       <span class="muted">● {upstreamLine}</span>
     {:else if opened}
@@ -2416,6 +2472,34 @@
     height: 100%;
     background: var(--l0);
     transition: width 0.2s;
+  }
+  /* Quick writes finish before this fades in, so they don't flash the strip. */
+  .working {
+    animation: show-working 0s 120ms both;
+  }
+  @keyframes show-working {
+    from {
+      visibility: hidden;
+    }
+  }
+  .sweep i {
+    width: 35%;
+    animation: sweep 1.1s ease-in-out infinite;
+  }
+  @keyframes sweep {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(290%);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .sweep i {
+      animation: none;
+      width: 100%;
+      opacity: 0.5;
+    }
   }
   .link {
     all: unset;

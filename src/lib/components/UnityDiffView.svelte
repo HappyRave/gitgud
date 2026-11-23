@@ -144,6 +144,7 @@
     overflow: auto;
     padding: 8px 10px;
     display: grid;
+    grid-auto-rows: max-content;
     gap: 8px;
     align-content: start;
   }

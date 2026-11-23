@@ -169,7 +169,7 @@ impl Repo {
         }
     }
 
-    fn lfs_resolve_with_fetch(
+    pub(crate) fn lfs_resolve_with_fetch(
         &self,
         git: Option<&GitCli>,
         path: &str,

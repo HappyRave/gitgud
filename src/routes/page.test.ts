@@ -424,6 +424,40 @@ describe("start page: sidebar", () => {
     await vi.waitFor(() => expect(calls.filter((c) => c.cmd === "branches")).toHaveLength(2));
   });
 
+  it("a slow checkout shows what is running in the strip, over the last notice", async () => {
+    let finish!: () => void;
+    app({
+      launch_path: () => "C:/work/repo",
+      branches: () => ({
+        local: [
+          { name: "main", current: true, upstream: null, ahead: 0, behind: 0 },
+          { name: "feature/login", current: false, upstream: null, ahead: 0, behind: 0 },
+        ],
+        remotes: [],
+        fetched: null,
+      }),
+      undo: () => ({ action: "Stage a.txt", opened: { id: 1, root: "C:/work/repo", rows: 1, graphVersion: 0 } }),
+      checkout: () =>
+        new Promise((resolve) => {
+          finish = () => resolve({ id: 1, root: "C:/work/repo", rows: 1, graphVersion: 1 });
+        }),
+    });
+    const view = render(Page);
+    const branches = await screen.findByRole("region", { name: "Branches" });
+    await within(branches).findByText("login");
+    await fireEvent.keyDown(window, { key: "z", ctrlKey: true });
+    expect(await screen.findByRole("status")).toHaveTextContent("Undid: Stage a.txt");
+
+    await fireEvent.dblClick(within(branches).getByRole("button", { name: /login/ }));
+
+    const strip = () => view.container.querySelector(".view:not([hidden]) footer.strip") as HTMLElement;
+    await vi.waitFor(() => expect(within(strip()).getByRole("progressbar")).toHaveAccessibleName("Checking out feature/login…"));
+    expect(strip()).not.toHaveTextContent("Undid");
+
+    finish();
+    await vi.waitFor(() => expect(within(strip()).queryByRole("progressbar")).toBeNull());
+  });
+
   it("the toolbar shows the repo, the branch with ahead / behind, or a detached HEAD", async () => {
     app({
       launch_path: () => "C:/work/repo",

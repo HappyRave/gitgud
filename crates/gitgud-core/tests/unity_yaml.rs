@@ -1,6 +1,8 @@
+use gitgud_core::repo::{self, Error};
 use gitgud_core::session::Session;
 use gitgud_core::testing::TestRepo;
 use gitgud_core::unity_yaml::UnityPropertyPick;
+use gitgud_core::unity_yaml::{UnityYamlDiff, commit_unity_diff, worktree_unity_diff};
 use gitgud_core::worktree::Side;
 
 #[test]
@@ -297,4 +299,58 @@ MonoBehaviour:
     assert!(resolved.contains("value: 3.25"));
     assert!(resolved.contains("  - {fileID: 102}"));
     assert!(resolved.contains("--- !u!1 &101 stripped"));
+}
+
+fn lfs_pointer(oid: &str) -> String {
+    format!("version https://git-lfs.github.com/spec/v1\noid sha256:{oid}\nsize 100\n")
+}
+
+fn hydrate(repo: &TestRepo, oid: &str, data: &str) {
+    let dir = repo
+        .path()
+        .join(".git/lfs/objects")
+        .join(&oid[..2])
+        .join(&oid[2..4]);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join(oid), data).unwrap();
+}
+
+fn hp_change(diff: &UnityYamlDiff) -> (Option<String>, Option<String>) {
+    let prop = diff
+        .objects
+        .iter()
+        .flat_map(|o| &o.properties)
+        .find(|p| p.property == "hp")
+        .expect("hp change in structural diff");
+    (prop.before.clone(), prop.after.clone())
+}
+
+#[test]
+fn structural_diff_reads_lfs_stored_prefabs_from_the_local_cache() {
+    let repo = TestRepo::init();
+    let yaml = |hp: u32| {
+        format!(
+            "%YAML 1.1\n--- !u!1 &1\nGameObject:\n  m_Name: Gun\n--- !u!114 &2\nMonoBehaviour:\n  m_GameObject: {{fileID: 1}}\n  hp: {hp}\n"
+        )
+    };
+    let (a, b) = ("aa".repeat(32), "bb".repeat(32));
+    let path = "Assets/Gun.prefab";
+    repo.write(path, &lfs_pointer(&a)).commit_all("gun");
+    repo.write(path, &lfs_pointer(&b)).commit_all("tune gun");
+    let head = repo.git(&["rev-parse", "HEAD"]).trim().to_owned();
+    let r = repo::open(repo.path()).unwrap();
+
+    assert!(matches!(
+        commit_unity_diff(&r, &head, path),
+        Err(Error::Refused(m)) if m.contains("isn't downloaded")
+    ));
+
+    hydrate(&repo, &a, &yaml(50));
+    hydrate(&repo, &b, &yaml(80));
+    let diff = commit_unity_diff(&r, &head, path).unwrap();
+    assert_eq!(hp_change(&diff), (Some("50".into()), Some("80".into())));
+
+    repo.write(path, &yaml(95));
+    let diff = worktree_unity_diff(&r, path, Side::Unstaged).unwrap();
+    assert_eq!(hp_change(&diff), (Some("80".into()), Some("95".into())));
 }
