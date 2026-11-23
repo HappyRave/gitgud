@@ -91,6 +91,32 @@ describe("DiffView", () => {
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
   });
 
+  it("renders LFS binary card with OID, hydration, delta, and Fetch action for non-image assets", async () => {
+    const onfetchlfs = vi.fn(async () => {});
+    const afterMeta = { size: 2 * 1024 * 1024, lfs: true, oid: "12".repeat(32), hydrated: false };
+    render(DiffView, {
+      diff: {
+        path: "Assets/Model.fbx",
+        binary: true,
+        hunks: [],
+        binaryMeta: {
+          before: { size: 1024 * 1024, lfs: true, oid: "34".repeat(32), hydrated: true },
+          after: afterMeta,
+        },
+      },
+      onfetchlfs,
+    });
+
+    const card = screen.getByRole("region", { name: "Binary details for Assets/Model.fbx" });
+    expect(card).toHaveTextContent("FBX");
+    expect(card).toHaveTextContent("+1.0 MB");
+    expect(card).toHaveTextContent("Hydrated");
+    expect(card).toHaveTextContent("Pointer only");
+
+    await fireEvent.click(within(card).getByRole("button", { name: "Fetch LFS object (2.0 MB)" }));
+    expect(onfetchlfs).toHaveBeenCalledWith("after", afterMeta);
+  });
+
   it("says when only the mode changed", () => {
     render(DiffView, { diff: { path: "run.sh", binary: false, hunks: [] } });
 

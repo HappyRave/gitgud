@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { stashDetail, stashFileDiff, type Change, type CommitDetail, type FileDiff } from "$lib/api";
+  import { lfsFetchObject, stashDetail, stashFileDiff, type BinarySide, type Change, type CommitDetail, type FileDiff } from "$lib/api";
   import { prefs, toggleIgnoreWhitespace } from "$lib/prefs.svelte";
   import DiffView from "./DiffView.svelte";
 
@@ -67,6 +67,20 @@
       showFile(file, ws);
     }
   });
+
+  async function handleFetchLfs(_which: "before" | "after", meta: BinarySide) {
+    if (!meta.oid || !file) {
+      return;
+    }
+    const idx = index;
+    const path = file;
+    const ws = prefs.ignoreWhitespace;
+    await lfsFetchObject(repoId, meta.oid, meta.size, path);
+    if (index !== idx || file !== path) {
+      return;
+    }
+    diff = await stashFileDiff(repoId, idx, path, ws);
+  }
 </script>
 
 <section class="detail" aria-label="Stash">
@@ -118,7 +132,7 @@
 
     <div class="diff-col">
       {#if diff}
-        <DiffView {diff} split={prefs.split} />
+        <DiffView {diff} split={prefs.split} onfetchlfs={handleFetchLfs} />
       {/if}
     </div>
   {:else if !error}

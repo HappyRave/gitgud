@@ -1438,6 +1438,17 @@ async fn lfs_prune(session: State<'_, Session>, id: u32) -> Result<LfsCacheStats
 }
 
 #[tauri::command]
+async fn lfs_fetch_object(
+    session: State<'_, Session>,
+    id: u32,
+    oid: String,
+    size: u64,
+    path: Option<String>,
+) -> Result<bool, Error> {
+    session.lfs_fetch_object(id, &oid, size, path.as_deref())
+}
+
+#[tauri::command]
 async fn ai_providers(session: State<'_, Session>) -> Result<AiProviderStatus, Error> {
     Ok(session.ai_providers())
 }
@@ -1668,6 +1679,7 @@ fn app_with_library<R: Runtime>(builder: Builder<R>, library: Option<LibraryStor
             pr_url_with_base,
             lfs_cache_stats,
             lfs_prune,
+            lfs_fetch_object,
             ai_providers,
             ai_draft_commit_message,
             agent_setup,
@@ -2193,7 +2205,7 @@ mod tests {
         assert_eq!(
             ipc.call("conflict_sides", json!({ "id": id2, "path": "f.txt" }))
                 .unwrap(),
-            json!({ "yours": { "size": 2, "lfs": false }, "theirs": { "size": 2, "lfs": false } })
+            json!({ "yours": { "size": 2, "lfs": false, "hydrated": true }, "theirs": { "size": 2, "lfs": false, "hydrated": true } })
         );
         ipc.call(
             "resolve_side",
@@ -3333,5 +3345,34 @@ mod tests {
             .unwrap();
         assert_eq!(prop["status"], "pending");
         main.git(&["worktree", "remove", "--force", wt_dir.to_str().unwrap()]);
+    }
+
+    #[test]
+    fn lfs_fetch_object_ipc_handles_hydrated_and_invalid_oids() {
+        let ipc = Ipc::new();
+        let repo = TestRepo::init();
+        repo.write("a.txt", "a\n").commit_all("init");
+        let id = open(&ipc, &repo)["id"].clone();
+
+        let err = ipc
+            .call(
+                "lfs_fetch_object",
+                json!({ "id": id, "oid": "bad", "size": 10 }),
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("invalid LFS oid"));
+
+        let oid = "ef".repeat(32);
+        let obj = repo.path().join(".git/lfs/objects/ef/ef").join(&oid);
+        std::fs::create_dir_all(obj.parent().unwrap()).unwrap();
+        std::fs::write(&obj, b"ok").unwrap();
+
+        let downloaded = ipc
+            .call(
+                "lfs_fetch_object",
+                json!({ "id": id, "oid": oid, "size": 2, "path": "Art/tex.dds" }),
+            )
+            .unwrap();
+        assert_eq!(downloaded, json!(false));
     }
 }

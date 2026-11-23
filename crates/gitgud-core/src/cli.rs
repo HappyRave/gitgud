@@ -75,6 +75,47 @@ impl GitCli {
         )))
     }
 
+    /// Runs `git <args>` with stdout discarded (suitable for large streaming filters like `git lfs smudge`),
+    /// feeding optional `stdin` and extra environment variables (`GIT_LFS_SKIP_SMUDGE`...).
+    ///
+    /// # Errors
+    /// [`Error::Command`] when git cannot start or exits non-zero.
+    pub fn run_discard_stdout_env(
+        &self,
+        cwd: &Path,
+        args: &[&str],
+        stdin: Option<&[u8]>,
+        env: &[(&str, &std::ffi::OsStr)],
+    ) -> Result<(), Error> {
+        let fail = |message: String| command_error(args, message);
+        let mut cmd = self.command(cwd, args);
+        cmd.envs(env.iter().copied())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .stdin(if stdin.is_some() {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            });
+        let mut child = cmd.spawn().map_err(|e| fail(e.to_string()))?;
+
+        let output = std::thread::scope(|s| {
+            if let (Some(bytes), Some(mut pipe)) = (stdin, child.stdin.take()) {
+                s.spawn(move || pipe.write_all(bytes));
+            }
+            child.wait_with_output()
+        })
+        .map_err(|e| fail(e.to_string()))?;
+
+        if output.status.success() {
+            return Ok(());
+        }
+        Err(fail(failure_message(
+            "",
+            &String::from_utf8_lossy(&output.stderr),
+        )))
+    }
+
     /// Runs `git <args>` and returns its exit code with stdout and stderr, for
     /// commands whose non-zero exit is an answer, not a failure (`merge-file`
     /// counts conflicts, `merge-tree` exits 1 when there are some).

@@ -45,6 +45,8 @@ pub struct TimingSample {
 
 const MAX_TIMING_SAMPLES: usize = 50;
 
+type FetchLocks = Mutex<HashMap<(u32, String), Arc<Mutex<()>>>>;
+
 /// The repositories the app has open, by id, and the git CLI it writes with.
 #[derive(Default)]
 pub struct Session {
@@ -57,6 +59,8 @@ pub struct Session {
     previews: Mutex<HashMap<u32, Arc<Graph>>>,
     /// Last silent background refresh timestamp per repo id.
     last_bg_refresh: Mutex<HashMap<u32, Instant>>,
+    /// Per-(repo_id, oid) locks so concurrent image requests never race on the same LFS fetch.
+    lfs_fetches: FetchLocks,
     /// Recent local operation timings (oldest evicted past 50).
     timings: Mutex<VecDeque<TimingSample>>,
     git: OnceLock<GitCli>,
@@ -232,6 +236,10 @@ impl Session {
             .lock()
             .expect("bg refresh lock poisoned")
             .remove(&id);
+        self.lfs_fetches
+            .lock()
+            .expect("lfs fetches lock poisoned")
+            .retain(|(repo_id, _), _| *repo_id != id);
         self.lock()
             .remove(&id)
             .map(drop)
@@ -1733,6 +1741,61 @@ impl Session {
     /// [`Error::UnknownRepo`] or [`Error::Command`].
     pub fn lfs_prune(&self, id: u32) -> Result<LfsCacheStats, Error> {
         self.exclusive(id, |open, git| lfs::lfs_prune(git, &open.repo))
+    }
+
+    /// Downloads one unhydrated LFS object (`oid`) into repo `id`'s local cache, serializing
+    /// concurrent requests for the same `(id, oid)` without blocking unrelated operations.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`], [`Error::Refused`], or [`Error::Command`].
+    pub fn lfs_fetch_object(
+        &self,
+        id: u32,
+        oid: &str,
+        size: u64,
+        path: Option<&str>,
+    ) -> Result<bool, Error> {
+        let open = self.get(id)?;
+        let git = self.git()?;
+        let normalized = oid.trim().to_ascii_lowercase();
+        let gate = {
+            let mut map = self
+                .lfs_fetches
+                .lock()
+                .expect("lfs fetches lock poisoned");
+            Arc::clone(
+                map.entry((id, normalized.clone()))
+                    .or_insert_with(|| Arc::new(Mutex::new(()))),
+            )
+        };
+        let _guard = gate.lock().expect("lfs oid fetch lock poisoned");
+        lfs::lfs_fetch_object(git, &open.repo, &normalized, size, path)
+    }
+
+    /// Reads and decodes image `path` at `version` for repo `id`. When `auto_fetch` is `true`,
+    /// unhydrated LFS pointers up to 25 MiB are downloaded automatically on first preview.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`], [`Error::Refused`], [`Error::Read`], or [`Error::Command`].
+    pub fn image_bytes(
+        &self,
+        id: u32,
+        path: &str,
+        version: &crate::image::Version,
+        auto_fetch: bool,
+    ) -> Result<Vec<u8>, Error> {
+        let repo = self.get(id)?.repo.clone();
+        if !auto_fetch {
+            return repo.image_bytes(path, version);
+        }
+        if let Some((oid, size)) = repo.image_lfs_pointer(path, version)?
+            && size <= lfs::AUTO_FETCH_MAX_BYTES
+            && !lfs::lfs_is_hydrated(&repo, &oid)
+            && repo.primary_remote_url().is_some()
+        {
+            self.lfs_fetch_object(id, &oid, size, Some(path))?;
+        }
+        repo.image_bytes_with_fetch(None, path, version, lfs::AUTO_FETCH_MAX_BYTES)
     }
 
     /// Detects available local AI CLIs and env key presence (never reads key values).

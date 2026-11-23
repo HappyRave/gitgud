@@ -345,7 +345,10 @@ export function installMock(scenario: string) {
             { kind: "same", lines: ["        rb.AddForce(transform.forward * thrust);", "    }", "}"] },
           ],
     }),
-    conflict_sides: () => ({ yours: { size: 2_034_112, lfs: true }, theirs: { size: 2_076_180, lfs: true } }),
+    conflict_sides: () => ({
+      yours: { size: 2_034_112, lfs: true, oid: "a".repeat(64), hydrated: true },
+      theirs: { size: 2_076_180, lfs: true, oid: "b".repeat(64), hydrated: true },
+    }),
     resolve_with: ({ path }) => resolve(path),
     resolve_side: ({ path }) => resolve(path),
     merge_commit: () => {
@@ -758,6 +761,7 @@ export function installMock(scenario: string) {
     },
     lfs_cache_stats: () => ({ objectCount: 4, totalBytes: 12_500_000, prunableCount: 2, prunableBytes: 4_200_000 }),
     lfs_prune: () => ({ objectCount: 2, totalBytes: 8_300_000, prunableCount: 0, prunableBytes: 0 }),
+    lfs_fetch_object: () => true,
     ai_providers: () => ({ cliAvailable: ["claude"], configuredEnvKey: false }),
     ai_draft_commit_message: () => "Tune engine torque curve for rough waves",
     agent_setup: ({ target, withHooks }) => {

@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { hunkHeader, type DiffLine, type FileDiff, type Hunk, type LineSelect } from "$lib/api";
+  import { hunkHeader, type BinarySide, type DiffLine, type FileDiff, type Hunk, type LineSelect } from "$lib/api";
   import { detectLanguage, highlightLine, mergeInline, type StyledSegment } from "$lib/diff/highlight";
   import { pairHunkLines, type InlineSpan } from "$lib/diff/intraline";
   import { splitRows } from "$lib/diff/split";
   import ImageDiff, { type ImageSide } from "./ImageDiff.svelte";
+  import LfsBinaryCard from "./LfsBinaryCard.svelte";
 
   export interface LineAction {
     label: string | ((count: number) => string);
@@ -18,6 +19,7 @@
     focused = null,
     images = null,
     split = false,
+    onfetchlfs,
   }: {
     /** Side by side instead of unified (Ctrl+D). */
     split?: boolean;
@@ -31,6 +33,7 @@
     busy?: boolean;
     /** The hunk the keyboard acts on (Alt+↑↓), highlighted and kept in view. */
     focused?: number | null;
+    onfetchlfs?: (side: "before" | "after", meta: BinarySide) => Promise<void>;
   } = $props();
 
   let table = $state<HTMLElement | null>(null);
@@ -126,9 +129,16 @@
 
 <section class="diff" aria-label="Diff of {diff.path}">
   {#if diff.binary && images}
-    <ImageDiff before={images.before} after={images.after} />
+    <ImageDiff
+      before={images.before}
+      after={images.after}
+      path={diff.path}
+      beforeMeta={diff.binaryMeta?.before ?? null}
+      afterMeta={diff.binaryMeta?.after ?? null}
+      onfetch={onfetchlfs}
+    />
   {:else if diff.binary}
-    <p class="note">Binary file, no text diff.</p>
+    <LfsBinaryCard path={diff.path} meta={diff.binaryMeta ?? null} {busy} onfetch={onfetchlfs} />
   {:else if diff.hunks.length === 0}
     <p class="note">No content changes.</p>
   {:else}

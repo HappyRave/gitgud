@@ -3,6 +3,7 @@
   import { SvelteSet } from "svelte/reactivity";
   import {
     unityPostMergeCheck,
+    type LfsLock,
     type MergeSide,
     type MergeState,
     type UnityInfo,
@@ -28,6 +29,7 @@
     message = $bindable(),
     busy = false,
     unityInfo = null,
+    locks = [],
     onresolvewith,
     onresolveside,
     onresolveunity,
@@ -49,6 +51,7 @@
     message: string;
     busy?: boolean;
     unityInfo?: UnityInfo | null;
+    locks?: LfsLock[];
     /** Resolve to whether the write worked. */
     onresolvewith: (path: string, content: string, how: string) => Promise<boolean>;
     onresolveside: (path: string, side: MergeSide) => Promise<boolean>;
@@ -300,6 +303,7 @@
               yoursLabel={branch}
               {theirsLabel}
               {busy}
+              lock={locks.find((l) => l.path === selected.path) ?? null}
               onpick={(side) => withSide(selected.path, side)}
             />
           {:else if selected.kind === "unityYaml" && onresolveunity && !rawYamlMode.has(selected.path) && !unparseableUnity.has(selected.path)}

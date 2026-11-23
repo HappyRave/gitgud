@@ -6,7 +6,7 @@ use gix::object::tree::diff::ChangeDetached;
 use serde::Serialize;
 
 use crate::cli::{GitCli, command_error, failure_message};
-use crate::diff::{CommitDetail, FileChange, FileDiff, Person, blob_at, file_diff_with};
+use crate::diff::{CommitDetail, FileChange, FileDiff, Person, blob_at, file_diff_in_repo};
 use crate::repo::{Change, EntryKind, Error, Repo, read_err};
 
 /// One entry from `refs/stash` (`stash@{index}`).
@@ -198,17 +198,24 @@ impl Repo {
             None => None,
         };
         if old.is_some() || new.is_some() {
-            return Ok(file_diff_with(
+            return Ok(file_diff_in_repo(
+                Some(self),
                 path,
-                &old.unwrap_or_default(),
-                &new.unwrap_or_default(),
+                old.as_deref(),
+                new.as_deref(),
                 ignore_whitespace,
             ));
         }
         if let Some(untracked_id) = parents.get(2) {
             let untracked_commit = repo.find_commit(*untracked_id).map_err(read_err)?;
             if let Some(blob) = blob_at(&repo, &untracked_commit, path)? {
-                return Ok(file_diff_with(path, &[], &blob, ignore_whitespace));
+                return Ok(file_diff_in_repo(
+                    Some(self),
+                    path,
+                    None,
+                    Some(&blob),
+                    ignore_whitespace,
+                ));
             }
         }
         Err(Error::Read(format!("{path} is not in stash@{{{index}}}")))

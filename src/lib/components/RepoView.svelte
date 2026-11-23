@@ -1856,6 +1856,7 @@
           bind:message={() => mergeDraft, (v) => (messageEdit = v)}
           {busy}
           unityInfo={unityState}
+          {locks}
           onresolvewith={resolveText}
           onresolveside={resolvePick}
           onresolveunity={resolveUnity}

@@ -1,6 +1,7 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::ffi::OsStr;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -9,6 +10,9 @@ use crate::remote_url::HostKind;
 use crate::repo::{Error, Repo};
 
 const LFS_HEADER: &[u8] = b"version https://git-lfs.github.com/spec/v1\n";
+
+/// Maximum LFS object size (25 MiB) auto-fetched on demand when previewed.
+pub const AUTO_FETCH_MAX_BYTES: u64 = 25 * 1024 * 1024;
 
 /// Git LFS status, tracked patterns, and host lock support for a repo.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -83,6 +87,77 @@ pub fn parse_lfs_pointer(bytes: &[u8]) -> Option<(String, u64)> {
         }
     }
     Some((oid?, size?))
+}
+
+/// Path inside `.git/lfs/objects` where `oid` lives when hydrated locally.
+#[must_use]
+pub fn lfs_object_path(repo: &Repo, oid: &str) -> PathBuf {
+    if !is_sha256_hex(oid) {
+        return repo.gix().common_dir().join("lfs/objects/invalid");
+    }
+    let lower = oid.to_ascii_lowercase();
+    repo.gix()
+        .common_dir()
+        .join("lfs/objects")
+        .join(&lower[..2])
+        .join(&lower[2..4])
+        .join(&lower)
+}
+
+/// Returns true when the LFS object for `oid` is already downloaded in the local cache.
+#[must_use]
+pub fn lfs_is_hydrated(repo: &Repo, oid: &str) -> bool {
+    is_sha256_hex(oid) && lfs_object_path(repo, oid).is_file()
+}
+
+/// Downloads a single LFS object into `.git/lfs/objects` via `git lfs smudge` without
+/// buffering the payload into memory or rewriting working-tree files. Returns `true` if
+/// newly downloaded or `false` if already present locally.
+///
+/// # Errors
+/// [`Error::Refused`] for an invalid OID, or [`Error::Command`] when `git lfs smudge` fails.
+pub fn lfs_fetch_object(
+    git: &GitCli,
+    repo: &Repo,
+    oid: &str,
+    size: u64,
+    path: Option<&str>,
+) -> Result<bool, Error> {
+    let oid = oid.trim();
+    if !is_sha256_hex(oid) {
+        return Err(Error::Refused(format!("invalid LFS oid: {oid}")));
+    }
+    let lower = oid.to_ascii_lowercase();
+    if lfs_is_hydrated(repo, &lower) {
+        return Ok(false);
+    }
+
+    let pointer = format!("version https://git-lfs.github.com/spec/v1\noid sha256:{lower}\nsize {size}\n");
+    let mut args = vec![
+        "-c",
+        "lfs.fetchinclude=",
+        "-c",
+        "lfs.fetchexclude=",
+        "lfs",
+        "smudge",
+    ];
+    if let Some(p) = path.filter(|s| !s.is_empty()) {
+        args.push(p);
+    }
+    git.run_discard_stdout_env(
+        repo.root(),
+        &args,
+        Some(pointer.as_bytes()),
+        &[("GIT_LFS_SKIP_SMUDGE", OsStr::new("0"))],
+    )?;
+
+    if !lfs_is_hydrated(repo, &lower) {
+        return Err(Error::Command {
+            command: "git lfs smudge".into(),
+            message: format!("LFS object {} was not downloaded into local cache", &lower[..12]),
+        });
+    }
+    Ok(true)
 }
 
 /// Collects LFS installation, tracked filter patterns (non-smudging), and remote lock support.
@@ -429,5 +504,27 @@ mod tests {
             parse_lfs_prune_dry_run("prune: 3 local objects, 1 retained", &map),
             (3, 0)
         );
+    }
+
+    #[test]
+    fn validates_and_detects_hydrated_lfs_objects() {
+        let init = crate::testing::TestRepo::init();
+        init.write("a.txt", "hi\n").commit_all("init");
+        let repo = crate::repo::open(init.path()).unwrap();
+        let git = GitCli::new(&crate::git::locate().unwrap());
+
+        let oid = "ab".repeat(32);
+        assert!(!lfs_is_hydrated(&repo, &oid));
+        assert!(!lfs_is_hydrated(&repo, "not-a-sha256"));
+
+        let err = lfs_fetch_object(&git, &repo, "bad", 10, None).unwrap_err();
+        assert!(matches!(err, Error::Refused(_)));
+
+        let obj_path = lfs_object_path(&repo, &oid);
+        fs::create_dir_all(obj_path.parent().unwrap()).unwrap();
+        fs::write(&obj_path, b"hydrated payload").unwrap();
+
+        assert!(lfs_is_hydrated(&repo, &oid));
+        assert!(!lfs_fetch_object(&git, &repo, &oid, 16, Some("Art/tex.png")).unwrap());
     }
 }

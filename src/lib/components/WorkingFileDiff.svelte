@@ -1,8 +1,10 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import {
+    lfsFetchObject,
     worktreeFileDiff,
     worktreeUnityDiff,
+    type BinarySide,
     type FileDiff,
     type Hunk,
     type LineSelect,
@@ -70,19 +72,37 @@
           ],
   );
 
+  let fetchRev = $state(0);
+
   const images = $derived(
     !isImage(path)
       ? null
       : side === "staged"
         ? {
-            before: { label: "HEAD", url: imageUrl(repoId, path, { at: "head" }, revision) },
-            after: { label: "Staged", url: imageUrl(repoId, path, { at: "index" }, revision) },
+            before: { label: "HEAD", url: imageUrl(repoId, path, { at: "head" }, revision + fetchRev) },
+            after: { label: "Staged", url: imageUrl(repoId, path, { at: "index" }, revision + fetchRev) },
           }
         : {
-            before: { label: "Index", url: imageUrl(repoId, path, { at: "index" }, revision) },
-            after: { label: "On disk", url: imageUrl(repoId, path, { at: "worktree" }, revision) },
+            before: { label: "Index", url: imageUrl(repoId, path, { at: "index" }, revision + fetchRev) },
+            after: { label: "On disk", url: imageUrl(repoId, path, { at: "worktree" }, revision + fetchRev) },
           },
   );
+
+  async function handleFetchLfs(_which: "before" | "after", meta: BinarySide) {
+    if (!meta.oid) {
+      return;
+    }
+    const currentRepo = repoId;
+    const currentPath = path;
+    const currentSide = side;
+    const ws = prefs.ignoreWhitespace;
+    await lfsFetchObject(currentRepo, meta.oid, meta.size, currentPath);
+    if (repoId !== currentRepo || path !== currentPath || side !== currentSide) {
+      return;
+    }
+    fetchRev += 1;
+    diff = await worktreeFileDiff(currentRepo, currentPath, currentSide, ws);
+  }
 
   let diff = $state<FileDiff | null>(null);
   let unityDiff = $state<UnityYamlDiff | null>(null);
@@ -149,9 +169,11 @@
   });
 
   $effect(() => {
+    void repoId;
     void path;
     void side;
     focused = 0;
+    fetchRev = 0;
   });
 
   /** Runs a hunk key; false when it doesn't apply here (wrong side, no hunks). */
@@ -225,6 +247,7 @@
       focused={perHunk ? focused : null}
       {images}
       split={effectiveSplit}
+      onfetchlfs={handleFetchLfs}
     />
   {/if}
 </section>

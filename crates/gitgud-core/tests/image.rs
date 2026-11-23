@@ -99,6 +99,31 @@ fn lfs_pointers_resolve_to_the_local_object() {
 }
 
 #[test]
+fn large_unhydrated_lfs_pointer_refuses_auto_fetch_and_prompts_fetch() {
+    let repo = TestRepo::init();
+    let oid = "cd".repeat(32);
+    let large_size = gitgud_core::lfs::AUTO_FETCH_MAX_BYTES + 1024;
+    let pointer =
+        format!("version https://git-lfs.github.com/spec/v1\noid sha256:{oid}\nsize {large_size}\n");
+    repo.write("big.png", &pointer).commit_all("large lfs");
+    repo.git(&["remote", "add", "origin", "https://example.invalid/r.git"]);
+    let r = repo::open(repo.path()).unwrap();
+
+    let err = r
+        .image_bytes_with_fetch(
+            None,
+            "big.png",
+            &Version::Head,
+            gitgud_core::lfs::AUTO_FETCH_MAX_BYTES,
+        )
+        .unwrap_err();
+    assert!(
+        matches!(err, Error::Refused(m) if m.contains("click Fetch")),
+        "unexpected error for >25 MiB pointer"
+    );
+}
+
+#[test]
 fn reads_both_sides_of_a_conflict() {
     let repo = TestRepo::init();
     put(&repo, "t.png", V1);

@@ -3,6 +3,8 @@
     commitDetail,
     commitFileDiff,
     commitUnityDiff,
+    lfsFetchObject,
+    type BinarySide,
     type Change,
     type CommitDetail,
     type FileDiff,
@@ -49,6 +51,7 @@
   let diff = $state<FileDiff | null>(null);
   let unityDiff = $state<UnityYamlDiff | null>(null);
   let preferStructural = $state(true);
+  let fetchRev = $state(0);
   let error = $state<string | null>(null);
 
   $effect(() => {
@@ -56,6 +59,7 @@
     detail = null;
     file = null;
     diff = null;
+    fetchRev = 0;
     error = null;
     commitDetail(repoId, id).then(
       (d) => {
@@ -72,6 +76,9 @@
 
   function showFile(path: string, ignoreWs = prefs.ignoreWhitespace) {
     const id = commit;
+    if (file !== path) {
+      fetchRev = 0;
+    }
     file = path;
     diff = null;
     unityDiff = null;
@@ -121,6 +128,21 @@
 
   function date(seconds: number) {
     return new Date(seconds * 1000).toLocaleString();
+  }
+
+  async function handleFetchLfs(_which: "before" | "after", meta: BinarySide) {
+    if (!meta.oid || !file) {
+      return;
+    }
+    const id = commit;
+    const path = file;
+    const ws = prefs.ignoreWhitespace;
+    await lfsFetchObject(repoId, meta.oid, meta.size, path);
+    if (commit !== id || file !== path) {
+      return;
+    }
+    fetchRev += 1;
+    diff = await commitFileDiff(repoId, id, path, ws);
   }
 </script>
 
@@ -222,10 +244,14 @@
           split={prefs.split}
           images={file && isImage(file)
             ? {
-                before: { label: `Parent ${detail.parents[0]?.slice(0, 7) ?? "(none)"}`, url: imageUrl(repoId, file, { at: "parent", commit }) },
-                after: { label: detail.shortId, url: imageUrl(repoId, file, { at: "commit", commit }) },
+                before: {
+                  label: `Parent ${detail.parents[0]?.slice(0, 7) ?? "(none)"}`,
+                  url: imageUrl(repoId, file, { at: "parent", commit }, fetchRev),
+                },
+                after: { label: detail.shortId, url: imageUrl(repoId, file, { at: "commit", commit }, fetchRev) },
               }
             : null}
+          onfetchlfs={handleFetchLfs}
         />
       {/if}
     </div>

@@ -115,11 +115,26 @@ export interface Hunk {
   lines: DiffLine[];
 }
 
+export interface BinarySide {
+  size: number;
+  lfs: boolean;
+  oid?: string | null;
+  hydrated?: boolean;
+}
+
+export interface BinaryMeta {
+  before: BinarySide | null;
+  after: BinarySide | null;
+}
+
 export interface FileDiff {
   path: string;
   binary: boolean;
   hunks: Hunk[];
+  binaryMeta?: BinaryMeta | null;
 }
+
+export const LFS_AUTO_FETCH_MAX_BYTES = 25 * 1024 * 1024;
 
 export interface Branch {
   /** Short name, e.g. `feature/login`. */
@@ -371,6 +386,8 @@ export interface ConflictText {
 export interface SideInfo {
   size: number;
   lfs: boolean;
+  oid?: string | null;
+  hydrated?: boolean;
 }
 
 /** `null` sides were deleted. */
@@ -864,6 +881,7 @@ export interface Commands {
   pr_url_with_base: { args: { id: number; branch: string; base?: string | null }; result: string | null };
   lfs_cache_stats: { args: { id: number }; result: LfsCacheStats };
   lfs_prune: { args: { id: number }; result: LfsCacheStats };
+  lfs_fetch_object: { args: { id: number; oid: string; size: number; path?: string | null }; result: boolean };
   ai_providers: { args: Record<string, never>; result: AiProviderStatus };
   ai_draft_commit_message: { args: { id: number; provider?: string | null }; result: string };
   agent_setup: { args: { id: number; target: string; withHooks?: boolean }; result: string };
@@ -1159,6 +1177,8 @@ export const prUrlWithBase = (id: number, branch: string, base: string | null = 
   call("pr_url_with_base", { id, branch, base });
 export const lfsCacheStats = (id: number) => call("lfs_cache_stats", { id });
 export const lfsPrune = (id: number) => call("lfs_prune", { id });
+export const lfsFetchObject = (id: number, oid: string, size: number, path: string | null = null) =>
+  call("lfs_fetch_object", { id, oid, size, path });
 export const aiProviders = () => call("ai_providers", {});
 export const aiDraftCommitMessage = (id: number, provider: string | null = null) =>
   call("ai_draft_commit_message", { id, provider });

@@ -13,10 +13,12 @@ pub fn respond(session: &Session, uri: &str) -> Response<Vec<u8>> {
         Ok((bytes, mime)) => Response::builder()
             .header(header::CONTENT_TYPE, mime)
             .header(header::CACHE_CONTROL, "no-store")
+            .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
             .body(bytes),
         Err((status, message)) => Response::builder()
             .status(status)
             .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
+            .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
             .body(message.into_bytes()),
     }
     .expect("static headers are valid")
@@ -46,8 +48,10 @@ fn read(session: &Session, uri: &str) -> Result<(Vec<u8>, &'static str), (Status
         _ => return Err(bad("unknown version")),
     };
     let mime = image_type(&path).ok_or_else(|| bad("not an image"))?;
-    let open = session.get(repo).map_err(fail)?;
-    let bytes = open.repo.image_bytes(&path, &version).map_err(fail)?;
+    let auto_fetch = param("autofetch").as_deref() != Some("0");
+    let bytes = session
+        .image_bytes(repo, &path, &version, auto_fetch)
+        .map_err(fail)?;
     Ok((bytes, mime))
 }
 
@@ -84,6 +88,7 @@ mod tests {
         );
         assert_eq!(r.status(), StatusCode::OK);
         assert_eq!(r.headers()[header::CONTENT_TYPE], "image/png");
+        assert_eq!(r.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN], "*");
         assert_eq!(r.body(), b"\x89PNG\0one");
 
         let r = respond(
@@ -91,6 +96,11 @@ mod tests {
             &format!("gitgud://localhost/image?repo={id}&path=t.png&at=worktree"),
         );
         assert_eq!(r.body(), b"\x89PNG\0two");
+
+        assert_eq!(image_type("albedo.dds"), Some("image/png"));
+        assert_eq!(image_type("light.exr"), Some("image/png"));
+        assert_eq!(image_type("sky.hdr"), Some("image/png"));
+        assert_eq!(image_type("mask.tiff"), Some("image/png"));
     }
 
     #[test]
@@ -133,6 +143,7 @@ mod tests {
         for (query, status) in cases {
             let r = respond(&session, &format!("http://gitgud.localhost/image?{query}"));
             assert_eq!(r.status(), status, "{query}: {}", body(&r));
+            assert_eq!(r.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN], "*");
         }
     }
 }

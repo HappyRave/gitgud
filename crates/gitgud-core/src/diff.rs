@@ -1,8 +1,9 @@
 use gix::ObjectId;
 use gix::diff::blob::{Algorithm, InternedInput, diff_with_slider_heuristics};
 use gix::object::tree::diff::ChangeDetached;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
+use crate::lfs::{lfs_is_hydrated, parse_lfs_pointer};
 use crate::repo::{Change, Error, Repo, read_err};
 
 /// Lines of context around each change, as `git diff` defaults to.
@@ -40,11 +41,32 @@ pub struct FileChange {
     pub change: Change,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BinarySide {
+    /// Content size in bytes (the LFS pointer's `size`, or raw blob length).
+    pub size: u64,
+    pub lfs: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oid: Option<String>,
+    pub hydrated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BinaryMeta {
+    pub before: Option<BinarySide>,
+    pub after: Option<BinarySide>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FileDiff {
     pub path: String,
     pub binary: bool,
     pub hunks: Vec<Hunk>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binary_meta: Option<BinaryMeta>,
 }
 
 /// A unified-diff hunk; starts are 1-based like `git diff`'s `@@` header.
@@ -163,37 +185,65 @@ impl Repo {
         ignore_whitespace: bool,
     ) -> Result<FileDiff, Error> {
         let v = self.commit_file_versions(id, path)?;
-        Ok(file_diff_with(
+        Ok(file_diff_in_repo(
+            Some(self),
             path,
-            &v.old.unwrap_or_default(),
-            &v.new.unwrap_or_default(),
+            v.old.as_deref(),
+            v.new.as_deref(),
             ignore_whitespace,
         ))
     }
 }
 
-/// As [`file_diff`], optionally ignoring whitespace differences.
-pub(crate) fn file_diff_with(
+pub(crate) fn is_binary_or_lfs(data: &[u8]) -> bool {
+    is_binary(data) || parse_lfs_pointer(data).is_some()
+}
+
+pub(crate) fn binary_side_info(repo: Option<&Repo>, bytes: &[u8]) -> BinarySide {
+    if let Some((oid, size)) = parse_lfs_pointer(bytes) {
+        let hydrated = repo.is_some_and(|r| lfs_is_hydrated(r, &oid));
+        return BinarySide {
+            size,
+            lfs: true,
+            oid: Some(oid),
+            hydrated,
+        };
+    }
+    BinarySide {
+        size: bytes.len() as u64,
+        lfs: false,
+        oid: None,
+        hydrated: true,
+    }
+}
+
+pub(crate) fn file_diff_in_repo(
+    repo: Option<&Repo>,
     path: &str,
-    old: &[u8],
-    new: &[u8],
+    old: Option<&[u8]>,
+    new: Option<&[u8]>,
     ignore_whitespace: bool,
 ) -> FileDiff {
-    if is_binary(old) || is_binary(new) {
+    if old.is_some_and(is_binary_or_lfs) || new.is_some_and(is_binary_or_lfs) {
         return FileDiff {
             path: path.to_owned(),
             binary: true,
             hunks: Vec::new(),
+            binary_meta: Some(BinaryMeta {
+                before: old.map(|b| binary_side_info(repo, b)),
+                after: new.map(|b| binary_side_info(repo, b)),
+            }),
         };
     }
     FileDiff {
         path: path.to_owned(),
         binary: false,
         hunks: text_hunks_with(
-            &String::from_utf8_lossy(old),
-            &String::from_utf8_lossy(new),
+            &String::from_utf8_lossy(old.unwrap_or_default()),
+            &String::from_utf8_lossy(new.unwrap_or_default()),
             ignore_whitespace,
         ),
+        binary_meta: None,
     }
 }
 

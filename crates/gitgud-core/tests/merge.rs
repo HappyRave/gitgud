@@ -157,11 +157,15 @@ fn conflicts_are_grouped_unity_code_binary() {
         ConflictSides {
             yours: Some(SideInfo {
                 size: 2,
-                lfs: false
+                lfs: false,
+                oid: None,
+                hydrated: true,
             }),
             theirs: Some(SideInfo {
                 size: 2,
-                lfs: false
+                lfs: false,
+                oid: None,
+                hydrated: true,
             }),
         }
     );
@@ -191,13 +195,33 @@ fn lfs_pointers_report_the_real_size() {
         .repo
         .conflict_sides("t.png")
         .unwrap();
+    let expected_oid = format!("{:064}", 2);
     assert_eq!(
         sides.theirs,
         Some(SideInfo {
             size: 2000,
-            lfs: true
+            lfs: true,
+            oid: Some(expected_oid.clone()),
+            hydrated: false,
         })
     );
+
+    let obj = repo
+        .path()
+        .join(".git/lfs/objects")
+        .join(&expected_oid[..2])
+        .join(&expected_oid[2..4])
+        .join(&expected_oid);
+    std::fs::create_dir_all(obj.parent().unwrap()).unwrap();
+    std::fs::write(obj, b"png").unwrap();
+
+    let updated = session
+        .get(id)
+        .unwrap()
+        .repo
+        .conflict_sides("t.png")
+        .unwrap();
+    assert!(updated.theirs.unwrap().hydrated);
 }
 
 #[test]

@@ -315,6 +315,45 @@ fn binary_files_have_no_hunks() {
         .unwrap();
     assert!(diff.binary);
     assert!(diff.hunks.is_empty());
+    let meta = diff.binary_meta.unwrap();
+    assert_eq!(meta.before.as_ref().map(|s| (s.size, s.lfs, s.hydrated)), Some((4, false, true)));
+    assert_eq!(meta.after.as_ref().map(|s| (s.size, s.lfs, s.hydrated)), Some((3, false, true)));
+}
+
+#[test]
+fn lfs_pointers_diff_as_binary_with_hydration_meta() {
+    let repo = TestRepo::init();
+    let oid1 = "1".repeat(64);
+    let oid2 = "2".repeat(64);
+    let ptr1 = format!("version https://git-lfs.github.com/spec/v1\noid sha256:{oid1}\nsize 1024\n");
+    let ptr2 = format!("version https://git-lfs.github.com/spec/v1\noid sha256:{oid2}\nsize 2048\n");
+
+    repo.write("Art/Hero.png", &ptr1).commit_all("add lfs");
+    repo.write("Art/Hero.png", &ptr2).commit_all("update lfs");
+
+    let r = repo::open(repo.path()).unwrap();
+    let diff = r.commit_file_diff(&head(&repo), "Art/Hero.png").unwrap();
+    assert!(diff.binary);
+    assert!(diff.hunks.is_empty());
+    let meta = diff.binary_meta.unwrap();
+    let before = meta.before.unwrap();
+    let after = meta.after.unwrap();
+    assert_eq!(before.size, 1024);
+    assert!(before.lfs);
+    assert_eq!(before.oid.as_deref(), Some(oid1.as_str()));
+    assert!(!before.hydrated);
+    assert_eq!(after.size, 2048);
+    assert!(after.lfs);
+    assert!(!after.hydrated);
+
+    let obj = repo.path().join(".git/lfs/objects/22/22").join(&oid2);
+    std::fs::create_dir_all(obj.parent().unwrap()).unwrap();
+    std::fs::write(obj, b"png").unwrap();
+
+    let hydrated_diff = r.commit_file_diff(&head(&repo), "Art/Hero.png").unwrap();
+    let hydrated_meta = hydrated_diff.binary_meta.unwrap();
+    assert!(!hydrated_meta.before.unwrap().hydrated);
+    assert!(hydrated_meta.after.unwrap().hydrated);
 }
 
 #[test]

@@ -6,7 +6,10 @@ use gix::bstr::BStr;
 use serde::{Deserialize, Serialize};
 
 use crate::cli::GitCli;
-use crate::diff::{FileDiff, Hunk, LineKind, file_diff_with, hunks_keeping_eol, is_binary};
+use crate::diff::{
+    FileDiff, Hunk, LineKind, file_diff_in_repo, hunks_keeping_eol, is_binary_or_lfs,
+};
+use crate::lfs::parse_lfs_pointer;
 use crate::repo::{Error, Repo, read_err};
 
 /// Which half of a working-copy change: HEAD → index, or index → work tree.
@@ -73,12 +76,23 @@ impl Repo {
         ignore_whitespace: bool,
     ) -> Result<FileDiff, Error> {
         let v = self.versions(path, side)?;
-        Ok(file_diff_with(
+        let mut diff = file_diff_in_repo(
+            Some(self),
             path,
-            &v.old.unwrap_or_default(),
-            &v.new.unwrap_or_default(),
+            v.old.as_deref(),
+            v.new.as_deref(),
             ignore_whitespace,
-        ))
+        );
+        if side == Side::Unstaged
+            && let Some(meta) = diff.binary_meta.as_mut()
+            && let Some(after) = meta.after.as_mut()
+            && after.lfs
+            && !after.hydrated
+            && worktree_has_non_pointer(self.root(), path)
+        {
+            after.hydrated = true;
+        }
+        Ok(diff)
     }
 
     /// Stages one hunk of the unstaged diff of `path`.
@@ -203,7 +217,7 @@ impl Repo {
                 "{path} is new or deleted: stage or unstage the whole file"
             )));
         };
-        if is_binary(&old) || is_binary(&new) {
+        if is_binary_or_lfs(&old) || is_binary_or_lfs(&new) {
             return Err(Error::Refused(format!(
                 "{path} is binary: stage or unstage the whole file"
             )));
@@ -241,7 +255,7 @@ impl Repo {
                 "{path} is new or deleted: stage or unstage the whole file"
             )));
         };
-        if is_binary(&old) || is_binary(&new) {
+        if is_binary_or_lfs(&old) || is_binary_or_lfs(&new) {
             return Err(Error::Refused(format!(
                 "{path} is binary: stage or unstage the whole file"
             )));
@@ -318,7 +332,7 @@ impl Repo {
         let v = self.versions(path, side)?;
         let old = v.old.unwrap_or_default();
         let new = v.new.unwrap_or_default();
-        if is_binary(&old) || is_binary(&new) {
+        if is_binary_or_lfs(&old) || is_binary_or_lfs(&new) {
             return Ok(Vec::new());
         }
         let (old_s, new_s) = (String::from_utf8_lossy(&old), String::from_utf8_lossy(&new));
@@ -372,6 +386,17 @@ impl Repo {
         .map_err(read_err)?;
         Ok(Some(out))
     }
+}
+
+fn worktree_has_non_pointer(root: &Path, path: &str) -> bool {
+    let Ok(mut file) = std::fs::File::open(root.join(path)) else {
+        return false;
+    };
+    let mut head = [0u8; 256];
+    let Ok(n) = file.read(&mut head) else {
+        return false;
+    };
+    parse_lfs_pointer(&head[..n]).is_none()
 }
 
 /// A one-hunk patch git can apply; lines keep their exact endings.

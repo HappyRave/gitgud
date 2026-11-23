@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { imageUrl, isImage } from "./images";
+import { formatSizeDelta, imageFormatLabel, imageUrl, isImage } from "./images";
 
 describe("isImage", () => {
   it("knows the formats the webview shows", () => {
@@ -7,7 +7,24 @@ describe("isImage", () => {
     expect(isImage("a.jpeg")).toBe(true);
     expect(isImage("a.psd")).toBe(true);
     expect(isImage("a.tga")).toBe(true);
+    expect(isImage("a.dds")).toBe(true);
+    expect(isImage("a.exr")).toBe(true);
+    expect(isImage("a.hdr")).toBe(true);
+    expect(isImage("a.tif")).toBe(true);
+    expect(isImage("a.tiff")).toBe(true);
     expect(isImage("png")).toBe(false);
+  });
+
+  it("formats asset labels and byte size deltas", () => {
+    expect(imageFormatLabel("Art/sky.exr")).toBe("EXR");
+    expect(imageFormatLabel("Art/tex.tif")).toBe("TIFF");
+    expect(imageFormatLabel("Art/pic.jpeg")).toBe("JPG");
+    expect(imageFormatLabel("Scripts/a.cs")).toBeNull();
+
+    expect(formatSizeDelta(1024, 2048)).toBe("+1.0 KB");
+    expect(formatSizeDelta(2048, 1024)).toBe("-1.0 KB");
+    expect(formatSizeDelta(512, 512)).toBe("same size");
+    expect(formatSizeDelta(null, 512)).toBeNull();
   });
 });
 

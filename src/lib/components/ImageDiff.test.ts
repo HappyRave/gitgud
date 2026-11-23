@@ -50,4 +50,52 @@ describe("ImageDiff", () => {
     await fireEvent.click(screen.getByRole("radio", { name: "Onion" }));
     expect(screen.getByAltText("On disk")).toHaveStyle({ opacity: "0.2" });
   });
+
+  it("supports channel isolation, zoom, pixelated, backdrop, and Diff mode", async () => {
+    render(ImageDiff, { before: BEFORE, after: AFTER, path: "Art/Hero_D.dds" });
+    expect(screen.getByText("DDS")).toBeInTheDocument();
+
+    await load(screen.getByAltText("HEAD"), 32, 32);
+    await load(screen.getByAltText("On disk"), 32, 32);
+
+    expect(screen.getByRole("radio", { name: "Diff" })).toBeEnabled();
+
+    await fireEvent.click(screen.getByRole("radio", { name: "R" }));
+    expect(screen.getByAltText("On disk").getAttribute("style")).toContain("-r");
+
+    await fireEvent.click(screen.getByRole("button", { name: "Pixelated" }));
+    expect(screen.getByAltText("On disk")).toHaveClass("pixelated");
+
+    await fireEvent.click(screen.getByRole("radio", { name: "Dark" }));
+    expect(screen.getByAltText("On disk").closest(".frame")).toHaveClass("bg-dark");
+
+    await fireEvent.click(screen.getByRole("button", { name: "Toggle fit zoom" }));
+    expect(screen.getByRole("button", { name: "Toggle fit zoom" })).toHaveTextContent("100%");
+    await fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+    expect(screen.getByRole("button", { name: "Toggle fit zoom" })).toHaveTextContent("200%");
+
+    await fireEvent.click(screen.getByRole("radio", { name: "Diff" }));
+    expect(screen.getByRole("radiogroup", { name: "Diff gain" })).toBeInTheDocument();
+  });
+
+  it("gates unhydrated LFS images above 25 MiB behind an explicit Fetch button", async () => {
+    const onfetch = vi.fn(async () => {});
+    const largeMeta = { size: 30 * 1024 * 1024, lfs: true, oid: "ab".repeat(32), hydrated: false };
+    render(ImageDiff, {
+      before: BEFORE,
+      after: AFTER,
+      path: "Art/Big.exr",
+      beforeMeta: { size: 1024, lfs: true, oid: "cd".repeat(32), hydrated: true },
+      afterMeta: largeMeta,
+      onfetch,
+    });
+
+    expect(screen.queryByAltText("On disk")).toBeNull();
+    expect(screen.getByAltText("HEAD")).toBeInTheDocument();
+    expect(screen.getByText("Pointer only")).toBeInTheDocument();
+    expect(screen.getByText("Hydrated")).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Fetch LFS object (30 MB)" }));
+    expect(onfetch).toHaveBeenCalledWith("after", largeMeta);
+  });
 });

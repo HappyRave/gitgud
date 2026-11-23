@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/svelte";
+import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import { describe, expect, it, vi } from "vitest";
 import type { FileDiff, Side } from "$lib/api";
 import { mockCommands } from "$lib/test/ipc";
@@ -106,5 +106,44 @@ describe("WorkingFileDiff", () => {
     await view.rerender({ repoId: 3, path: "Art/t.png", side: "unstaged", revision: 4, perHunk: false, onhunk: () => {} });
     expect(await screen.findByAltText("On disk")).toHaveAttribute("src", expect.stringContaining("at=worktree"));
     expect(screen.getByAltText("Index")).toHaveAttribute("src", expect.stringContaining("at=index"));
+  });
+
+  it("fetches an unhydrated non-image LFS binary object and refreshes its diff metadata", async () => {
+    const oid = "ab".repeat(32);
+    let hydrated = false;
+    const calls = mockCommands({
+      worktree_file_diff: () => ({
+        path: "Assets/Audio.wav",
+        binary: true,
+        hunks: [],
+        binaryMeta: {
+          before: { size: 1024, lfs: true, oid: "00".repeat(32), hydrated: true },
+          after: { size: 4096, lfs: true, oid, hydrated },
+        },
+      }),
+      lfs_fetch_object: () => {
+        hydrated = true;
+        return true;
+      },
+    });
+    render(WorkingFileDiff, {
+      repoId: 3,
+      path: "Assets/Audio.wav",
+      side: "staged",
+      revision: 0,
+      perHunk: false,
+      onhunk: () => {},
+    });
+
+    const btn = await screen.findByRole("button", { name: "Fetch LFS object (4.0 KB)" });
+    await fireEvent.click(btn);
+
+    expect(calls.find((c) => c.cmd === "lfs_fetch_object")?.args).toEqual({
+      id: 3,
+      oid,
+      size: 4096,
+      path: "Assets/Audio.wav",
+    });
+    await waitFor(() => expect(screen.getAllByText("Hydrated")).toHaveLength(2));
   });
 });

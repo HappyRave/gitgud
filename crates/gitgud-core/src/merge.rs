@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::cli::{GitCli, command_error, failure_message};
 use crate::diff::is_binary;
+use crate::lfs::{lfs_is_hydrated, parse_lfs_pointer};
 use crate::repo::{Error, Repo, read_err};
 use crate::unity::{UnityMergeFile, run_smart_merge_on_conflict};
 
@@ -102,6 +103,9 @@ pub struct SideInfo {
     /// Bytes of the real content (an LFS pointer's `size`).
     pub size: u64,
     pub lfs: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oid: Option<String>,
+    pub hydrated: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -520,15 +524,15 @@ impl Repo {
             .map(drop)
     }
 
-    /// Size of each side of conflicted `path`, for picking one.
+    /// Size and LFS hydration metadata of each side of conflicted `path`, for picking one.
     ///
     /// # Errors
     /// [`Error::Refused`] when `path` isn't conflicted.
     pub fn conflict_sides(&self, path: &str) -> Result<ConflictSides, Error> {
         let [_, yours, theirs] = self.stages(path)?;
         Ok(ConflictSides {
-            yours: yours.as_deref().map(side_info),
-            theirs: theirs.as_deref().map(side_info),
+            yours: yours.as_deref().map(|b| side_info(self, b)),
+            theirs: theirs.as_deref().map(|b| side_info(self, b)),
         })
     }
 
@@ -648,18 +652,21 @@ fn kind_order(kind: ConflictKind) -> u8 {
     }
 }
 
-fn side_info(data: &[u8]) -> SideInfo {
-    let lfs_size = data
-        .starts_with(b"version https://git-lfs.github.com/spec/v1\n")
-        .then(|| {
-            String::from_utf8_lossy(data)
-                .lines()
-                .find_map(|l| l.strip_prefix("size ")?.trim().parse().ok())
-        })
-        .flatten();
+fn side_info(repo: &Repo, data: &[u8]) -> SideInfo {
+    if let Some((oid, size)) = parse_lfs_pointer(data) {
+        let hydrated = lfs_is_hydrated(repo, &oid);
+        return SideInfo {
+            size,
+            lfs: true,
+            oid: Some(oid),
+            hydrated,
+        };
+    }
     SideInfo {
-        size: lfs_size.unwrap_or(data.len() as u64),
-        lfs: lfs_size.is_some(),
+        size: data.len() as u64,
+        lfs: false,
+        oid: None,
+        hydrated: true,
     }
 }
 
