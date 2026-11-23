@@ -3,6 +3,40 @@
 Verdicts from the lab rounds (`docs/lab/index.html`), newest first. Each entry: date, Max's words in
 quotes, what came with it, and what isn't applied yet. Feeds the decision log in `docs/spec.md`.
 
+## R6 · 3D preview (2026-11-23)
+
+Brief (Max, 2026-11-23): "a 3D preview of prefabs, fbx, meshes, with texture et al if applicable".
+Before the round: three.js renders it ("A. Three J's"); animations are in scope ("B. Yes, and
+animations"); three compare modes, side by side, onion skin and swipe ("C. Yes, plus de slider (so
+side, onionskin and slider)").
+
+- **Decided:** **R6-A Studio**, plus D's change tint as a toggle. Max: "Studio! But with the added
+  option to toggle the textures in the side by side with the change tint". The shading toggle is
+  Textured / Changes (clay tinted green added, red removed, amber modified).
+- **Decided:** the shading an asset opens in **remembers the last choice**. Max picked "Remember last
+  choice" (Claude's pick was Changes for changed files).
+- **Decided:** in Changes mode **D's legend shows** (each change with why, click flies to it); hidden
+  in Textured. Max picked "Yes, in Changes mode".
+- **Decided:** animation on open **remembers the last choice** (playing or paused). Max picked
+  "Remember last choice" (Claude's pick was paused). Both versions always run the same clip at the
+  same time.
+- **Decided:** the backdrop **follows the app theme**, not A's fixed studio grey. Max picked "Follow
+  app theme".
+- **Decided:** **no turntable**. Max picked "Never".
+- **Decided:** camera: left-drag orbit, right-drag pan, wheel zoom, F frames, double-click frames what
+  you hit. Max picked "Simple + F".
+- **Decided:** **inline where the image diff is, plus Expand** to fill the window. Max picked "Inline +
+  Expand".
+- **Not chosen:** R6-B Inspector panel, R6-C Light table, R6-D Change tint as the whole look (its tint
+  and legend live on inside A). No reason given.
+- **Came with A, not discussed separately:** controls in a floating pill top-right (shading, Wire);
+  video-player transport along the bottom (play, clip picker, scrub, time); stats chip above it
+  (tris, verts, meshes, materials, textures, with deltas); real key-light shadow on an invisible
+  floor; faint grid; the four states drawn on D (new file, missing references in magenta, LFS not
+  downloaded, approximated shader note) carry over to A.
+- **Not applied yet:** nothing is built. The decided combination is drawn as "R6 · As decided" on
+  `docs/lab/viewer3d.html`.
+
 ## R4 · Merge conflicts, Unity first (2026-11-21)
 
 - **Decided:** **R4-A Property table**. Max: "A, as picked". A Unity YAML conflict opens as one row
