@@ -81,4 +81,29 @@ describe("CommandPalette", () => {
     expect(onclose).toHaveBeenCalled();
     expect(repo.oncheckout).toHaveBeenCalledWith("hotfix/sound");
   });
+
+  it("shows git equivalents and skips disabled commands when navigating with arrows", async () => {
+    const repo = mkRepo();
+    const onclose = vi.fn();
+    render(CommandPalette, {
+      repo,
+      onopenrepo: vi.fn(),
+      onscanfolder: vi.fn(),
+      onclone: vi.fn(),
+      onquickswitch: vi.fn(),
+      onshortcuts: vi.fn(),
+      onsettings: vi.fn(),
+      onclose,
+    });
+
+    expect(screen.getByText("git fetch --all")).toBeInTheDocument();
+    const input = screen.getByLabelText("Filter commands");
+    // Step down past Fetch (0), Pull (1), Push (2); Stash (3) is disabled so it should jump to Checkout (4).
+    await fireEvent.keyDown(input, { key: "ArrowDown" });
+    await fireEvent.keyDown(input, { key: "ArrowDown" });
+    await fireEvent.keyDown(input, { key: "ArrowDown" });
+
+    const checkoutOption = screen.getByRole("option", { name: /Checkout branch/ });
+    expect(checkoutOption).toHaveAttribute("aria-selected", "true");
+  });
 });

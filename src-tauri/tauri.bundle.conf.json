@@ -1,0 +1,8 @@
+{
+  "bundle": {
+    "externalBin": ["binaries/gitgud-cli"],
+    "resources": {
+      "resources/git": "resources/git"
+    }
+  }
+}

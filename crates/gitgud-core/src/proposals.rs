@@ -1,7 +1,7 @@
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use gix::ObjectId;
 use serde::{Deserialize, Serialize};
@@ -122,9 +122,10 @@ impl Drop for TempIndexGuard {
     }
 }
 
-/// Deterministic 12-hex-char hunk identifier derived from `path` and changed lines.
+/// Deterministic 12-hex-char hunk identifier derived from `path`, changed lines (line-shift
+/// invariant), and zero-based duplicate-content `occurrence` index within the same file.
 #[must_use]
-pub fn stable_hunk_id(path: &str, hunk: &Hunk) -> String {
+pub fn stable_hunk_id_at(path: &str, hunk: &Hunk, occurrence: usize) -> String {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     let mut feed = |bytes: &[u8]| {
         for &b in bytes {
@@ -134,23 +135,50 @@ pub fn stable_hunk_id(path: &str, hunk: &Hunk) -> String {
     };
     feed(path.as_bytes());
     feed(b"\0");
-    feed(&hunk.old_start.to_le_bytes());
-    feed(&hunk.new_start.to_le_bytes());
     for line in &hunk.lines {
         let stripped = line.text.trim_end_matches(['\r', '\n']);
         match line.kind {
             LineKind::Added => {
                 feed(b"+");
                 feed(stripped.as_bytes());
+                feed(b"\n");
             }
             LineKind::Removed => {
                 feed(b"-");
                 feed(stripped.as_bytes());
+                feed(b"\n");
             }
             LineKind::Context => {}
         }
     }
+    if occurrence > 0 {
+        feed(b"\0");
+        feed(&(occurrence as u64).to_le_bytes());
+    }
     format!("{hash:012x}").chars().take(12).collect()
+}
+
+/// Deterministic 12-hex-char hunk identifier derived from `path` and changed lines.
+#[must_use]
+pub fn stable_hunk_id(path: &str, hunk: &Hunk) -> String {
+    stable_hunk_id_at(path, hunk, 0)
+}
+
+fn assign_hunk_ids<'a>(path: &str, hunks: impl IntoIterator<Item = &'a Hunk>) -> Vec<String> {
+    let mut seen: HashMap<String, usize> = HashMap::new();
+    let mut ids = Vec::new();
+    for hunk in hunks {
+        let base = stable_hunk_id_at(path, hunk, 0);
+        let occ = seen.entry(base.clone()).or_insert(0);
+        let id = if *occ == 0 {
+            base
+        } else {
+            stable_hunk_id_at(path, hunk, *occ)
+        };
+        *occ += 1;
+        ids.push(id);
+    }
+    ids
 }
 
 /// Inspects working copy & staged changes with stable hunk IDs and automatic Unity/LFS risk flags.
@@ -173,8 +201,9 @@ pub fn agent_status(repo: &Repo, git: &GitCli) -> Result<AgentStatus, Error> {
             }
             if let Ok(diff) = repo.worktree_file_diff(&entry.path, side) {
                 binary |= diff.binary;
-                for h in &diff.hunks {
-                    hunks.push(to_agent_hunk(&entry.path, side, h));
+                let ids = assign_hunk_ids(&entry.path, &diff.hunks);
+                for (h, hid) in diff.hunks.iter().zip(ids) {
+                    hunks.push(to_agent_hunk(side, h, hid));
                 }
             }
         }
@@ -194,41 +223,34 @@ pub fn agent_status(repo: &Repo, git: &GitCli) -> Result<AgentStatus, Error> {
     })
 }
 
-/// Creates a commit under `refs/gitgud/proposals/<id>` using an isolated temporary index so the
-/// user's real `.git/index`, working copy, and branches remain completely untouched.
-///
-/// # Errors
-/// [`Error::Refused`] for empty message or empty changeset, or [`Error::Command`] on git failure.
-pub fn create_proposal(
+struct PreparedTree {
+    tree_oid: String,
+    base_id: String,
+    head_oid: Option<ObjectId>,
+    head_tree_id: Option<ObjectId>,
+    selected_paths: Vec<String>,
+}
+
+fn build_proposal_tree(
     repo: &Repo,
     git: &GitCli,
+    status: &Status,
     input: &CreateProposalInput,
-) -> Result<ProposalSummary, Error> {
-    let message = input.message.trim();
-    if message.is_empty() {
-        return Err(Error::Refused(
-            "Proposal commit message cannot be empty".into(),
-        ));
-    }
-
-    let status = repo.status()?;
-    let now = now_secs();
-    let id = unique_proposal_id(repo, now);
+    tmp_idx: &Path,
+) -> Result<PreparedTree, Error> {
+    let _ = fs::remove_file(tmp_idx);
     let root = repo.root();
-    let prop_dir = proposals_dir(repo);
-    fs::create_dir_all(&prop_dir).map_err(read_err)?;
-
-    let tmp_idx = prop_dir.join(format!("tmp-{id}.index"));
-    let _guard = TempIndexGuard(tmp_idx.clone());
-    let _ = fs::remove_file(&tmp_idx);
-
     let gix_repo = repo.gix();
     let head_oid = gix_repo.head_id().ok().map(gix::Id::detach);
     let base_id = head_oid
         .map(|oid| oid.to_string())
         .unwrap_or_else(|| "unborn".into());
+    let head_tree_id = head_oid
+        .and_then(|oid| gix_repo.find_commit(oid).ok())
+        .and_then(|c| c.tree_id().ok())
+        .map(gix::Id::detach);
 
-    let idx_env = [("GIT_INDEX_FILE", tmp_idx.as_path())];
+    let idx_env = [("GIT_INDEX_FILE", tmp_idx)];
     if let Some(oid) = head_oid {
         let hex = oid.to_string();
         git.run_env(root, &["read-tree", &hex], None, &idx_env)?;
@@ -239,6 +261,7 @@ pub fn create_proposal(
         let wanted: HashSet<&str> = input.hunk_ids.iter().map(String::as_str).collect();
         let mut patch_bundle = String::new();
         let mut matched_paths = BTreeSet::new();
+        let mut matched_ids = HashSet::new();
         for entry in &status.entries {
             if !input.paths.is_empty() && !input.paths.iter().any(|p| p == &entry.path) {
                 continue;
@@ -252,15 +275,29 @@ pub fn create_proposal(
                     continue;
                 }
                 if let Ok(hunks) = repo.side_hunks_with_patches(&entry.path, side) {
-                    for (hunk, raw_patch) in hunks {
-                        let hid = stable_hunk_id(&entry.path, &hunk);
+                    let ids = assign_hunk_ids(&entry.path, hunks.iter().map(|(h, _)| h));
+                    for ((_, raw_patch), hid) in hunks.into_iter().zip(ids) {
                         if wanted.contains(hid.as_str()) {
                             patch_bundle.push_str(&raw_patch);
                             matched_paths.insert(entry.path.clone());
+                            matched_ids.insert(hid);
                         }
                     }
                 }
             }
+        }
+        let mut seen_missing = HashSet::new();
+        let missing: Vec<&str> = input
+            .hunk_ids
+            .iter()
+            .map(String::as_str)
+            .filter(|id| !matched_ids.contains(*id) && seen_missing.insert(*id))
+            .collect();
+        if !missing.is_empty() {
+            return Err(Error::Refused(format!(
+                "Unknown or stale hunk ID(s): {}. Refresh status before proposing.",
+                missing.join(", ")
+            )));
         }
         if patch_bundle.is_empty() {
             return Err(Error::Refused(
@@ -287,7 +324,7 @@ pub fn create_proposal(
         }
         let is_unity = find_unity_root(root).is_some();
         let (expanded, _) = if is_unity {
-            expand_meta_pairs(&status, &raw_paths)
+            expand_meta_pairs(status, &raw_paths)
         } else {
             (raw_paths, Vec::new())
         };
@@ -311,19 +348,29 @@ pub fn create_proposal(
         .run_env(root, &["write-tree"], None, &idx_env)?
         .trim()
         .to_owned();
-    if let Some(oid) = head_oid
-        && let Ok(head_commit) = gix_repo.find_commit(oid)
-        && let Ok(tid) = ObjectId::from_hex(tree_oid.as_bytes())
-        && head_commit.tree_id().is_ok_and(|t| t == tid)
-    {
-        return Err(Error::Refused(
-            "Proposal has no changes compared to HEAD".into(),
-        ));
-    }
+    Ok(PreparedTree {
+        tree_oid,
+        base_id,
+        head_oid,
+        head_tree_id,
+        selected_paths,
+    })
+}
 
-    let mut commit_args = vec!["commit-tree", tree_oid.as_str()];
-    if head_oid.is_some() {
-        commit_args.extend(["-p", base_id.as_str()]);
+fn commit_prepared_proposal(
+    repo: &Repo,
+    git: &GitCli,
+    status: &Status,
+    id: &str,
+    now: i64,
+    input: &CreateProposalInput,
+    prepared: PreparedTree,
+) -> Result<ProposalSummary, Error> {
+    let message = input.message.trim();
+    let root = repo.root();
+    let mut commit_args = vec!["commit-tree", prepared.tree_oid.as_str()];
+    if prepared.head_oid.is_some() {
+        commit_args.extend(["-p", prepared.base_id.as_str()]);
     }
     let commit_oid = git
         .run(root, &commit_args, Some(message.as_bytes()))?
@@ -333,14 +380,14 @@ pub fn create_proposal(
     let ref_name = format!("{PROPOSAL_REF_PREFIX}{id}");
     git.run(root, &["update-ref", &ref_name, &commit_oid], None)?;
 
-    let filter: BTreeSet<String> = selected_paths.iter().cloned().collect();
-    let risk_flags = compute_risk_flags(repo, git, &status, Some(&filter));
+    let filter: BTreeSet<String> = prepared.selected_paths.iter().cloned().collect();
+    let risk_flags = compute_risk_flags(repo, git, status, Some(&filter));
 
     let summary = ProposalSummary {
-        id: id.clone(),
+        id: id.to_owned(),
         short_commit: commit_oid.chars().take(7).collect(),
         commit_id: commit_oid,
-        base_id,
+        base_id: prepared.base_id,
         message: message.to_owned(),
         why: input.why.as_deref().map(str::trim).unwrap_or("").to_owned(),
         agent: input
@@ -353,13 +400,52 @@ pub fn create_proposal(
         status: ProposalStatus::Pending,
         created_at: now,
         updated_at: now,
-        files: selected_paths,
+        files: prepared.selected_paths,
         risk_flags,
         comments: Vec::new(),
         head_moved: false,
     };
     save_summary(repo, &summary)?;
     Ok(summary)
+}
+
+/// Creates a commit under `refs/gitgud/proposals/<id>` using an isolated temporary index so the
+/// user's real `.git/index`, working copy, and branches remain completely untouched.
+///
+/// # Errors
+/// [`Error::Refused`] for empty message or empty changeset, or [`Error::Command`] on git failure.
+pub fn create_proposal(
+    repo: &Repo,
+    git: &GitCli,
+    input: &CreateProposalInput,
+) -> Result<ProposalSummary, Error> {
+    let message = input.message.trim();
+    if message.is_empty() {
+        return Err(Error::Refused(
+            "Proposal commit message cannot be empty".into(),
+        ));
+    }
+
+    let status = repo.status()?;
+    let now = now_secs();
+    let id = unique_proposal_id(repo, now);
+    let prop_dir = proposals_dir(repo);
+    fs::create_dir_all(&prop_dir).map_err(read_err)?;
+
+    let tmp_idx = prop_dir.join(format!("tmp-{id}.index"));
+    let _guard = TempIndexGuard(tmp_idx.clone());
+    let prepared = build_proposal_tree(repo, git, &status, input, &tmp_idx)?;
+    if let (Some(head_tid), Ok(tid)) = (
+        prepared.head_tree_id,
+        ObjectId::from_hex(prepared.tree_oid.as_bytes()),
+    ) && head_tid == tid
+    {
+        return Err(Error::Refused(
+            "Proposal has no changes compared to HEAD".into(),
+        ));
+    }
+
+    commit_prepared_proposal(repo, git, &status, &id, now, input, prepared)
 }
 
 /// Lists all recorded proposals in `.git/gitgud/proposals/`, newest first.
@@ -400,6 +486,45 @@ pub fn list_proposals(repo: &Repo) -> Result<Vec<ProposalSummary>, Error> {
             .then_with(|| b.id.cmp(&a.id))
     });
     Ok(out)
+}
+
+/// Result returned by [`wait_for_proposal`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WaitProposalResult {
+    pub proposal: ProposalSummary,
+    pub timed_out: bool,
+}
+
+/// Polls until proposal `id` leaves [`ProposalStatus::Pending`] or `timeout_secs` elapses.
+///
+/// # Errors
+/// [`Error::Refused`] if the proposal doesn't exist, or [`Error::Read`] if metadata fails to read.
+pub fn wait_for_proposal(
+    repo: &Repo,
+    id: &str,
+    timeout_secs: u64,
+    poll_interval: Duration,
+) -> Result<WaitProposalResult, Error> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(timeout_secs);
+    let interval = poll_interval.max(Duration::from_millis(20));
+    loop {
+        let proposal = get_proposal(repo, id)?;
+        if proposal.status != ProposalStatus::Pending {
+            return Ok(WaitProposalResult {
+                proposal,
+                timed_out: false,
+            });
+        }
+        let now = std::time::Instant::now();
+        if now >= deadline {
+            return Ok(WaitProposalResult {
+                proposal,
+                timed_out: true,
+            });
+        }
+        std::thread::sleep(interval.min(deadline - now));
+    }
 }
 
 /// Fetches a single proposal by ID.
@@ -770,7 +895,7 @@ fn lfs_pattern_matches(path: &str, patterns: &[String]) -> bool {
     })
 }
 
-fn to_agent_hunk(path: &str, side: Side, hunk: &Hunk) -> AgentHunk {
+fn to_agent_hunk(side: Side, hunk: &Hunk, id: String) -> AgentHunk {
     let mut added = 0usize;
     let mut removed = 0usize;
     let mut preview = String::new();
@@ -792,7 +917,7 @@ fn to_agent_hunk(path: &str, side: Side, hunk: &Hunk) -> AgentHunk {
         }
     }
     AgentHunk {
-        id: stable_hunk_id(path, hunk),
+        id,
         side,
         header: HunkHeader::from(hunk),
         preview: preview.chars().take(80).collect(),
@@ -880,10 +1005,154 @@ Instead, stage and propose changes cleanly for human review inside gitgud:
 1. Inspect status & stable hunk IDs: `gitgud-cli status --json` (or MCP `status`).
 2. Propose logical commits without modifying the user's index:
    `gitgud-cli propose -m \"<commit message>\" --why \"<why & test evidence>\" --agent <name> --json`
-3. Check human feedback or approval status:
-   `gitgud-cli proposal <id> --json` (or MCP `proposal`).
+3. Wait for human review feedback or approval:
+   `gitgud-cli proposal <id> --wait --json` (or MCP `proposal_wait` / `proposal`).
 4. For Unity binary/LFS assets, acquire locks via `gitgud-cli locks lock <path>`.
 "
+}
+
+const HOOK_COMMAND: &str = "gitgud-cli agent hook --event stop --agent claude --json";
+
+/// JSON snippet for `.claude/settings.local.json` configuring the opt-in Stop hook helper.
+#[must_use]
+pub fn claude_stop_hook_snippet() -> serde_json::Value {
+    serde_json::json!({
+        "hooks": {
+            "Stop": [
+                {
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": HOOK_COMMAND
+                        }
+                    ]
+                }
+            ]
+        }
+    })
+}
+
+fn contains_gitgud_hook(val: &serde_json::Value) -> bool {
+    match val {
+        serde_json::Value::String(s) => s.contains("gitgud-cli agent hook"),
+        serde_json::Value::Array(arr) => arr.iter().any(contains_gitgud_hook),
+        serde_json::Value::Object(map) => map.values().any(contains_gitgud_hook),
+        _ => false,
+    }
+}
+
+/// Idempotently writes or updates `.claude/settings.local.json` with gitgud's opt-in Stop hook.
+///
+/// # Errors
+/// [`Error::Read`] if reading, parsing, or writing `.claude/settings.local.json` fails.
+pub fn write_claude_stop_hook(repo_root: &Path) -> Result<String, Error> {
+    let rel = ".claude/settings.local.json";
+    let dest = repo_root.join(rel);
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent).map_err(read_err)?;
+    }
+
+    let mut root = match fs::read_to_string(&dest) {
+        Ok(raw) if !raw.trim().is_empty() => serde_json::from_str::<serde_json::Value>(&raw)
+            .map_err(|e| Error::Read(format!("invalid JSON in {rel}: {e}")))?,
+        Ok(_) => serde_json::json!({}),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => serde_json::json!({}),
+        Err(e) => return Err(read_err(e)),
+    };
+
+    let root_obj = root
+        .as_object_mut()
+        .ok_or_else(|| Error::Read(format!("{rel} must contain a JSON object")))?;
+    let hooks_val = root_obj
+        .entry("hooks")
+        .or_insert_with(|| serde_json::json!({}));
+    let hooks_obj = hooks_val
+        .as_object_mut()
+        .ok_or_else(|| Error::Read(format!("{rel} hooks field must be an object")))?;
+    let stop_val = hooks_obj
+        .entry("Stop")
+        .or_insert_with(|| serde_json::json!([]));
+    let stop_arr = stop_val
+        .as_array_mut()
+        .ok_or_else(|| Error::Read(format!("{rel} hooks.Stop must be an array")))?;
+
+    if !stop_arr.iter().any(contains_gitgud_hook) {
+        stop_arr.push(serde_json::json!({
+            "hooks": [{ "type": "command", "command": HOOK_COMMAND }]
+        }));
+    }
+
+    let rendered = serde_json::to_string_pretty(&root).map_err(read_err)?;
+    fs::write(&dest, format!("{rendered}\n")).map_err(read_err)?;
+    Ok(rel.to_owned())
+}
+
+/// Creates a WIP proposal for uncommitted changes unless the worktree is clean or an active
+/// `Pending` proposal from `agent` already captures the exact same tree state.
+///
+/// # Errors
+/// [`Error::Read`] or [`Error::Command`] on git failure.
+pub fn run_agent_hook(
+    repo: &Repo,
+    git: &GitCli,
+    agent: &str,
+    message: Option<&str>,
+) -> Result<Option<ProposalSummary>, Error> {
+    let agent = agent.trim();
+    let agent = if agent.is_empty() { "agent" } else { agent };
+    let status = repo.status()?;
+    if status.entries.is_empty() {
+        return Ok(None);
+    }
+
+    let now = now_secs();
+    let id = unique_proposal_id(repo, now);
+    let prop_dir = proposals_dir(repo);
+    fs::create_dir_all(&prop_dir).map_err(read_err)?;
+    let tmp_idx = prop_dir.join(format!("tmp-{id}.index"));
+    let _guard = TempIndexGuard(tmp_idx.clone());
+
+    let input = CreateProposalInput {
+        message: String::new(),
+        why: Some("Auto-proposed via gitgud agent Stop hook".into()),
+        agent: Some(agent.to_owned()),
+        paths: Vec::new(),
+        hunk_ids: Vec::new(),
+    };
+    let prepared = build_proposal_tree(repo, git, &status, &input, &tmp_idx)?;
+    let Ok(tid) = ObjectId::from_hex(prepared.tree_oid.as_bytes()) else {
+        return Ok(None);
+    };
+    if prepared.head_tree_id == Some(tid) {
+        return Ok(None);
+    }
+
+    let gix_repo = repo.gix();
+    let already_pending = list_proposals(repo)?.into_iter().any(|p| {
+        p.status == ProposalStatus::Pending
+            && p.agent == agent
+            && ObjectId::from_hex(p.commit_id.as_bytes())
+                .ok()
+                .and_then(|cid| gix_repo.find_commit(cid).ok())
+                .and_then(|c| c.tree_id().ok())
+                .is_some_and(|existing_tid| existing_tid == tid)
+    });
+    if already_pending {
+        return Ok(None);
+    }
+
+    let default_msg = format!("wip({agent}): auto-proposed session changes");
+    let msg = message
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(&default_msg)
+        .to_owned();
+    let final_input = CreateProposalInput {
+        message: msg,
+        ..input
+    };
+    let summary = commit_prepared_proposal(repo, git, &status, &id, now, &final_input, prepared)?;
+    Ok(Some(summary))
 }
 
 /// Writes coding agent instructions for `target` inside `repo_root` and returns the relative path written.

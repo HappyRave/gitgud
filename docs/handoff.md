@@ -45,31 +45,27 @@ Written 2026-11-22 for the next session picking up `gitgud`.
 
 ## Things to do (gaps, verification & packaging)
 
-1. **Playwright E2E & live WebView2 GUI audit (high priority)**
-   - Run existing `e2e/` suite (`pnpm e2e`) and launch `pnpm tauri dev` to inspect M1–M9 visually across Light/Dark themes, Standard/Compact row density (20/24 px), and standard vs ultrawide (`>= 2400 px`) layouts.
-   - Expand `e2e/` tests to cover M1–M9 flows (Library/tabs/clone, Command Palette/Settings, Smart Merge verify/locks, Tags/Blame/Reflog, Unity YAML structural diff + R4-A table, Proposal Inbox + `ProposalView`, Stacks + Restack, AI draft, Linked worktrees).
-   - Verify Windows WebView2 accelerator keys (`AreBrowserAcceleratorKeysEnabled = false` in native Tauri WebView configuration if `Ctrl+P` / `Ctrl+F` / `Ctrl+R` still trigger browser defaults on Windows — `docs/spec.md` §2).
-2. **Real-world Unity + LFS testing & performance benchmarks**
-   - Test structural diff and R4-A property table merge against real complex Unity scenes/prefabs (nested prefab instances, prefab variants, Stripped objects, YAML flow collections) and confirm `UnityYAMLMerge.exe` integration.
-   - Smoke-test TGA and flat PSD decoding performance (target: 2048px texture `<= 300 ms`, PSD up to 100 MB `<= 1.5 s` in `docs/spec.md` §6).
-   - Verify GitHub LFS lock/unlock/unlock-on-push and Bitbucket Cloud lock-surface hiding (`O1`) against live remotes.
-   - Measure Sourcetree comparison baseline (`O9`) and 150-repo cold/warm Library load (`S2` / `§6`) using Settings' Local latency panel.
-3. **UI/UX design polish (`O3` in `docs/spec.md`)**
-   - Screens marked "no Sketch" in `docs/spec.md` §4 (Settings modal sections, `ProposalView`, `TagDialog`, `CloneDialog`, `ScanFolderDialog`, `CommandPalette`, `ErrorBanner`, Compact density, ultrawide 2-column inspector) were built directly from `app.css` tokens and need Max's visual review/polish in live rendering.
-4. **Release & installer packaging**
-   - Test `pnpm tauri build` Windows NSIS/MSI installer end-to-end.
-   - Bundle or expose `gitgud-cli` (`crates/gitgud-cli`) alongside the desktop installer so `gitgud-cli mcp` works cleanly on `PATH` for Claude Code / Codex / Cursor.
-   - Bundle fallback Git + `git-lfs` (`Q17`, `O8`) or document minimum version enforcement cleanly if distributing beyond Max's machine.
+1. **Playwright E2E & live WebView2 GUI audit (`pnpm e2e` 33/33 passed; manual theme/density/key check pending)**
+   - Done: isolated `LibraryStore` via `GITGUD_LIBRARY`, ran full Windows WebView2 CDP E2E suite (`pnpm e2e` -> 33/33 passed in 130.6s across M1–M9, including `10k`-commit graph open in `125.6 ms` and outside-edit refresh in `202 ms`), and fixed app bugs surfaced by E2E (`(bundled)` status-strip spacing in `LibraryView`/`RepoView`, redundant raw `<details>` suppression in `ErrorBanner`, `watch.rs` `100 ms` debounce).
+   - Remaining: launch `pnpm tauri dev` for visual spot-checks across Light/Dark themes, Standard/Compact row density (`24`/`20` px), ultrawide (`>= 2400 px`) layout, and interactive WebView2 accelerator keys (`Ctrl+P` / `Ctrl+F` / `Ctrl+R`).
+2. **Real-world Unity + LFS testing & performance benchmarks (headless targets passed; live remote checks pending)**
+   - Done headlessly: `2048 px` TGA decode (`52.5 ms <= 300 ms`) & `100 MB` flat PSD decode (`358.7 ms <= 1500 ms`) after `adler32`/`crc32` optimization, `150`-repo Library refresh (`446.0 ms` in release), and complex nested `PrefabInstance` + `stripped` + flow/sequence collection YAML stress tests.
+   - Remaining: test against live Unity project files (`UnityYAMLMerge.exe`), verify GitHub LFS lock/unlock/unlock-on-push & Bitbucket Cloud lock-surface hiding (`O1`) against live remotes, and measure Sourcetree comparison baseline (`O9`).
+3. **UI/UX design polish (`O3` in `docs/spec.md` — CSS/layout pass + `docs/lab/polish.html` done; live visual review pending)**
+   - Done offline: CSS token/density/dark-theme/ultrawide fixes (`app.css`, dialogs, inspectors, lists), Linear-style `?` shortcut filter, Sublime Merge-style CLI hints in `Ctrl+K`, 2-column Settings rail + Git/LFS badges, viewport-clamped `ContextMenu`, click-outside `TabBar` overflow, aligned level-dots app icon, and `docs/lab/polish.html`.
+   - Remaining: Max's live review in `pnpm tauri dev`.
+4. **Release & installer packaging (implemented via `pnpm package`; interactive installer test pending)**
+   - Done: bundled MinGit `2.56.1` + `git-lfs` `3.8.1` fallback (`scripts/fetch-bundled-git.ps1`, `git.rs`, `cli.rs`, `ToolDiagnostics` / Settings / status strip), `gitgud-cli` sidecar (`scripts/prepare-bundle.ps1`, `src-tauri/tauri.bundle.conf.json`), custom level-dots icon (`src-tauri/icons/`), and current-user Windows NSIS installer (`src-tauri/tauri.conf.json`, `src-tauri/windows/hooks.nsh` adding/removing `$INSTDIR` on user `PATH`).
+   - Remaining: manual interactive run/uninstall test of `target/release/bundle/nsis/gitgud_0.1.0_x64-setup.exe` on clean/target Windows user profile and code-signing decision if distributing broadly.
 5. **Remaining open / follow-up engineering items**
    - History edits (`R2-A`) over merge commits or the root commit are intentionally refused for now (`CLAUDE.md`).
-   - Align snapshot pruning in `snapshot.rs` with op-log 30d/2000-entry retention + `git gc` cleanup (`CLAUDE.md` notes snapshot pruning isn't wired to retention yet).
-   - Open agent ergonomics questions in `docs/spec.md` §8: `O2` (line-shift hunk ID stability between `status` and `propose`), `O6` (MCP elicitation vs polling `proposal`), `O7` (hook-driven auto-proposals).
-   - Verify Narrator / screen-reader accessibility (`O4`) and 4K DPR-2 canvas crispness (`O5`).
+   - Snapshot pruning (`snapshot.rs::Snapshots::sync_kept`) is now wired into `OpLog::prune_now` & retention + `git gc --auto`, and `OpLog::stats` / `OpLogPanel` include LFS-only snapshot object sizes and reclaimable prune previews.
+   - `O2` (line-shift + strict missing-ID hunk validation), `O6` (`proposal_wait` / `--wait`), and `O7` (explicit `propose` default + opt-in `agent hook`, `agent setup --with-hooks`, and Settings UI Claude Stop hook checkbox) are implemented per Max's 2026-11-23 decisions.
+   - `O4` (`Graph.svelte` virtualized `aria-activedescendant`/`aria-setsize`/`aria-posinset`) and `O5` (reactive DPR `matchMedia` + `ResizeObserver` canvas scaling) code and unit tests are landed; live Windows Narrator and physical 4K monitor confirmation remain pending.
    - Deferred **later** items (`docs/spec.md` §3.6–§3.8, out of v1 scope unless requested): rendered prefab thumbnails (`Q6`), sparse checkout / `lfs.fetchinclude` UI (`Q7`), Unity Editor package (`Q5`), Artist mode (`Q3`), multi-window support.
 
 ## Things to do next (recommended first session order)
 
-1. Run `pnpm e2e` against the debug build and fix any selectors/regressions in existing E2E specs.
-2. Start `pnpm tauri dev`, open a real Unity + LFS repo plus a multi-repo Library folder, and do a structured walkthrough of M1–M9 UI + Settings' **Local latency** timings.
-3. Address any layout polish, WebView2 accelerator (`Ctrl+P`/`Ctrl+F`), or Unity YAML parser edge cases uncovered on real `.unity`/`.prefab` assets.
-4. Wire snapshot pruning into `OpLog::prune_now`, add M1–M9 `e2e/` coverage, and verify `pnpm tauri build` packaging with `gitgud-cli`.
+1. Test the built NSIS installer (`target/release/bundle/nsis/gitgud_0.1.0_x64-setup.exe`) interactively on a Windows user profile (install, CLI `PATH`, uninstall).
+2. Start `pnpm tauri dev`, open a real Unity + LFS repo plus a multi-repo Library folder, and do a structured walkthrough of M1–M9 themes/density, WebView2 accelerator keys (`Ctrl+P`/`Ctrl+F`/`Ctrl+R`), + Settings' **Local latency** timings.
+3. Address any layout polish or Unity YAML parser edge cases uncovered on real `.unity`/`.prefab` assets, plus live GitHub/Bitbucket remote LFS lock checks (`O1`) and Sourcetree baseline (`O9`).

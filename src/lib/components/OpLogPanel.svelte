@@ -112,7 +112,9 @@
     <div class="statsbar" aria-label="Op log storage">
       <span>{stats.entryCount} {stats.entryCount === 1 ? "entry" : "entries"} · {formatBytes(stats.totalBytes)}</span>
       {#if stats.prunableCount > 0 && onprune}
-        <button type="button" class="lk" disabled={busy} onclick={onprune}>Prune old ({stats.prunableCount})</button>
+        <button type="button" class="lk" disabled={busy} onclick={onprune}>
+          Prune old ({stats.prunableCount} · {formatBytes(stats.reclaimableBytes)})
+        </button>
       {/if}
     </div>
   {/if}
@@ -141,6 +143,7 @@
     display: flex;
     flex-direction: column;
     min-height: 0;
+    height: 100%;
   }
   h2 {
     margin: 0;
@@ -150,11 +153,16 @@
     margin: 0;
     padding: 2px 0;
   }
+  .oplog > ul {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+  }
   li {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
-    height: 24px;
+    height: var(--row-h, 24px);
     padding-right: 6px;
   }
   li:hover {
@@ -183,12 +191,12 @@
   }
   .tm {
     color: var(--muted);
-    font: 10.5px/24px var(--mono);
+    font: 10.5px/var(--row-h, 24px) var(--mono);
   }
   .t {
     overflow: hidden;
     text-overflow: ellipsis;
-    line-height: 24px;
+    line-height: var(--row-h, 24px);
   }
   .lk {
     all: unset;

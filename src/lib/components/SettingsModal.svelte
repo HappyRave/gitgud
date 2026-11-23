@@ -41,6 +41,7 @@
     onclose: () => void;
   } = $props();
 
+  let activeSection = $state("sec-identity");
   let scope = $state<"global" | "local">("global");
   let userName = $state("");
   let userEmail = $state("");
@@ -56,11 +57,17 @@
   let pruningLfs = $state(false);
   let aiStatus = $state<AiProviderStatus | null>(null);
   let agentTarget = $state<"claude" | "codex" | "cursor" | "generic">("claude");
+  let agentWithHooks = $state(false);
   let writingAgentSetup = $state(false);
   let agentSetupPath = $state<string | null>(null);
   let timings = $state<TimingSample[]>([]);
   let refreshingIndex = $state(false);
   let indexRefreshedMsg = $state<string | null>(null);
+
+  function jumpTo(id: string) {
+    activeSection = id;
+    document.getElementById(id)?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+  }
 
   async function runRefreshIndex() {
     if (activeRepoId == null || refreshingIndex) {
@@ -113,7 +120,7 @@
     error = null;
     agentSetupPath = null;
     try {
-      agentSetupPath = await agentSetup(activeRepoId, agentTarget);
+      agentSetupPath = await agentSetup(activeRepoId, agentTarget, agentTarget === "claude" && agentWithHooks);
     } catch (err) {
       error = String(err);
     } finally {
@@ -223,7 +230,12 @@
     onkeydown={(e) => e.key === "Escape" && (e.preventDefault(), onclose())}
   >
     <div class="hdr">
-      <h2>Settings</h2>
+      <div class="hdr-title">
+        <h2>Settings</h2>
+        {#if activeRepoName}
+          <span class="badge">{activeRepoName}</span>
+        {/if}
+      </div>
       <button type="button" class="bare x" aria-label="Close" onclick={onclose}>✕</button>
     </div>
 
@@ -231,197 +243,258 @@
       <p class="err" role="alert">{error}</p>
     {/if}
 
-    <section class="sec">
-      <div class="sec-h">
-        <h3>Git Identity</h3>
-        <div class="seg" role="group" aria-label="Identity scope">
+    <div class="layout">
+      <nav class="rail" aria-label="Settings sections">
+        <button
+          type="button"
+          class="bare rail-btn"
+          class:on={activeSection === "sec-identity"}
+          onclick={() => jumpTo("sec-identity")}>Git Identity</button
+        >
+        <button
+          type="button"
+          class="bare rail-btn"
+          class:on={activeSection === "sec-appearance"}
+          onclick={() => jumpTo("sec-appearance")}>Appearance &amp; Diff</button
+        >
+        <button
+          type="button"
+          class="bare rail-btn"
+          class:on={activeSection === "sec-tools"}
+          onclick={() => jumpTo("sec-tools")}>Tools &amp; Diagnostics</button
+        >
+        {#if unitySetup?.isUnity}
           <button
             type="button"
-            class="segb"
-            class:on={scope === "global"}
-            aria-pressed={scope === "global"}
-            onclick={() => loadIdentity("global")}>Global</button
+            class="bare rail-btn"
+            class:on={activeSection === "sec-unity"}
+            onclick={() => jumpTo("sec-unity")}>Unity Setup</button
           >
-          <button
-            type="button"
-            class="segb"
-            class:on={scope === "local"}
-            aria-pressed={scope === "local"}
-            disabled={activeRepoId === null}
-            onclick={() => loadIdentity("local")}>{activeRepoName ?? "Current repo"}</button
-          >
-        </div>
-      </div>
-      <form class="idform" onsubmit={saveIdentity}>
-        <label>
-          <span>user.name</span>
-          <input type="text" bind:value={userName} placeholder="Your Name" />
-        </label>
-        <label>
-          <span>user.email</span>
-          <input type="email" bind:value={userEmail} placeholder="you@example.com" />
-        </label>
-        <div class="idact">
-          <button type="submit" class="pri" disabled={saving}>{saving ? "Saving…" : "Save identity"}</button>
-          {#if savedMsg}<span class="ok">{savedMsg}</span>{/if}
-        </div>
-      </form>
-    </section>
-
-    <section class="sec">
-      <h3>Appearance & Diff</h3>
-      <div class="prefs">
-        <label>
-          <span>Theme</span>
-          <select value={prefs.theme} onchange={(e) => setTheme(e.currentTarget.value as ThemeMode)}>
-            <option value="system">System</option>
-            <option value="light">Light</option>
-            <option value="dark">Dark</option>
-          </select>
-        </label>
-        <label>
-          <span>Density</span>
-          <select value={prefs.density} onchange={(e) => setDensity(e.currentTarget.value as Density)}>
-            <option value="standard">Standard (24px)</option>
-            <option value="compact">Compact (20px)</option>
-          </select>
-        </label>
-        <label>
-          <span>Diff layout</span>
-          <select value={prefs.diffLayout} onchange={(e) => setDiffLayout(e.currentTarget.value as DiffLayout)}>
-            <option value="auto">Auto (split at ≥1400px)</option>
-            <option value="unified">Unified</option>
-            <option value="split">Side by side</option>
-          </select>
-        </label>
-        <label class="chk">
-          <input type="checkbox" checked={prefs.ignoreWhitespace} onchange={toggleIgnoreWhitespace} />
-          <span>Ignore whitespace changes in diffs</span>
-        </label>
-      </div>
-    </section>
-
-    <section class="sec">
-      <h3>Tools & Diagnostics</h3>
-      {#if diag}
-        <dl class="diag">
-          <dt>Git version</dt>
-          <dd>{diag.gitVersion}</dd>
-          <dt>Git binary</dt>
-          <dd class="mono">{diag.gitPath}</dd>
-          <dt>Git LFS</dt>
-          <dd>{diag.lfsVersion ?? "Not installed"}</dd>
-          <dt>AI CLIs</dt>
-          <dd>
-            {#if aiStatus === null}
-              Checking…
-            {:else if aiStatus.cliAvailable.length > 0}
-              {aiStatus.cliAvailable.join(", ")}
-            {:else if aiStatus.configuredEnvKey}
-              API key env var detected
-            {:else}
-              None detected on PATH
-            {/if}
-          </dd>
-          {#if activeRepoId != null}
-            <dt>Commit graph</dt>
-            <dd class="gcache">
-              <span>{commitGraph === null ? "Unknown" : commitGraph ? "Built" : "Not built"}</span>
-              <button type="button" disabled={optimizingGraph} onclick={optimizeGraph}>
-                {optimizingGraph ? "Building…" : commitGraph ? "Rebuild graph cache" : "Optimize graph cache"}
-              </button>
-              <button type="button" disabled={refreshingIndex} onclick={runRefreshIndex}>
-                {refreshingIndex ? "Refreshing…" : "Refresh index"}
-              </button>
-              {#if indexRefreshedMsg}<span class="ok">{indexRefreshedMsg}</span>{/if}
-            </dd>
-            {#if lfsStats && (lfsStats.objectCount > 0 || diag.lfsVersion)}
-              <dt>LFS cache</dt>
-              <dd class="gcache">
-                <span>
-                  {lfsStats.objectCount} object{lfsStats.objectCount === 1 ? "" : "s"} · {formatBytes(lfsStats.totalBytes)}
-                  {#if lfsStats.prunableCount > 0}
-                    · {lfsStats.prunableCount} prunable ({formatBytes(lfsStats.prunableBytes)})
-                  {/if}
-                </span>
-                <button type="button" disabled={pruningLfs || lfsStats.prunableCount === 0} onclick={pruneLfs}>
-                  {pruningLfs ? "Pruning…" : "Prune LFS cache"}
-                </button>
-              </dd>
-            {/if}
-          {/if}
-        </dl>
-      {:else}
-        <p class="ab">Checking installed tools…</p>
-      {/if}
-      {#if timings.length > 0}
-        <details class="latency">
-          <summary>Local latency ({timings.length} recent ops)</summary>
-          <ul class="lat-list">
-            {#each timings.slice(0, 10) as sample, i (`${sample.op}:${sample.at}:${i}`)}
-              <li><span class="lat-op">{sample.op}</span><span class="mono">{sample.elapsedMs} ms</span></li>
-            {/each}
-          </ul>
-        </details>
-      {/if}
-    </section>
-
-    {#if unitySetup?.isUnity}
-      <section class="sec" aria-label="Unity Project Setup">
-        <h3>Unity Project Setup</h3>
-        <dl class="diag">
-          <dt>Serialization</dt>
-          <dd>
-            {unitySetup.forceTextOk
-              ? "Force Text ✓"
-              : `Mode ${unitySetup.serializationMode ?? "unknown"} — set Asset Serialization to Force Text in Unity`}
-          </dd>
-          <dt>.gitignore</dt>
-          <dd>
-            {unitySetup.gitignoreMissing.length === 0
-              ? "Standard Unity ignores present ✓"
-              : `Missing ${unitySetup.gitignoreMissing.join(", ")}`}
-          </dd>
-          <dt>.gitattributes</dt>
-          <dd>
-            {unitySetup.gitattributesMissing.length === 0
-              ? "Standard Unity rules present ✓"
-              : `Missing ${unitySetup.gitattributesMissing.length} standard rule(s)`}
-          </dd>
-        </dl>
-        {#if unitySetup.gitignoreMissing.length > 0 || unitySetup.gitattributesMissing.length > 0}
-          <div class="usetup-act">
-            <button type="button" class="pri" disabled={fixingUnitySetup} onclick={fixUnitySetup}>
-              {fixingUnitySetup ? "Updating…" : "Fix Unity .gitignore / .gitattributes"}
-            </button>
-          </div>
         {/if}
-      </section>
-    {/if}
+        {#if activeRepoId != null}
+          <button
+            type="button"
+            class="bare rail-btn"
+            class:on={activeSection === "sec-agents"}
+            onclick={() => jumpTo("sec-agents")}>Coding Agents</button
+          >
+        {/if}
+      </nav>
 
-    {#if activeRepoId != null}
-      <section class="sec" aria-label="Coding Agents">
-        <h3>Coding Agents (CLI / MCP)</h3>
-        <div class="agent-row">
-          <label class="agent-lbl">
-            <span>Target</span>
-            <select aria-label="Agent target" bind:value={agentTarget}>
-              <option value="claude">Claude Code</option>
-              <option value="codex">Codex</option>
-              <option value="cursor">Cursor</option>
-              <option value="generic">Generic</option>
-            </select>
-          </label>
-          <button type="button" disabled={writingAgentSetup} onclick={writeAgentConfig}>
-            {writingAgentSetup ? "Writing…" : "Write agent instructions"}
-          </button>
-          {#if agentSetupPath}
-            <span class="ok">Wrote {agentSetupPath}</span>
+      <div class="content">
+        <section id="sec-identity" class="sec">
+          <div class="sec-h">
+            <h3>Git Identity</h3>
+            <div class="seg" role="group" aria-label="Identity scope">
+              <button
+                type="button"
+                class="segb"
+                class:on={scope === "global"}
+                aria-pressed={scope === "global"}
+                onclick={() => loadIdentity("global")}>Global</button
+              >
+              <button
+                type="button"
+                class="segb"
+                class:on={scope === "local"}
+                aria-pressed={scope === "local"}
+                disabled={activeRepoId === null}
+                onclick={() => loadIdentity("local")}>{activeRepoName ?? "Current repo"}</button
+              >
+            </div>
+          </div>
+          <form class="idform" onsubmit={saveIdentity}>
+            <label>
+              <span>user.name</span>
+              <input type="text" bind:value={userName} placeholder="Your Name" />
+            </label>
+            <label>
+              <span>user.email</span>
+              <input type="email" bind:value={userEmail} placeholder="you@example.com" />
+            </label>
+            <div class="idact">
+              <button type="submit" class="pri" disabled={saving}>{saving ? "Saving…" : "Save identity"}</button>
+              {#if savedMsg}<span class="ok">{savedMsg}</span>{/if}
+            </div>
+          </form>
+        </section>
+
+        <section id="sec-appearance" class="sec">
+          <h3>Appearance &amp; Diff</h3>
+          <div class="prefs">
+            <label>
+              <span>Theme</span>
+              <select value={prefs.theme} onchange={(e) => setTheme(e.currentTarget.value as ThemeMode)}>
+                <option value="system">System</option>
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+              </select>
+            </label>
+            <label>
+              <span>Density</span>
+              <select value={prefs.density} onchange={(e) => setDensity(e.currentTarget.value as Density)}>
+                <option value="standard">Standard (24px)</option>
+                <option value="compact">Compact (20px)</option>
+              </select>
+            </label>
+            <label>
+              <span>Diff layout</span>
+              <select value={prefs.diffLayout} onchange={(e) => setDiffLayout(e.currentTarget.value as DiffLayout)}>
+                <option value="auto">Auto (split at ≥1400px)</option>
+                <option value="unified">Unified</option>
+                <option value="split">Side by side</option>
+              </select>
+            </label>
+            <label class="chk">
+              <input type="checkbox" checked={prefs.ignoreWhitespace} onchange={toggleIgnoreWhitespace} />
+              <span>Ignore whitespace changes in diffs</span>
+            </label>
+          </div>
+        </section>
+
+        <section id="sec-tools" class="sec">
+          <h3>Tools &amp; Diagnostics</h3>
+          {#if diag}
+            <dl class="diag">
+              <dt>Git version</dt>
+              <dd class="gcache">
+                <span>{diag.gitVersion}</span>
+                {#if diag.gitSource === "bundled"}
+                  <span class="badge warn" title="Using bundled fallback Git (system Git missing or older than 2.45.2)"
+                    >bundled</span
+                  >
+                {:else if diag.gitSource === "system"}
+                  <span class="badge">system</span>
+                {/if}
+              </dd>
+              <dt>Git binary</dt>
+              <dd class="mono">{diag.gitPath}</dd>
+              <dt>Git LFS</dt>
+              <dd class="gcache">
+                <span>{diag.lfsVersion ?? "Not installed"}</span>
+                {#if diag.lfsVersion && diag.lfsOk === false}
+                  <span class="badge warn" title="git-lfs 3.3 or newer is recommended">&lt; 3.3 floor</span>
+                {/if}
+              </dd>
+              <dt>AI CLIs</dt>
+              <dd>
+                {#if aiStatus === null}
+                  Checking…
+                {:else if aiStatus.cliAvailable.length > 0}
+                  {aiStatus.cliAvailable.join(", ")}
+                {:else if aiStatus.configuredEnvKey}
+                  API key env var detected
+                {:else}
+                  None detected on PATH
+                {/if}
+              </dd>
+              {#if activeRepoId != null}
+                <dt>Commit graph</dt>
+                <dd class="gcache">
+                  <span>{commitGraph === null ? "Unknown" : commitGraph ? "Built" : "Not built"}</span>
+                  <button type="button" disabled={optimizingGraph} onclick={optimizeGraph}>
+                    {optimizingGraph ? "Building…" : commitGraph ? "Rebuild graph cache" : "Optimize graph cache"}
+                  </button>
+                  <button type="button" disabled={refreshingIndex} onclick={runRefreshIndex}>
+                    {refreshingIndex ? "Refreshing…" : "Refresh index"}
+                  </button>
+                  {#if indexRefreshedMsg}<span class="ok">{indexRefreshedMsg}</span>{/if}
+                </dd>
+                {#if lfsStats && (lfsStats.objectCount > 0 || diag.lfsVersion)}
+                  <dt>LFS cache</dt>
+                  <dd class="gcache">
+                    <span>
+                      {lfsStats.objectCount} object{lfsStats.objectCount === 1 ? "" : "s"} · {formatBytes(lfsStats.totalBytes)}
+                      {#if lfsStats.prunableCount > 0}
+                        · {lfsStats.prunableCount} prunable ({formatBytes(lfsStats.prunableBytes)})
+                      {/if}
+                    </span>
+                    <button type="button" disabled={pruningLfs || lfsStats.prunableCount === 0} onclick={pruneLfs}>
+                      {pruningLfs ? "Pruning…" : "Prune LFS cache"}
+                    </button>
+                  </dd>
+                {/if}
+              {/if}
+            </dl>
+          {:else}
+            <p class="ab">Checking installed tools…</p>
           {/if}
-        </div>
-        <p class="mcp-hint">MCP server: <code class="mono">gitgud-cli mcp</code></p>
-      </section>
-    {/if}
+          {#if timings.length > 0}
+            <details class="latency">
+              <summary>Local latency ({timings.length} recent ops)</summary>
+              <ul class="lat-list">
+                {#each timings.slice(0, 10) as sample, i (`${sample.op}:${sample.at}:${i}`)}
+                  <li><span class="lat-op">{sample.op}</span><span class="mono">{sample.elapsedMs} ms</span></li>
+                {/each}
+              </ul>
+            </details>
+          {/if}
+        </section>
+
+        {#if unitySetup?.isUnity}
+          <section id="sec-unity" class="sec" aria-label="Unity Project Setup">
+            <h3>Unity Project Setup</h3>
+            <dl class="diag">
+              <dt>Serialization</dt>
+              <dd>
+                {unitySetup.forceTextOk
+                  ? "Force Text ✓"
+                  : `Mode ${unitySetup.serializationMode ?? "unknown"} — set Asset Serialization to Force Text in Unity`}
+              </dd>
+              <dt>.gitignore</dt>
+              <dd>
+                {unitySetup.gitignoreMissing.length === 0
+                  ? "Standard Unity ignores present ✓"
+                  : `Missing ${unitySetup.gitignoreMissing.join(", ")}`}
+              </dd>
+              <dt>.gitattributes</dt>
+              <dd>
+                {unitySetup.gitattributesMissing.length === 0
+                  ? "Standard Unity rules present ✓"
+                  : `Missing ${unitySetup.gitattributesMissing.length} standard rule(s)`}
+              </dd>
+            </dl>
+            {#if unitySetup.gitignoreMissing.length > 0 || unitySetup.gitattributesMissing.length > 0}
+              <div class="usetup-act">
+                <button type="button" class="pri" disabled={fixingUnitySetup} onclick={fixUnitySetup}>
+                  {fixingUnitySetup ? "Updating…" : "Fix Unity .gitignore / .gitattributes"}
+                </button>
+              </div>
+            {/if}
+          </section>
+        {/if}
+
+        {#if activeRepoId != null}
+          <section id="sec-agents" class="sec" aria-label="Coding Agents">
+            <h3>Coding Agents (CLI / MCP)</h3>
+            <div class="agent-row">
+              <label class="agent-lbl">
+                <span>Target</span>
+                <select aria-label="Agent target" bind:value={agentTarget}>
+                  <option value="claude">Claude Code</option>
+                  <option value="codex">Codex</option>
+                  <option value="cursor">Cursor</option>
+                  <option value="generic">Generic</option>
+                </select>
+              </label>
+              <button type="button" disabled={writingAgentSetup} onclick={writeAgentConfig}>
+                {writingAgentSetup ? "Writing…" : "Write agent instructions"}
+              </button>
+              {#if agentSetupPath}
+                <span class="ok">Wrote {agentSetupPath}</span>
+              {/if}
+            </div>
+            {#if agentTarget === "claude"}
+              <label class="chk">
+                <input type="checkbox" bind:checked={agentWithHooks} />
+                <span>Install Claude Stop hook (.claude/settings.local.json)</span>
+              </label>
+            {/if}
+            <p class="mcp-hint">MCP server: <code class="mono">gitgud-cli mcp</code></p>
+          </section>
+        {/if}
+      </div>
+    </div>
   </div>
 </div>
 
@@ -436,35 +509,79 @@
     z-index: 40;
   }
   .modal {
-    width: min(560px, 94vw);
+    width: min(740px, 94vw);
     max-height: 86vh;
-    overflow: auto;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
     background: var(--panel);
     border: 1px solid var(--line);
     border-radius: 10px;
-    padding: 16px 18px;
     box-shadow: 0 18px 46px rgba(0, 0, 0, 0.28);
   }
   .hdr {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 12px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--line);
+    flex: none;
+  }
+  .hdr-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
   }
   h2 {
     margin: 0;
     font: 600 15px var(--display);
   }
+  .layout {
+    display: grid;
+    grid-template-columns: 168px minmax(0, 1fr);
+    min-height: 0;
+    flex: 1;
+  }
+  .rail {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 10px 8px;
+    background: var(--bg);
+    border-right: 1px solid var(--line);
+  }
+  .rail-btn {
+    width: 100%;
+    text-align: left;
+    padding: 6px 10px;
+    border-radius: 5px;
+    font: 500 12px var(--body);
+    color: var(--muted);
+  }
+  .rail-btn:hover {
+    background: var(--hover);
+    color: var(--fg);
+  }
+  .rail-btn.on {
+    background: var(--sel);
+    color: var(--fg);
+    font-weight: 600;
+  }
+  .content {
+    overflow-y: auto;
+    padding: 14px 18px;
+    min-width: 0;
+  }
   h3 {
     margin: 0 0 8px;
-    font: 600 12px var(--body);
+    font: 600 11px var(--mono);
     color: var(--muted);
     text-transform: uppercase;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.05em;
   }
   .sec {
-    padding-top: 12px;
-    margin-top: 12px;
+    padding-top: 14px;
+    margin-top: 14px;
     border-top: 1px solid var(--line);
   }
   .sec:first-of-type {
@@ -540,7 +657,7 @@
     font-size: 11.5px;
   }
   .err {
-    margin: 0 0 10px;
+    margin: 10px 16px 0;
     padding: 6px 8px;
     border-radius: 5px;
     background: var(--bad);
@@ -550,9 +667,10 @@
   .diag {
     display: grid;
     grid-template-columns: 96px 1fr;
-    gap: 5px 10px;
+    gap: 6px 10px;
     margin: 0;
     font-size: 12px;
+    align-items: baseline;
   }
   .diag dt {
     color: var(--muted);
@@ -568,7 +686,8 @@
   .gcache {
     display: flex;
     align-items: center;
-    gap: 10px;
+    flex-wrap: wrap;
+    gap: 6px 8px;
   }
   .usetup-act {
     margin-top: 8px;
@@ -591,7 +710,7 @@
     color: var(--muted);
   }
   .latency {
-    margin-top: 8px;
+    margin-top: 10px;
     font-size: 11.5px;
   }
   .latency summary {
@@ -617,5 +736,26 @@
   }
   .x {
     padding: 2px 6px;
+    border-radius: 4px;
+    color: var(--muted);
+  }
+  .x:hover {
+    background: var(--hover);
+    color: var(--fg);
+  }
+  @media (max-width: 560px) {
+    .layout {
+      grid-template-columns: 1fr;
+    }
+    .rail {
+      flex-direction: row;
+      overflow-x: auto;
+      border-right: 0;
+      border-bottom: 1px solid var(--line);
+    }
+    .rail-btn {
+      width: auto;
+      white-space: nowrap;
+    }
   }
 </style>

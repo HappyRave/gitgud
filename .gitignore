@@ -2,6 +2,8 @@
 node_modules
 /target
 /src-tauri/gen/schemas
+/src-tauri/binaries
+/src-tauri/resources/git
 /e2e/out
 /build
 /.svelte-kit

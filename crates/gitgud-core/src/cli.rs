@@ -2,7 +2,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use crate::git::GitInfo;
+use crate::git::{GitInfo, GitSource};
 use crate::repo::Error;
 
 /// Runs the `git` CLI for writes, so hooks, credential helpers and user config
@@ -10,12 +10,17 @@ use crate::repo::Error;
 #[derive(Debug, Clone)]
 pub struct GitCli {
     path: PathBuf,
+    extra_path: Option<PathBuf>,
 }
 
 impl GitCli {
     pub fn new(info: &GitInfo) -> Self {
+        let extra_path = (info.source == GitSource::Bundled)
+            .then(|| info.path.parent().map(Path::to_path_buf))
+            .flatten();
         Self {
             path: info.path.clone(),
+            extra_path,
         }
     }
 
@@ -141,6 +146,13 @@ impl GitCli {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        if let Some(dir) = &self.extra_path {
+            let current = std::env::var_os("PATH").unwrap_or_default();
+            let paths = std::iter::once(dir.clone()).chain(std::env::split_paths(&current));
+            if let Ok(joined) = std::env::join_paths(paths) {
+                cmd.env("PATH", joined);
+            }
+        }
         no_console_window(&mut cmd);
         cmd
     }

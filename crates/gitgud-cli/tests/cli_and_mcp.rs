@@ -120,6 +120,7 @@ fn mcp_stdio_exposes_safe_tools_and_creates_proposals() {
         .collect();
     assert!(names.contains(&"status"));
     assert!(names.contains(&"propose"));
+    assert!(names.contains(&"proposal_wait"));
     assert!(!names.contains(&"commit"));
     assert!(!names.contains(&"push"));
 
@@ -136,7 +137,168 @@ fn mcp_stdio_exposes_safe_tools_and_creates_proposals() {
         prop_call["result"]["structuredContent"]["status"],
         "pending"
     );
+    let mcp_pid = prop_call["result"]["structuredContent"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let wd_call = rpc(json!({
+        "jsonrpc": "2.0",
+        "id": 4,
+        "method": "tools/call",
+        "params": {
+            "name": "withdraw",
+            "arguments": { "id": mcp_pid }
+        }
+    }));
+    assert_eq!(
+        wd_call["result"]["structuredContent"]["status"],
+        "withdrawn"
+    );
+
+    let wait_call = rpc(json!({
+        "jsonrpc": "2.0",
+        "id": 5,
+        "method": "tools/call",
+        "params": {
+            "name": "proposal_wait",
+            "arguments": { "id": mcp_pid, "timeoutSecs": 1 }
+        }
+    }));
+    assert_eq!(wait_call["result"]["structuredContent"]["timedOut"], false);
+    assert_eq!(
+        wait_call["result"]["structuredContent"]["proposal"]["status"],
+        "withdrawn"
+    );
 
     drop(stdin);
     let _ = child.wait();
+}
+
+#[test]
+fn cli_proposal_wait_and_agent_stop_hook() {
+    let repo = TestRepo::init();
+    repo.write("a.txt", "v1\n").commit_all("initial");
+    std::fs::create_dir_all(repo.path().join(".claude")).unwrap();
+    std::fs::write(
+        repo.path().join(".claude/settings.local.json"),
+        serde_json::to_string_pretty(&json!({
+            "permissions": { "allow": ["Bash(ls:*)"] }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    for _ in 0..2 {
+        let setup_out = Command::new(bin())
+            .args([
+                "--repo",
+                repo.path().to_str().unwrap(),
+                "--json",
+                "agent",
+                "setup",
+                "--target",
+                "claude",
+                "--write",
+                "--with-hooks",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            setup_out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&setup_out.stderr)
+        );
+    }
+    let settings: Value = serde_json::from_str(
+        &std::fs::read_to_string(repo.path().join(".claude/settings.local.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(settings["permissions"]["allow"][0], "Bash(ls:*)");
+    assert_eq!(settings["hooks"]["Stop"].as_array().unwrap().len(), 1);
+
+    repo.write(".gitignore", ".claude/settings.local.json\n")
+        .commit_all("setup claude config");
+
+    let clean_hook = Command::new(bin())
+        .args([
+            "--repo",
+            repo.path().to_str().unwrap(),
+            "--json",
+            "agent",
+            "hook",
+            "--event",
+            "stop",
+        ])
+        .output()
+        .unwrap();
+    assert!(clean_hook.status.success());
+    let clean_json: Value = serde_json::from_slice(&clean_hook.stdout).unwrap();
+    assert_eq!(clean_json["created"], false);
+
+    repo.write("a.txt", "v2\n");
+    let first_hook = Command::new(bin())
+        .args([
+            "--repo",
+            repo.path().to_str().unwrap(),
+            "--json",
+            "agent",
+            "hook",
+            "--event",
+            "stop",
+        ])
+        .output()
+        .unwrap();
+    assert!(first_hook.status.success());
+    let first_json: Value = serde_json::from_slice(&first_hook.stdout).unwrap();
+    assert_eq!(first_json["created"], true);
+    let pid = first_json["proposal"]["id"].as_str().unwrap().to_owned();
+
+    // Repeating with identical dirty worktree does not create a duplicate WIP proposal.
+    let dup_hook = Command::new(bin())
+        .args([
+            "--repo",
+            repo.path().to_str().unwrap(),
+            "--json",
+            "agent",
+            "hook",
+            "--event",
+            "stop",
+        ])
+        .output()
+        .unwrap();
+    assert!(dup_hook.status.success());
+    let dup_json: Value = serde_json::from_slice(&dup_hook.stdout).unwrap();
+    assert_eq!(dup_json["created"], false);
+
+    // Withdraw and verify `--wait` returns immediately with the verdict.
+    let wd_out = Command::new(bin())
+        .args([
+            "--repo",
+            repo.path().to_str().unwrap(),
+            "--json",
+            "withdraw",
+            &pid,
+        ])
+        .output()
+        .unwrap();
+    assert!(wd_out.status.success());
+
+    let wait_out = Command::new(bin())
+        .args([
+            "--repo",
+            repo.path().to_str().unwrap(),
+            "--json",
+            "proposal",
+            &pid,
+            "--wait",
+            "--timeout",
+            "2",
+        ])
+        .output()
+        .unwrap();
+    assert!(wait_out.status.success());
+    let waited: Value = serde_json::from_slice(&wait_out.stdout).unwrap();
+    assert_eq!(waited["timedOut"], false);
+    assert_eq!(waited["proposal"]["status"], "withdrawn");
 }

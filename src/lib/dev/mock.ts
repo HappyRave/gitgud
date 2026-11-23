@@ -760,14 +760,17 @@ export function installMock(scenario: string) {
     lfs_prune: () => ({ objectCount: 2, totalBytes: 8_300_000, prunableCount: 0, prunableBytes: 0 }),
     ai_providers: () => ({ cliAvailable: ["claude"], configuredEnvKey: false }),
     ai_draft_commit_message: () => "Tune engine torque curve for rough waves",
-    agent_setup: ({ target }) =>
-      target === "claude"
-        ? ".claude/skills/gitgud/SKILL.md"
-        : target === "codex"
-          ? ".codex/skills/gitgud/SKILL.md"
-          : target === "cursor"
-            ? ".cursor/rules/gitgud.mdc"
-            : "GITGUD_AGENT.md",
+    agent_setup: ({ target, withHooks }) => {
+      const base =
+        target === "claude"
+          ? ".claude/skills/gitgud/SKILL.md"
+          : target === "codex"
+            ? ".codex/skills/gitgud/SKILL.md"
+            : target === "cursor"
+              ? ".cursor/rules/gitgud.mdc"
+              : "GITGUD_AGENT.md";
+      return target === "claude" && withHooks ? `${base} + .claude/settings.local.json` : base;
+    },
     stale_origin_commits: () => ["4592a21000000000000000000000000000000000"],
     refresh_index: () => opened(),
     recent_timings: () => [

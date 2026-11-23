@@ -57,9 +57,4 @@
   .sp {
     flex: 1;
   }
-  button.bad {
-    background: var(--bad-ink);
-    border-color: var(--bad-ink);
-    color: #fff;
-  }
 </style>

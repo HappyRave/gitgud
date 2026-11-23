@@ -5,6 +5,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 export interface GitInfo {
   path: string;
   version: string;
+  source?: "system" | "bundled";
 }
 
 export type Head = { kind: "branch"; name: string } | { kind: "unborn"; name: string } | { kind: "detached"; id: string };
@@ -663,6 +664,8 @@ export interface ToolDiagnostics {
   gitPath: string;
   gitVersion: string;
   lfsVersion: string | null;
+  gitSource?: "system" | "bundled";
+  lfsOk?: boolean;
 }
 
 export type ProposalStatus = "pending" | "changesRequested" | "approved" | "rejected" | "withdrawn";
@@ -863,7 +866,7 @@ export interface Commands {
   lfs_prune: { args: { id: number }; result: LfsCacheStats };
   ai_providers: { args: Record<string, never>; result: AiProviderStatus };
   ai_draft_commit_message: { args: { id: number; provider?: string | null }; result: string };
-  agent_setup: { args: { id: number; target: string }; result: string };
+  agent_setup: { args: { id: number; target: string; withHooks?: boolean }; result: string };
   stale_origin_commits: { args: { id: number; upstream: string }; result: string[] };
   refresh_index: { args: { id: number }; result: Opened };
   recent_timings: { args: Record<string, never>; result: TimingSample[] };
@@ -1159,7 +1162,8 @@ export const lfsPrune = (id: number) => call("lfs_prune", { id });
 export const aiProviders = () => call("ai_providers", {});
 export const aiDraftCommitMessage = (id: number, provider: string | null = null) =>
   call("ai_draft_commit_message", { id, provider });
-export const agentSetup = (id: number, target: string) => call("agent_setup", { id, target });
+export const agentSetup = (id: number, target: string, withHooks = false) =>
+  call("agent_setup", withHooks ? { id, target, withHooks: true } : { id, target });
 export const staleOriginCommits = (id: number, upstream: string) => call("stale_origin_commits", { id, upstream });
 export const refreshIndex = (id: number) => call("refresh_index", { id });
 export const recentTimings = () => call("recent_timings", {});

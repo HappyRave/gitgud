@@ -1,0 +1,459 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>gitgud Lab · R5 UI Polish &amp; Packaging</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+:root {
+  --bg: #f4f5f8; --panel: #ffffff; --line: #dde1e8; --fg: #18202c; --muted: #5a6577;
+  --accent: #e0561f; --accent-ink: #ffffff; --pick: #efe6ff; --pick-ink: #5b2fa6; --open: #fff1d6; --open-ink: #8a5a00;
+  --a-bg: #f7f8fa; --a-panel: #ffffff; --a-line: #e3e6ec; --a-fg: #1b2330; --a-muted: #687386; --a-sel: #e4edfb; --a-hover: #f0f2f6;
+  --a-add: #e3f5ea; --a-add-ink: #1d6b3f; --a-del: #fbe6e4; --a-warn: #fff0d9; --a-warn-ink: #8a5300; --a-bad: #fde4df; --a-bad-ink: #a32f17;
+  --l0: #0072b2; --l1: #d55e00; --l2: #009e73; --l3: #cc79a7; --l4: #e69f00;
+  --pri-ink: #ffffff;
+  --danger-bg: #b8321c;
+  --display: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
+  --body: "Inter", "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", Consolas, "Courier New", monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #10141b; --panel: #171d26; --line: #29313d; --fg: #e4e8ef; --muted: #96a0b0;
+    --accent: #ff7a45; --accent-ink: #1a0d06; --pick: #2c2141; --pick-ink: #cdb4ff; --open: #3a2d12; --open-ink: #f5c86a;
+    --a-bg: #14181f; --a-panel: #1a1f28; --a-line: #2a313c; --a-fg: #dde2ea; --a-muted: #8b95a5; --a-sel: #22324b; --a-hover: #20262f;
+    --a-add: #173326; --a-add-ink: #7fd9a6; --a-del: #3a1f1c; --a-warn: #3a2b12; --a-warn-ink: #f2c46a; --a-bad: #3d1f18; --a-bad-ink: #ff9d80;
+    --l0: #56b4e9; --l1: #ff8c42; --l2: #2fd3a0; --l3: #e59bc8; --l4: #f0c040;
+    --pri-ink: #0b1622;
+    --danger-bg: #c93b25;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #10141b; --panel: #171d26; --line: #29313d; --fg: #e4e8ef; --muted: #96a0b0;
+  --accent: #ff7a45; --accent-ink: #1a0d06; --pick: #2c2141; --pick-ink: #cdb4ff; --open: #3a2d12; --open-ink: #f5c86a;
+  --a-bg: #14181f; --a-panel: #1a1f28; --a-line: #2a313c; --a-fg: #dde2ea; --a-muted: #8b95a5; --a-sel: #22324b; --a-hover: #20262f;
+  --a-add: #173326; --a-add-ink: #7fd9a6; --a-del: #3a1f1c; --a-warn: #3a2b12; --a-warn-ink: #f2c46a; --a-bad: #3d1f18; --a-bad-ink: #ff9d80;
+  --l0: #56b4e9; --l1: #ff8c42; --l2: #2fd3a0; --l3: #e59bc8; --l4: #f0c040;
+  --pri-ink: #0b1622;
+  --danger-bg: #c93b25;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.55 var(--body); }
+.wrap { max-width: 1240px; margin: 0 auto; padding: 28px 20px 72px; }
+h1, h2, h3 { font-family: var(--display); letter-spacing: -.01em; }
+h1 { font-size: clamp(28px, 4vw, 38px); line-height: 1.1; margin: 4px 0 10px; }
+h2 { font-size: 22px; margin: 0; }
+h3 { font-size: 16px; margin: 0; }
+p { margin: 0; max-width: 78ch; }
+.eyebrow { font: 600 11.5px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.tag { display: inline-block; font: 600 11px var(--mono); padding: 2px 7px; border-radius: 4px; white-space: nowrap; vertical-align: 1px; }
+.t-pick { background: var(--pick); color: var(--pick-ink); }
+.t-prop { background: var(--open); color: var(--open-ink); }
+.t-dec { background: var(--panel); color: var(--muted); border: 1px solid var(--line); }
+
+header.top { display: grid; gap: 12px; padding-bottom: 22px; border-bottom: 1px solid var(--line); }
+header.top p { color: var(--muted); }
+.bar-top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.theme-sw { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; background: var(--panel); }
+.theme-sw button { border: 0; background: transparent; color: var(--muted); padding: 5px 11px; font: 600 12px var(--mono); cursor: pointer; }
+.theme-sw button.on { background: var(--a-sel); color: var(--a-fg); }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 14px; font-size: 13px; color: var(--muted); align-items: center; }
+.toc { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.toc a { font: 500 13px var(--body); color: var(--fg); text-decoration: none; border: 1px solid var(--line); background: var(--panel); border-radius: 999px; padding: 3px 11px; }
+.toc a:hover { border-color: var(--fg); }
+
+section.v { display: grid; gap: 14px; padding-block: 36px 8px; border-top: 1px solid var(--line); margin-top: 28px; }
+.vhead { display: flex; flex-wrap: wrap; gap: 10px; align-items: baseline; }
+.vhead .lab { font: 700 14px var(--mono); color: var(--accent); }
+.idea { color: var(--muted); }
+.idea code { font: 12.5px var(--mono); background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+.pickline { background: var(--pick); color: var(--pick-ink); border-radius: 8px; padding: 10px 14px; font-size: 14px; }
+.grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+@media (max-width: 900px) { .grid2 { grid-template-columns: minmax(0, 1fr); } }
+
+/* Mock frame */
+.frame { width: 100%; aspect-ratio: 1280 / 720; position: relative; overflow: hidden; border-radius: 10px; border: 1px solid var(--line); box-shadow: 0 8px 28px color-mix(in srgb, #000 14%, transparent); background: var(--a-bg); }
+.frame.short { aspect-ratio: 1280 / 540; }
+.frame.uw { aspect-ratio: 2440 / 980; }
+.frame > .app { position: absolute; left: 0; top: 0; width: 1280px; height: 720px; transform-origin: 0 0; }
+.frame.short > .app { height: 540px; }
+.frame.uw > .app { width: 2440px; height: 980px; }
+
+/* App tokens & primitives */
+.app { background: var(--a-bg); color: var(--a-fg); font: 12px/1.35 var(--body); display: flex; flex-direction: column; }
+.app .mono { font-family: var(--mono); }
+.ab { color: var(--a-muted); font: 11px var(--mono); }
+.sp { flex: 1; }
+.tabs { display: flex; align-items: stretch; gap: 2px; padding: 4px 10px 0; background: var(--a-bg); border-bottom: 1px solid var(--a-line); min-height: 32px; }
+.tab { display: inline-flex; align-items: center; gap: 6px; height: 27px; padding: 0 10px; border: 1px solid transparent; border-bottom: 0; border-radius: 6px 6px 0 0; color: var(--a-muted); }
+.tab.on { background: var(--a-panel); color: var(--a-fg); border-color: var(--a-line); margin-bottom: -1px; padding-bottom: 1px; font-weight: 600; }
+.dot { width: 6px; height: 6px; border-radius: 50%; background: var(--l0); }
+.quick { align-self: center; padding: 2px 8px; color: var(--a-muted); font: 11.5px var(--mono); }
+.tb { display: flex; align-items: center; gap: 6px; height: 38px; padding: 0 10px; background: var(--a-panel); border-bottom: 1px solid var(--a-line); }
+.pill { display: inline-flex; align-items: center; gap: 6px; height: 25px; padding: 0 9px; border: 1px solid var(--a-line); border-radius: 6px; background: var(--a-bg); }
+.pill .k { font: 10px var(--mono); border: 1px solid var(--a-line); border-radius: 3px; padding: 0 4px; background: var(--a-panel); color: var(--a-muted); }
+.btn { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 9px; border-radius: 5px; border: 1px solid var(--a-line); background: var(--a-panel); color: var(--a-fg); font: 500 11.5px var(--body); white-space: nowrap; }
+.btn.pri { background: var(--l0); border-color: var(--l0); color: var(--pri-ink); }
+.btn.pri.bad { background: var(--danger-bg); border-color: var(--danger-bg); color: #fff; }
+.btn.bad { color: var(--a-bad-ink); }
+.badge { font: 600 9.5px var(--mono); padding: 0 5px; border-radius: 3px; background: var(--a-hover); color: var(--a-muted); border: 1px solid var(--a-line); }
+.badge.warn { background: var(--a-warn); color: var(--a-warn-ink); border-color: transparent; }
+.ph { display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 10px; border-bottom: 1px solid var(--a-line); font: 600 11px var(--mono); letter-spacing: .05em; text-transform: uppercase; color: var(--a-muted); background: var(--a-panel); flex: none; }
+.ph .ct { font-weight: 400; text-transform: none; letter-spacing: 0; }
+.ph .r { margin-left: auto; text-transform: none; letter-spacing: 0; font-weight: 400; }
+.grp { display: flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; font: 600 10.5px var(--mono); letter-spacing: .05em; text-transform: uppercase; color: var(--a-muted); background: var(--a-bg); border-block: 1px solid var(--a-line); }
+.strip { display: flex; align-items: center; gap: 12px; height: 24px; padding: 0 10px; background: var(--a-panel); border-top: 1px solid var(--a-line); color: var(--a-muted); font-size: 11px; }
+
+/* Overlay / Modal / Palette */
+.overlay { flex: 1; position: relative; background: color-mix(in srgb, #000 36%, var(--a-bg)); display: flex; justify-content: center; align-items: center; padding: 24px; }
+.overlay.top { align-items: flex-start; padding-top: 56px; }
+.modal { background: var(--a-panel); border: 1px solid var(--a-line); border-radius: 10px; box-shadow: 0 18px 46px rgba(0, 0, 0, .28); overflow: hidden; display: flex; flex-direction: column; }
+.pal { width: 640px; }
+.search { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--a-line); font-size: 13px; }
+.search .q { flex: 1; color: var(--a-fg); }
+.prow { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 6px; margin: 2px 4px; }
+.prow.sel { background: var(--a-sel); }
+.cgrp { min-width: 72px; font: 500 10.5px var(--mono); color: var(--a-muted); }
+.gitcmd { font: 10.5px var(--mono); color: var(--a-muted); background: var(--a-bg); border: 1px solid var(--a-line); border-radius: 4px; padding: 0 5px; }
+.kbd { display: inline-block; padding: 1px 6px; border: 1px solid var(--a-line); border-radius: 4px; background: var(--a-bg); font: 10.5px var(--mono); color: var(--a-fg); }
+
+/* Settings 2-col */
+.settings { width: 740px; height: 480px; }
+.m-hdr { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--a-line); }
+.m-hdr h2 { margin: 0; font: 600 15px var(--display); }
+.s-layout { display: grid; grid-template-columns: 168px 1fr; flex: 1; min-height: 0; }
+.s-rail { background: var(--a-bg); border-right: 1px solid var(--a-line); padding: 10px 8px; display: flex; flex-direction: column; gap: 2px; }
+.s-rail .rb { padding: 6px 10px; border-radius: 5px; color: var(--a-muted); font-weight: 500; }
+.s-rail .rb.on { background: var(--a-sel); color: var(--a-fg); font-weight: 600; }
+.s-body { padding: 14px 18px; display: grid; gap: 14px; align-content: start; }
+.s-sec h3 { margin: 0 0 8px; font: 600 11px var(--mono); color: var(--a-muted); text-transform: uppercase; letter-spacing: .05em; }
+.diag { display: grid; grid-template-columns: 96px 1fr; gap: 6px 10px; align-items: center; font-size: 12px; }
+.diag .kcol { color: var(--a-muted); }
+.inp { height: 26px; padding: 0 8px; border: 1px solid var(--a-line); border-radius: 5px; background: var(--a-bg); color: var(--a-fg); display: flex; align-items: center; }
+
+/* Card showcase for non-framed components */
+.mock-card { background: var(--a-panel); border: 1px solid var(--a-line); border-radius: 10px; overflow: hidden; box-shadow: 0 8px 24px color-mix(in srgb, #000 10%, transparent); color: var(--a-fg); font: 12px/1.35 var(--body); }
+.errbar { display: flex; gap: 10px; padding: 8px 12px; background: var(--a-bad); color: var(--a-bad-ink); border-bottom: 1px solid var(--a-line); }
+.errbar pre { margin: 6px 0 0; padding: 6px 8px; border-radius: 4px; background: color-mix(in srgb, var(--a-panel) 65%, transparent); color: var(--a-fg); font: 11px var(--mono); }
+.dlg-pad { padding: 14px 16px; display: grid; gap: 10px; }
+.dlg-pad h4 { margin: 0; font: 600 15px var(--display); }
+.flag { padding: 6px 8px; border-radius: 5px; background: var(--a-warn); color: var(--a-warn-ink); font-size: 11.5px; }
+.flag.bad { background: var(--a-bad); color: var(--a-bad-ink); }
+.opt { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border: 1px solid var(--a-line); border-radius: 7px; background: var(--a-bg); }
+.opt.sel { border-color: var(--l0); background: var(--a-sel); }
+
+/* Density compare */
+.d-row { display: grid; grid-template-columns: 60px 1fr 70px 44px; gap: 8px; align-items: center; padding: 0 10px; border-bottom: 1px solid var(--a-line); }
+.d-row.std { height: 24px; }
+.d-row.cmp { height: 20px; font-size: 11.5px; }
+.d-row.sel { background: var(--a-sel); }
+
+/* Icon strip */
+.icon-stage { display: flex; flex-wrap: wrap; gap: 20px; padding: 18px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); align-items: center; }
+.icon-box { display: grid; justify-items: center; gap: 6px; padding: 14px 18px; border-radius: 8px; }
+.icon-box.lt { background: #eef1f5; color: #18202c; }
+.icon-box.dk { background: #0d1117; color: #e4e8ef; }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div class="bar-top">
+      <div>
+        <div class="eyebrow">gitgud lab · round 5 · ui polish &amp; packaging</div>
+        <h1>R5 · Undrawn Screens, Polish &amp; Packaging</h1>
+      </div>
+      <div class="theme-sw" role="group" aria-label="Preview theme">
+        <button type="button" class="on" data-th="system" onclick="setPreviewTheme('system')">System</button>
+        <button type="button" data-th="light" onclick="setPreviewTheme('light')">Light</button>
+        <button type="button" data-th="dark" onclick="setPreviewTheme('dark')">Dark</button>
+      </div>
+    </div>
+    <p>Covers every screen marked <code>no</code> in <code>docs/spec.md §4</code> plus Compact (20 px) density, Ultrawide (<code>≥ 2400 px</code>) 2-column inspector split, and the Windows NSIS icon + bundled Git diagnostics. Links back to <a href="index.html" style="color:var(--l0)">Rounds 1–4</a>.</p>
+    <div class="legend">
+      <span><span class="tag t-dec">decided</span> from R1–R4 / spec §2–§7</span>
+      <span><span class="tag t-pick">Claude's pick</span> implemented &amp; wired in Svelte / Rust</span>
+      <span><span class="tag t-prop">proposal</span> awaiting visual sign-off</span>
+    </div>
+    <nav class="toc" aria-label="Sections">
+      <a href="#palette">1 · Command Palette</a>
+      <a href="#shortcuts">2 · Shortcut Sheet</a>
+      <a href="#settings">3 · Settings Modal</a>
+      <a href="#proposal">4 · Proposal Review</a>
+      <a href="#dialogs">5 · Error &amp; Dialogs</a>
+      <a href="#density">6 · Compact vs Standard</a>
+      <a href="#ultrawide">7 · Ultrawide Split</a>
+      <a href="#icon">8 · App Icon</a>
+    </nav>
+  </header>
+
+  <section class="v" id="palette">
+    <div class="vhead"><span class="lab">S10</span><h2>Command Palette (<code>Ctrl+K</code>)</h2><span class="tag t-pick">Claude's pick · Sublime Merge style</span></div>
+    <p class="idea">Fixed global <code>.grp</code> collision on group labels (renamed <code>.cgrp</code>), skips disabled rows on ↑/↓, scrolls active item into view, and displays the exact Git CLI equivalent inline as in Sublime Merge (<code>ho-sm-palette</code>).</p>
+    <div class="frame short">
+      <div class="app">
+        <div class="tabs"><span class="tab">⌂ Library</span><span class="tab on"><span class="dot"></span>BoatAttack</span><span class="sp"></span><span class="quick">Ctrl+P</span><span class="quick">Ctrl+K</span><span class="quick">?</span><span class="quick">⚙</span></div>
+        <div class="overlay top">
+          <div class="modal pal">
+            <div class="search"><span>›</span><span class="q">push<span style="color:var(--l0)">|</span></span><span class="ab">↵ run · Esc</span></div>
+            <div class="prow sel"><span class="cgrp">BoatAttack</span><span style="flex:1;font-weight:500">Push current branch</span><code class="gitcmd">git push</code><span class="kbd">Ctrl+Shift+P</span></div>
+            <div class="prow"><span class="cgrp">BoatAttack</span><span style="flex:1;font-weight:500">Pull current branch</span><code class="gitcmd">git pull</code><span class="kbd">Ctrl+Shift+L</span></div>
+            <div class="prow"><span class="cgrp">BoatAttack</span><span style="flex:1;font-weight:500">Fetch all remotes</span><code class="gitcmd">git fetch --all</code><span class="kbd">Ctrl+Shift+F</span></div>
+            <div class="prow"><span class="cgrp">BoatAttack</span><span style="flex:1;font-weight:500">Checkout branch…</span><code class="gitcmd">git switch &lt;branch&gt;</code></div>
+            <div class="prow"><span class="cgrp">View</span><span style="flex:1;font-weight:500">Graph density: switch to compact</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="v" id="shortcuts">
+    <div class="vhead"><span class="lab">S10</span><h2>Searchable Shortcut Sheet (<code>?</code>)</h2><span class="tag t-pick">Claude's pick · Linear style</span></div>
+    <p class="idea">Fixed <code>.sgrp</code> collision with global <code>.grp</code> (which previously crushed every category section to 24 px) and added Linear-style live key/action filtering with two-step Escape (clears filter, then closes).</p>
+    <div class="frame short">
+      <div class="app">
+        <div class="overlay">
+          <div class="modal" style="width:740px;padding:16px 18px;gap:12px">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <strong style="font:600 15px var(--display)">Keyboard shortcuts</strong>
+              <span class="ab">✕</span>
+            </div>
+            <div class="inp" style="gap:8px;height:28px"><span>⌕</span><span style="flex:1">stage</span><span class="ab">✕</span></div>
+            <div class="grid2" style="gap:14px 24px">
+              <div>
+                <div class="eyebrow" style="margin-bottom:6px">Working copy</div>
+                <div class="diag" style="grid-template-columns:auto 1fr">
+                  <span class="kbd">Space / Enter</span><span>Stage or unstage file</span>
+                  <span class="kbd">A</span><span>Stage all changes</span>
+                  <span class="kbd">S / U / ⌫</span><span>Stage / unstage / discard hunk</span>
+                  <span class="kbd">Click / Shift+Click</span><span>Select lines in diff to stage or discard</span>
+                </div>
+              </div>
+              <div>
+                <div class="eyebrow" style="margin-bottom:6px">Navigation</div>
+                <div class="diag" style="grid-template-columns:auto 1fr">
+                  <span class="kbd">Ctrl+K</span><span>Command palette</span>
+                  <span class="kbd">Ctrl+P</span><span>Quick-switch repository</span>
+                  <span class="kbd">Ctrl+1 / 2 / 3</span><span>Focus Working Copy / Graph / History</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="v" id="settings">
+    <div class="vhead"><span class="lab">S13</span><h2>Settings Modal (<code>Ctrl+,</code>)</h2><span class="tag t-pick">Claude's pick · 2-column rail + bundled Git status</span></div>
+    <p class="idea">Replaced single vertical stack with a fixed section-jump rail + scrollable preferences pane. Displays whether Git came from <code>system</code> or <code>bundled</code> fallback (MinGit + git-lfs ≥ 3.3 floor check), commit-graph cache, LFS prune, Unity Force-Text setup, Coding Agent MCP setup, and Local latency histogram.</p>
+    <div class="frame">
+      <div class="app">
+        <div class="overlay">
+          <div class="modal settings">
+            <div class="m-hdr">
+              <div style="display:flex;gap:8px;align-items:center"><h2>Settings</h2><span class="badge">BoatAttack</span></div>
+              <span class="ab">✕</span>
+            </div>
+            <div class="s-layout">
+              <div class="s-rail">
+                <div class="rb">Git Identity</div>
+                <div class="rb">Appearance &amp; Diff</div>
+                <div class="rb on">Tools &amp; Diagnostics</div>
+                <div class="rb">Unity Setup</div>
+                <div class="rb">Coding Agents</div>
+              </div>
+              <div class="s-body">
+                <div class="s-sec">
+                  <h3>Git Identity</h3>
+                  <div class="diag">
+                    <span class="kcol">user.name</span><div class="inp">Max</div>
+                    <span class="kcol">user.email</span><div class="inp">max@j2studio.dev</div>
+                  </div>
+                </div>
+                <div class="s-sec" style="border-top:1px solid var(--a-line);padding-top:12px">
+                  <h3>Tools &amp; Diagnostics</h3>
+                  <div class="diag">
+                    <span class="kcol">Git version</span><div style="display:flex;gap:8px;align-items:center"><span>2.56.1</span><span class="badge warn">bundled</span></div>
+                    <span class="kcol">Git binary</span><span class="mono" style="font-size:11px">C:\Users\Max\AppData\Local\gitgud\resources\git\cmd\git.exe</span>
+                    <span class="kcol">Git LFS</span><span>git-lfs/3.8.1 (GitHub; windows amd64)</span>
+                    <span class="kcol">Commit graph</span><div style="display:flex;gap:8px;align-items:center"><span>Built</span><span class="btn">Rebuild graph cache</span><span class="btn">Refresh index</span></div>
+                    <span class="kcol">LFS cache</span><div style="display:flex;gap:8px;align-items:center"><span>185 objects · 903.0 MB · 12 prunable (41.2 MB)</span><span class="btn">Prune LFS cache</span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="v" id="proposal">
+    <div class="vhead"><span class="lab">S8</span><h2>Proposal Review &amp; Change Request Comments</h2><span class="tag t-dec">R1 state 3</span><span class="tag t-pick">Codex / GitButler review pattern</span></div>
+    <p class="idea">Proposals from <code>gitgud-cli</code> or MCP land in a hidden ref without touching the user's index. Editable commit message, rationale ("Why"), non-blocking Unity risk flags (missing <code>.meta</code>, unlocked LFS), comment history, per-file ticks, and 3-way replay banner when <code>HEAD</code> moved.</p>
+    <div class="mock-card" style="max-width:560px">
+      <div class="ph">Proposal <span class="ct">· claude-code · p100000</span><span class="badge warn">HEAD moved — will replay</span><span class="r"><span class="btn" style="height:20px">✕ Close</span></span></div>
+      <div class="dlg-pad" style="padding:10px 12px;gap:8px">
+        <div class="inp">Tune boat steering damping at high speed</div>
+        <div><span class="eyebrow">Why:</span> Prevents yaw oscillation above 35 knots in BoatAttack scene.</div>
+        <div class="flag">⚠ Missing companion .meta file <code>Assets/Scripts/Boat/Engine.cs</code></div>
+        <div style="border-left:2px solid var(--l0);padding:4px 8px"><b>Max:</b> Please keep the damping clamp tunable from BoatSettings.asset.</div>
+      </div>
+      <div class="grp">2 of 2 files selected</div>
+      <div class="d-row std sel"><span>☑</span><span>Assets/Scripts/Boat/Engine.cs</span></div>
+      <div class="d-row std"><span>☑</span><span>Assets/Data/BoatSettings.asset</span></div>
+      <div style="padding:8px 10px;border-top:1px solid var(--a-line);display:grid;gap:6px;background:var(--a-panel)">
+        <div style="display:flex;gap:6px"><div class="inp" style="flex:1;color:var(--a-muted)">Request changes for claude-code… (Ctrl+Shift+R)</div><span class="btn">Request changes</span></div>
+        <div style="display:flex;justify-content:flex-end;gap:6px"><span class="btn bad">Reject</span><span class="btn pri">Approve &amp; commit</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="v" id="dialogs">
+    <div class="vhead"><span class="lab">S11–S12</span><h2>Error Banner &amp; Key Dialogs</h2><span class="tag t-pick">Claude's pick · WCAG AA destructive buttons</span></div>
+    <p class="idea">Errors show plain-English explanation, the git concept badge, a primary fix CTA, and collapsed stderr. Destructive confirmations (<code>DeleteBranchDialog</code>, force <code>PushDialog</code>) now use high-contrast crimson primary buttons in both themes instead of low-contrast light peach.</p>
+    <div class="grid2">
+      <div class="mock-card">
+        <div class="errbar">
+          <div style="flex:1">
+            <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+              <strong>Push rejected — remote has newer commits</strong>
+              <span class="badge" style="background:color-mix(in srgb,var(--a-bad-ink) 14%,transparent);color:var(--a-bad-ink);border:0">non-fast-forward</span>
+              <span style="color:var(--a-fg)">Pull first, or force-push with lease if you rewrote local history.</span>
+              <span class="btn" style="height:20px">Pull</span>
+            </div>
+            <pre>! [rejected] master -> master (fetch first)</pre>
+          </div>
+          <span>✕</span>
+        </div>
+        <div class="dlg-pad">
+          <h4>Push master</h4>
+          <div class="flag bad"><b>origin/master</b> has <b>2</b> commits not on <b>master</b>. Force-pushing with lease replaces them on the remote.</div>
+          <label style="display:flex;gap:6px;align-items:center">☑ <span>Force-push safely (<code>--force-with-lease</code>)</span></label>
+          <label style="display:flex;gap:6px;align-items:center">☑ <span>Unlock <code>Assets/Art/Trees/TreeBillBoards.png</code></span></label>
+          <div style="display:flex;gap:6px;align-items:center;padding-top:4px"><span class="ab">Can't be undone remotely</span><span class="sp"></span><span class="btn">Cancel</span><span class="btn pri bad">Force-push with lease</span></div>
+        </div>
+      </div>
+
+      <div class="mock-card">
+        <div class="dlg-pad">
+          <h4>Reset feature/stack to 95e25c8</h4>
+          <span class="ab">Target: <code>95e25c8</code> Raise ClearShot camera rig</span>
+          <div class="opt"><span>○</span><div><b>Soft</b><div class="ab">Move branch here; keep all changes staged in the index.</div></div></div>
+          <div class="opt sel"><span>◉</span><div><b>Mixed</b><div class="ab">Move branch here; keep changes unstaged in the working copy.</div></div></div>
+          <div class="opt"><span>○</span><div><b>Hard</b><div class="ab">Move branch here and discard staged and working-copy changes (Ctrl+Z restores them).</div></div></div>
+          <div style="display:flex;gap:6px;align-items:center;padding-top:4px"><span class="ab">Undoable with Ctrl+Z</span><span class="sp"></span><span class="btn">Cancel</span><span class="btn pri">Reset (mixed) ↵</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="v" id="density">
+    <div class="vhead"><span class="lab">R1 Q4</span><h2>Standard (24 px) vs Compact (20 px) Density</h2><span class="tag t-dec">decided 2026-11-21</span></div>
+    <p class="idea"><code>--row-h</code> and <code>--row-h-sm</code> now propagate density across the commit graph, Library table, Sidebar branches/stashes/locks, Working Copy file lists, Commit/Stash/Proposal file rows, and Op Log panel.</p>
+    <div class="grid2">
+      <div class="mock-card">
+        <div class="ph">Standard · 24 px rows</div>
+        <div class="d-row std sel"><span class="mono">95e25c8</span><span>Raise ClearShot camera rig</span><span class="ab">Max</span><span class="ab">2m</span></div>
+        <div class="d-row std"><span class="mono">3493748</span><span>Move blimp camera right</span><span class="ab">Max</span><span class="ab">41m</span></div>
+        <div class="d-row std"><span class="mono">a1b2c3d</span><span>Tune foam shader falloff</span><span class="ab">Lea</span><span class="ab">2h</span></div>
+        <div class="d-row std"><span class="mono">4592a21</span><span>WIP engine thrust tweak</span><span class="ab">Max</span><span class="ab">3h</span></div>
+      </div>
+      <div class="mock-card">
+        <div class="ph">Compact · 20 px rows</div>
+        <div class="d-row cmp sel"><span class="mono">95e25c8</span><span>Raise ClearShot camera rig</span><span class="ab">Max</span><span class="ab">2m</span></div>
+        <div class="d-row cmp"><span class="mono">3493748</span><span>Move blimp camera right</span><span class="ab">Max</span><span class="ab">41m</span></div>
+        <div class="d-row cmp"><span class="mono">a1b2c3d</span><span>Tune foam shader falloff</span><span class="ab">Lea</span><span class="ab">2h</span></div>
+        <div class="d-row cmp"><span class="mono">4592a21</span><span>WIP engine thrust tweak</span><span class="ab">Max</span><span class="ab">3h</span></div>
+        <div class="d-row cmp"><span class="mono">6acf5f7</span><span>Remove EmojiOne assets (#209)</span><span class="ab">upst</span><span class="ab">1mo</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="v" id="ultrawide">
+    <div class="vhead"><span class="lab">R1 Q5</span><h2>Ultrawide (<code>≥ 2400 px</code>) 2-Column Inspector Split</h2><span class="tag t-dec">decided 2026-11-21</span></div>
+    <p class="idea">In addition to <code>WorkingCopy</code>, <code>CommitDetail</code>, <code>StashDetail</code>, and <code>ProposalView</code> now split into two columns above 2400 px: metadata + file list (+ actions) on the left, full-height diff on the right.</p>
+    <div class="frame uw">
+      <div class="app">
+        <div class="tabs"><span class="tab">⌂ Library</span><span class="tab on"><span class="dot"></span>BoatAttack</span></div>
+        <div class="tb"><span class="pill"><b>BoatAttack</b></span><span class="pill"><b>master</b> ↑1</span><span class="sp"></span><span class="btn">Fetch</span><span class="btn">Pull</span><span class="btn pri">Push</span></div>
+        <div style="flex:1;display:grid;grid-template-columns:240px 1fr 1120px;min-height:0">
+          <div style="background:var(--a-panel);border-right:1px solid var(--a-line);padding:8px 10px">
+            <div class="eyebrow" style="margin-bottom:6px">Branches</div>
+            <div>✓ master</div><div>feature/stack</div>
+          </div>
+          <div style="background:var(--a-panel);border-right:1px solid var(--a-line)">
+            <div class="ph">History <span class="ct">· 2440px+ viewport</span></div>
+            <div class="d-row std sel"><span class="mono">95e25c8</span><span>Raise ClearShot camera rig</span><span class="ab">Max</span><span class="ab">2m</span></div>
+            <div class="d-row std"><span class="mono">3493748</span><span>Move blimp camera right</span><span class="ab">Max</span><span class="ab">41m</span></div>
+          </div>
+          <div style="background:var(--a-panel);display:grid;grid-template-columns:2fr 3fr;grid-template-rows:28px 1fr;min-height:0">
+            <div class="ph" style="grid-column:1 / -1">Commit · 95e25c8 <span class="r"><span class="btn" style="height:20px">±ws</span> <span class="btn" style="height:20px">✕ Close</span></span></div>
+            <div style="padding:10px;display:grid;gap:8px;align-content:start">
+              <strong>Raise ClearShot camera rig</strong>
+              <span class="ab">Max · 95e25c8 · 3 files</span>
+              <div class="d-row std sel"><span>M</span><span>Assets/Prefabs/ReplayCameras.prefab</span></div>
+              <div class="d-row std"><span>M</span><span>Assets/Scripts/Boat/Engine.cs</span></div>
+            </div>
+            <div style="border-left:1px solid var(--a-line);padding:10px;font:12px/1.6 var(--mono)">
+              <div style="color:var(--a-muted)">@@ -117,4 +117,4 @@</div>
+              <div>&nbsp; m_GameObject: ReplayCameras</div>
+              <div style="background:var(--a-del)">- m_LocalPosition: &#123;x: 4.41, y: 36.2&#125;</div>
+              <div style="background:var(--a-add)">+ m_LocalPosition: &#123;x: 4.41, y: 38.87&#125;</div>
+            </div>
+          </div>
+        </div>
+        <div class="strip"><span>● origin/master · fetched 12m ago</span><span class="sp"></span><span>git 2.56.1 (bundled)</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="v" id="icon">
+    <div class="vhead"><span class="lab">PKG</span><h2>Windows App &amp; Installer Icon</h2><span class="tag t-pick">Claude's pick · custom Okabe-Ito graph mark</span></div>
+    <p class="idea">Replaces the placeholder Tauri icon in <code>src-tauri/icons/</code>. Dark slate rounded tile (<code>#14181f</code>) with a bold commit-graph fork in gitgud's Okabe-Ito lane colors (<code>#56b4e9</code> trunk, <code>#ff8c42</code> branch, <code>#2fd3a0</code> merged tip), tuned for legibility down to 16 px taskbar/titlebar icons.</p>
+    <div class="icon-stage">
+      <div class="icon-box lt">
+        <svg width="128" height="128" viewBox="0 0 1024 1024"><rect x="44" y="44" width="936" height="936" rx="224" fill="#14181f" stroke="#2a313c" stroke-width="20"/><path d="M350 748 V276" stroke="#56b4e9" stroke-width="88" stroke-linecap="round"/><path d="M350 748 C350 512 674 512 674 276" fill="none" stroke="#ff8c42" stroke-width="84" stroke-linecap="round"/><circle cx="350" cy="748" r="108" fill="#14181f"/><circle cx="350" cy="748" r="74" fill="#56b4e9"/><circle cx="350" cy="276" r="108" fill="#14181f"/><circle cx="350" cy="276" r="74" fill="#2fd3a0"/><circle cx="674" cy="276" r="108" fill="#14181f"/><circle cx="674" cy="276" r="74" fill="#ff8c42"/></svg>
+        <span class="ab">128 px · Light</span>
+      </div>
+      <div class="icon-box dk">
+        <svg width="64" height="64" viewBox="0 0 1024 1024"><rect x="44" y="44" width="936" height="936" rx="224" fill="#14181f" stroke="#2a313c" stroke-width="20"/><path d="M350 748 V276" stroke="#56b4e9" stroke-width="88" stroke-linecap="round"/><path d="M350 748 C350 512 674 512 674 276" fill="none" stroke="#ff8c42" stroke-width="84" stroke-linecap="round"/><circle cx="350" cy="748" r="108" fill="#14181f"/><circle cx="350" cy="748" r="74" fill="#56b4e9"/><circle cx="350" cy="276" r="108" fill="#14181f"/><circle cx="350" cy="276" r="74" fill="#2fd3a0"/><circle cx="674" cy="276" r="108" fill="#14181f"/><circle cx="674" cy="276" r="74" fill="#ff8c42"/></svg>
+        <span class="ab">64 px · Dark</span>
+      </div>
+      <div class="icon-box dk">
+        <svg width="32" height="32" viewBox="0 0 1024 1024"><rect x="44" y="44" width="936" height="936" rx="224" fill="#14181f" stroke="#2a313c" stroke-width="20"/><path d="M350 748 V276" stroke="#56b4e9" stroke-width="88" stroke-linecap="round"/><path d="M350 748 C350 512 674 512 674 276" fill="none" stroke="#ff8c42" stroke-width="84" stroke-linecap="round"/><circle cx="350" cy="748" r="108" fill="#14181f"/><circle cx="350" cy="748" r="74" fill="#56b4e9"/><circle cx="350" cy="276" r="108" fill="#14181f"/><circle cx="350" cy="276" r="74" fill="#2fd3a0"/><circle cx="674" cy="276" r="108" fill="#14181f"/><circle cx="674" cy="276" r="74" fill="#ff8c42"/></svg>
+        <span class="ab">32 px · Taskbar</span>
+      </div>
+      <div class="icon-box lt">
+        <svg width="16" height="16" viewBox="0 0 1024 1024"><rect x="44" y="44" width="936" height="936" rx="224" fill="#14181f" stroke="#2a313c" stroke-width="20"/><path d="M350 748 V276" stroke="#56b4e9" stroke-width="88" stroke-linecap="round"/><path d="M350 748 C350 512 674 512 674 276" fill="none" stroke="#ff8c42" stroke-width="84" stroke-linecap="round"/><circle cx="350" cy="748" r="108" fill="#14181f"/><circle cx="350" cy="748" r="74" fill="#56b4e9"/><circle cx="350" cy="276" r="108" fill="#14181f"/><circle cx="350" cy="276" r="74" fill="#2fd3a0"/><circle cx="674" cy="276" r="108" fill="#14181f"/><circle cx="674" cy="276" r="74" fill="#ff8c42"/></svg>
+        <span class="ab">16 px · Tray</span>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script>
+function setPreviewTheme(mode) {
+  const root = document.documentElement;
+  if (mode === "light" || mode === "dark") {
+    root.dataset.theme = mode;
+  } else {
+    delete root.dataset.theme;
+  }
+  document.querySelectorAll(".theme-sw button").forEach((b) => {
+    b.classList.toggle("on", b.dataset.th === mode);
+  });
+}
+function fit() {
+  document.querySelectorAll(".frame").forEach((f) => {
+    const a = f.firstElementChild;
+    const base = f.classList.contains("uw") ? 2440 : 1280;
+    if (a) a.style.transform = "scale(" + (f.clientWidth / base) + ")";
+  });
+}
+fit();
+new ResizeObserver(fit).observe(document.body);
+</script>
+</html>

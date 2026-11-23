@@ -50,6 +50,7 @@
   } = $props();
 
   const store = new RowStore((start, count) => fetchRows(start, count));
+  const listId = $props.id();
 
   let viewport: HTMLDivElement;
   let canvas: HTMLCanvasElement;
@@ -57,6 +58,7 @@
   let height = $state(0);
   let lanes = $state(1);
   let theme = $state(DEFAULT_THEME);
+  let dpr = $state(typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1);
 
   const rowHeight = $derived(prefs.density === "compact" ? 20 : ROW_HEIGHT);
   const range = $derived(visibleRange(scrollTop, height, rowCount, 10, rowHeight));
@@ -94,7 +96,6 @@
       console.error("graph canvas has no 2d context");
       return;
     }
-    const dpr = window.devicePixelRatio || 1;
     canvas.width = Math.round(graphWidth * dpr);
     canvas.height = Math.round(height * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -127,7 +128,38 @@
     const dark = window.matchMedia?.("(prefers-color-scheme: dark)");
     const retheme = () => (theme = readTheme(document.documentElement));
     dark?.addEventListener("change", retheme);
-    return () => dark?.removeEventListener("change", retheme);
+
+    let stopDprWatch: (() => void) | undefined;
+    const watchDpr = () => {
+      stopDprWatch?.();
+      const currentDpr = window.devicePixelRatio || 1;
+      dpr = currentDpr;
+      const mq = window.matchMedia?.(`(resolution: ${currentDpr}dppx)`);
+      if (!mq) {
+        stopDprWatch = undefined;
+        return;
+      }
+      const onDprChange = () => watchDpr();
+      mq.addEventListener("change", onDprChange);
+      stopDprWatch = () => mq.removeEventListener("change", onDprChange);
+    };
+    watchDpr();
+
+    let observer: ResizeObserver | undefined;
+    if (typeof ResizeObserver !== "undefined") {
+      observer = new ResizeObserver((entries) => {
+        const entry = entries[0];
+        const measured = entry ? Math.round(entry.contentRect.height) : 0;
+        height = measured > 0 ? measured : viewport.clientHeight;
+      });
+      observer.observe(viewport);
+    }
+
+    return () => {
+      dark?.removeEventListener("change", retheme);
+      stopDprWatch?.();
+      observer?.disconnect();
+    };
   });
 
   let list = $state<HTMLElement | null>(null);
@@ -259,8 +291,6 @@
   }
 </script>
 
-<svelte:window onresize={() => (height = viewport.clientHeight)} />
-
 <div class="graph" style:--row-h="{rowHeight}px">
   {#if store.error}
     <p role="alert">{store.error}</p>
@@ -272,6 +302,7 @@
       class="rows"
       role="listbox"
       aria-label="Commits"
+      aria-activedescendant={selected != null ? `${listId}-row-${selected}` : undefined}
       tabindex="0"
       style:height="{rowCount * rowHeight}px"
       onclick={onClick}
@@ -280,6 +311,7 @@
     >
       {#each visible as { index, row } (index)}
         <li
+          id="{listId}-row-{index}"
           class="row"
           role="option"
           data-index={index}
@@ -289,6 +321,8 @@
           class:selected={selected === index}
           class:hit={hits?.has(index)}
           aria-selected={selected === index}
+          aria-setsize={rowCount}
+          aria-posinset={index + 1}
           style:top="{index * rowHeight}px"
           style:padding-left="{graphWidth}px"
         >

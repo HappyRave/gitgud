@@ -92,7 +92,7 @@ impl Repo {
             }
         };
         let remote = repo
-            .branch_remote_name(branch_ref.as_ref(), Direction::Fetch)
+            .branch_remote_name(branch_ref.shorten(), Direction::Fetch)
             .map(|n| n.as_bstr().to_string());
         let upstream = repo
             .branch_remote_tracking_ref_name(branch_ref.as_ref(), Direction::Fetch)
@@ -227,8 +227,8 @@ impl Repo {
         }
 
         let configured_remote = repo
-            .branch_remote_name(branch_ref.as_ref(), Direction::Push)
-            .or_else(|| repo.branch_remote_name(branch_ref.as_ref(), Direction::Fetch))
+            .branch_remote_name(branch_ref.shorten(), Direction::Push)
+            .or_else(|| repo.branch_remote_name(branch_ref.shorten(), Direction::Fetch))
             .map(|n| n.as_bstr().to_string());
 
         let remote = remote_override

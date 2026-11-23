@@ -392,11 +392,15 @@
     margin: 4px 0 0;
     padding-left: 18px;
   }
+  .ph .name {
+    text-transform: none;
+    letter-spacing: 0;
+  }
   .post-check {
     padding: 7px 12px;
     border-bottom: 1px solid var(--line);
-    background: var(--add-bg);
-    color: var(--l2);
+    background: var(--add);
+    color: var(--add-ink);
     font-size: 12px;
   }
   .post-check.post-bad {

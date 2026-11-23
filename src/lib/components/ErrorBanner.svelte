@@ -26,10 +26,12 @@
         <button type="button" class="fix" onclick={() => onfix(explained.fix!.id)}>{explained.fix.label}</button>
       {/if}
     </div>
-    <details class="raw">
-      <summary>Details</summary>
-      <pre>{explained.raw}</pre>
-    </details>
+    {#if explained.raw.trim() && explained.raw.trim() !== explained.explanation.trim()}
+      <details class="raw">
+        <summary>Details</summary>
+        <pre>{explained.raw}</pre>
+      </details>
+    {/if}
   </div>
   {#if ondismiss}
     <button type="button" class="bare x" aria-label="Dismiss" title="Dismiss" onclick={ondismiss}>✕</button>
@@ -94,7 +96,11 @@
     overflow: auto;
   }
   .x {
-    padding: 0 4px;
+    padding: 2px 6px;
+    border-radius: 4px;
     flex: none;
+  }
+  .x:hover {
+    background: color-mix(in srgb, var(--bad-ink) 14%, transparent);
   }
 </style>

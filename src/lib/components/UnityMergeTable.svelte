@@ -121,6 +121,13 @@
   }
 
   function onKeydown(event: KeyboardEvent) {
+    if (event.ctrlKey && !event.altKey && !event.metaKey && event.key === "Enter" && !editing) {
+      if (allPicked && !busy) {
+        event.preventDefault();
+        save();
+      }
+      return;
+    }
     if (conflicts.length === 0 || editing) {
       return;
     }
@@ -181,8 +188,8 @@
             <tr>
               <th>Object › Component › Property</th>
               <th>Base</th>
-              <th>{yoursLabel} <span class="k">1</span></th>
-              <th>{theirsLabel} <span class="k">2</span></th>
+              <th class="col-yours">{yoursLabel} <span class="k">1</span></th>
+              <th class="col-theirs">{theirsLabel} <span class="k">2</span></th>
               <th>Result <span class="k">E</span></th>
             </tr>
           </thead>
@@ -198,7 +205,7 @@
                 <td class="side">
                   <button
                     type="button"
-                    class="pick"
+                    class="pick yours"
                     class:chosen={picked?.choice === "yours"}
                     title={row.yours ?? "∅"}
                     onclick={(e) => {
@@ -212,7 +219,7 @@
                 <td class="side">
                   <button
                     type="button"
-                    class="pick"
+                    class="pick theirs"
                     class:chosen={picked?.choice === "theirs"}
                     title={row.theirs ?? "∅"}
                     onclick={(e) => {
@@ -290,6 +297,8 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    text-transform: none;
+    letter-spacing: 0;
   }
   .actions {
     display: inline-flex;
@@ -343,22 +352,37 @@
     color: var(--muted);
     word-break: break-word;
   }
+  .tbl th.col-yours {
+    color: var(--yours);
+  }
+  .tbl th.col-theirs {
+    color: var(--theirs);
+  }
   .pick {
     width: 100%;
+    height: auto;
+    min-height: 24px;
     text-align: left;
     padding: 4px 7px;
     border: 1px solid var(--line);
     border-radius: 4px;
     background: var(--panel);
+    white-space: normal;
+    line-height: 1.35;
     word-break: break-word;
   }
   .pick:hover {
     border-color: var(--l0);
   }
-  .pick.chosen {
-    background: var(--sel);
-    border-color: var(--l0);
-    color: var(--l0);
+  .pick.yours.chosen {
+    background: var(--yours-bg);
+    border-color: var(--yours);
+    color: var(--fg);
+  }
+  .pick.theirs.chosen {
+    background: var(--theirs-bg);
+    border-color: var(--theirs);
+    color: var(--fg);
   }
   .resval,
   .editrow {

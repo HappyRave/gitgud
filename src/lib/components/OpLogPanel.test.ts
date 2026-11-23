@@ -95,4 +95,24 @@ describe("OpLogPanel", () => {
     expect(screen.getByRole("button", { name: "Undo" })).toBeDisabled();
     expect(screen.getAllByRole("button", { name: "Restore" }).every((b) => (b as HTMLButtonElement).disabled)).toBe(true);
   });
+
+  it("shows reclaimable storage on the prune button and triggers onprune", async () => {
+    mockCommands({ op_log: () => ENTRIES });
+    const onprune = vi.fn();
+    render(OpLogPanel, {
+      repoId: 2,
+      revision: 0,
+      stats: { entryCount: 12, totalBytes: 8192, prunableCount: 5, reclaimableBytes: 3584 },
+      onundo: vi.fn(),
+      onrestoreto: vi.fn(),
+      onrestorefiles: vi.fn(),
+      onprune,
+    });
+    await screen.findByText("Discard Engine.cs");
+
+    expect(screen.getByRole("region", { name: "Op log" })).toHaveTextContent("12 entries · 8.0 KB");
+    const btn = screen.getByRole("button", { name: "Prune old (5 · 3.5 KB)" });
+    await fireEvent.click(btn);
+    expect(onprune).toHaveBeenCalledTimes(1);
+  });
 });

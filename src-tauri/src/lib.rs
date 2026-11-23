@@ -1456,8 +1456,9 @@ async fn agent_setup(
     session: State<'_, Session>,
     id: u32,
     target: String,
+    with_hooks: Option<bool>,
 ) -> Result<String, Error> {
-    session.agent_setup(id, &target)
+    session.agent_setup(id, &target, with_hooks.unwrap_or(false))
 }
 
 #[tauri::command]
@@ -1683,11 +1684,34 @@ pub fn run() {
     app_with_library(Builder::default(), None)
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            let dir = app.path().app_data_dir()?;
-            std::fs::create_dir_all(&dir)?;
-            let store = LibraryStore::load(dir.join("library.json"))
+            let library_path = if let Some(custom) = std::env::var_os("GITGUD_LIBRARY") {
+                std::path::PathBuf::from(custom)
+            } else {
+                app.path().app_data_dir()?.join("library.json")
+            };
+            if let Some(parent) = library_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            let store = LibraryStore::load(library_path)
                 .map_err(|e| std::io::Error::other(e.to_string()))?;
             app.manage(store);
+
+            #[cfg(windows)]
+            if let Some(window) = app.get_webview_window("main")
+                && let Err(e) = window.with_webview(|wv| unsafe {
+                    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings3;
+                    use windows_core::Interface;
+                    if let Ok(core) = wv.controller().CoreWebView2()
+                        && let Ok(settings) = core.Settings()
+                        && let Ok(settings3) = settings.cast::<ICoreWebView2Settings3>()
+                    {
+                        let _ = settings3.SetAreBrowserAcceleratorKeysEnabled(false);
+                    }
+                })
+            {
+                eprintln!("gitgud: cannot disable browser accelerator keys: {e}");
+            }
+
             Ok(())
         })
         .run(tauri::generate_context!())
@@ -3241,6 +3265,19 @@ mod tests {
             .unwrap();
         assert_eq!(written, "GITGUD_AGENT.md");
         assert!(repo.path().join("GITGUD_AGENT.md").is_file());
+
+        let claude = ipc
+            .call(
+                "agent_setup",
+                json!({ "id": id, "target": "claude", "withHooks": true }),
+            )
+            .unwrap();
+        assert_eq!(
+            claude,
+            ".claude/skills/gitgud/SKILL.md + .claude/settings.local.json"
+        );
+        assert!(repo.path().join(".claude/skills/gitgud/SKILL.md").is_file());
+        assert!(repo.path().join(".claude/settings.local.json").is_file());
     }
 
     #[test]

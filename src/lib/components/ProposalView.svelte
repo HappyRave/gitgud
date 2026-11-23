@@ -171,64 +171,66 @@
     </span>
   </div>
 
-  <div class="card">
-    <div class="cbd">
-      <label class="msg-wrap">
-        <span class="lbl">Commit message</span>
-        <input class="msg" aria-label="Proposal commit message" bind:value={message} disabled={busy} />
-      </label>
-      {#if proposal.why.trim()}
-        <p class="why"><span class="lbl">Why:</span> {proposal.why}</p>
-      {/if}
-      {#if proposal.riskFlags.length > 0}
-        <ul class="risks" aria-label="Risk flags">
-          {#each proposal.riskFlags as flag (flag.kind + ":" + flag.path + ":" + flag.detail)}
-            <li>
-              <span class="risk-ic" aria-hidden="true">⚠</span>
-              <span class="risk-detail">{flag.detail}</span>
-              {#if flag.path}
-                <code class="risk-path">{flag.path}</code>
-              {/if}
-            </li>
-          {/each}
-        </ul>
-      {/if}
-      {#if proposal.comments.length > 0}
-        <div class="comments" aria-label="Review comments">
-          {#each proposal.comments as c (c.id)}
-            <div class="comment">
-              <span class="comment-author">{c.author}:</span>
-              <span>{c.text}</span>
-            </div>
-          {/each}
-        </div>
-      {/if}
+  <div class="meta-col">
+    <div class="card">
+      <div class="cbd">
+        <label class="msg-wrap">
+          <span class="lbl">Commit message</span>
+          <input class="msg" aria-label="Proposal commit message" bind:value={message} disabled={busy} />
+        </label>
+        {#if proposal.why.trim()}
+          <p class="why"><span class="lbl">Why:</span> {proposal.why}</p>
+        {/if}
+        {#if proposal.riskFlags.length > 0}
+          <ul class="risks" aria-label="Risk flags">
+            {#each proposal.riskFlags as flag (flag.kind + ":" + flag.path + ":" + flag.detail)}
+              <li>
+                <span class="risk-ic" aria-hidden="true">⚠</span>
+                <span class="risk-detail">{flag.detail}</span>
+                {#if flag.path}
+                  <code class="risk-path">{flag.path}</code>
+                {/if}
+              </li>
+            {/each}
+          </ul>
+        {/if}
+        {#if proposal.comments.length > 0}
+          <div class="comments" aria-label="Review comments">
+            {#each proposal.comments as c (c.id)}
+              <div class="comment">
+                <span class="comment-author">{c.author}:</span>
+                <span>{c.text}</span>
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </div>
     </div>
-  </div>
 
-  <div class="grp">
-    {chosenPaths.length} of {proposal.files.length}
-    {proposal.files.length === 1 ? "file" : "files"} selected
+    <div class="grp">
+      {chosenPaths.length} of {proposal.files.length}
+      {proposal.files.length === 1 ? "file" : "files"} selected
+    </div>
+    <ul class="files" aria-label="Proposed files">
+      {#each proposal.files as f (f)}
+        {@const cut = f.lastIndexOf("/") + 1}
+        <li>
+          <div class="frow" class:current={f === activeFile}>
+            <input type="checkbox" aria-label="Include {f}" checked={checked.has(f)} disabled={busy} onchange={() => toggleFile(f)} />
+            <button
+              type="button"
+              class="bare fbtn"
+              aria-pressed={f === activeFile}
+              title={f}
+              onclick={() => (activeFile = f)}
+            >
+              <span class="fp"><span class="dir">{f.slice(0, cut)}</span>{f.slice(cut)}</span>
+            </button>
+          </div>
+        </li>
+      {/each}
+    </ul>
   </div>
-  <ul class="files" aria-label="Proposed files">
-    {#each proposal.files as f (f)}
-      {@const cut = f.lastIndexOf("/") + 1}
-      <li>
-        <div class="frow" class:current={f === activeFile}>
-          <input type="checkbox" aria-label="Include {f}" checked={checked.has(f)} disabled={busy} onchange={() => toggleFile(f)} />
-          <button
-            type="button"
-            class="bare fbtn"
-            aria-pressed={f === activeFile}
-            title={f}
-            onclick={() => (activeFile = f)}
-          >
-            <span class="fp"><span class="dir">{f.slice(0, cut)}</span>{f.slice(cut)}</span>
-          </button>
-        </div>
-      </li>
-    {/each}
-  </ul>
 
   <div class="diff-wrap">
     {#if diffError}
@@ -384,11 +386,17 @@
     border-bottom: 1px solid var(--line);
     flex: none;
   }
+  .meta-col {
+    display: flex;
+    flex-direction: column;
+    flex: 0 1 auto;
+    min-height: 0;
+  }
   .frow {
     display: flex;
     align-items: center;
     gap: 6px;
-    height: 24px;
+    height: var(--row-h, 24px);
     padding: 0 10px;
   }
   .frow:hover {
@@ -442,5 +450,31 @@
   }
   .danger {
     color: var(--bad-ink);
+  }
+  @media (min-width: 2400px) {
+    .detail {
+      display: grid;
+      grid-template-columns: minmax(320px, 2fr) 3fr;
+      grid-template-rows: auto minmax(0, 1fr) auto;
+    }
+    .ph {
+      grid-column: 1 / -1;
+    }
+    .meta-col {
+      grid-area: 2 / 1;
+      overflow-y: auto;
+    }
+    .meta-col .files {
+      max-height: none;
+      flex: 1;
+      border-bottom: 0;
+    }
+    .actions {
+      grid-area: 3 / 1;
+    }
+    .diff-wrap {
+      grid-area: 2 / 2 / 4 / 3;
+      border-left: 1px solid var(--line);
+    }
   }
 </style>

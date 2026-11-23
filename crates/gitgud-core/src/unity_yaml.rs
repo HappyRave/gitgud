@@ -785,7 +785,9 @@ pub fn apply_unity_conflict_picks(
                             let old_line = &lines[existing.line_idx];
                             let indent: String =
                                 old_line.chars().take_while(|c| c.is_whitespace()).collect();
-                            let prefix = if old_line.trim_start().starts_with("- ")
+                            let prefix = if existing.key.starts_with('[') {
+                                format!("{indent}-")
+                            } else if old_line.trim_start().starts_with("- ")
                                 && !existing.is_mod_override
                             {
                                 format!("{indent}- {}:", existing.key)
@@ -1238,6 +1240,36 @@ fn parse_single_doc(
                     _ => {}
                 }
             }
+            continue;
+        }
+
+        if is_seq_item
+            && !body.is_empty()
+            && (body.starts_with('{') || body.starts_with('[') || !body.contains(':'))
+        {
+            let parent_prefix = stack
+                .iter()
+                .map(|(_, s)| s.as_str())
+                .collect::<Vec<_>>()
+                .join(".");
+            let c = seq_counters.entry(parent_prefix.clone()).or_insert(0);
+            let idx = *c;
+            *c += 1;
+            let full_key = if parent_prefix.is_empty() {
+                format!("[{idx}]")
+            } else {
+                format!("{parent_prefix}[{idx}]")
+            };
+            props.insert(
+                full_key,
+                UnityProp {
+                    value: body.to_owned(),
+                    line_idx,
+                    indent,
+                    key: format!("[{idx}]"),
+                    is_mod_override: false,
+                },
+            );
             continue;
         }
 

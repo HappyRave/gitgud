@@ -23,8 +23,27 @@
   } = $props();
 
   let menu = $state<HTMLElement | null>(null);
+  let pos = $state<{ x: number; y: number } | null>(null);
+
+  const left = $derived(pos?.x ?? x);
+  const top = $derived(pos?.y ?? y);
+
+  function clampPosition() {
+    if (!menu) {
+      return;
+    }
+    const rect = menu.getBoundingClientRect();
+    const pad = 4;
+    const maxX = Math.max(pad, window.innerWidth - rect.width - pad);
+    const maxY = Math.max(pad, window.innerHeight - rect.height - pad);
+    pos = {
+      x: Math.max(pad, Math.min(x, maxX)),
+      y: Math.max(pad, Math.min(y, maxY)),
+    };
+  }
 
   onMount(() => {
+    clampPosition();
     menu?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
   });
 
@@ -53,7 +72,7 @@
 
 <svelte:window onkeydown={onKeydown} onpointerdown={onPointerDown} onblur={onclose} />
 
-<div class="menu" role="menu" bind:this={menu} style:left="{x}px" style:top="{y}px">
+<div class="menu" role="menu" bind:this={menu} style:left="{left}px" style:top="{top}px">
   {#each items as item (item.label)}
     <button
       class="bare"

@@ -64,7 +64,7 @@ test("a pre-commit hook rejection shows git's message and keeps the commit messa
 
   const alert = page.getByRole("alert");
   await alert.waitFor({ timeout: 10_000 });
-  assert.equal(await alert.locator(".msg").innerText(), "lint: no trailing spaces");
+  assert.equal(await alert.locator(".exp").innerText(), "lint: no trailing spaces");
   assert.equal(await box.inputValue(), "will be rejected");
   assert.equal(repo.git("rev-list", "--count", "HEAD").trim(), "1");
 });
@@ -123,5 +123,5 @@ test("unstage everything, then the commit button is disabled", async (t) => {
   await page.getByRole("list", { name: "Changes" }).waitFor();
   assert.equal(repo.git("diff", "--cached", "--name-only").trim(), "");
   await page.getByRole("textbox", { name: "Commit message" }).fill("nothing staged");
-  assert.equal(await page.getByRole("button", { name: "Commit" }).isDisabled(), true);
+  assert.equal(await page.getByRole("button", { name: "Commit", exact: true }).isDisabled(), true);
 });

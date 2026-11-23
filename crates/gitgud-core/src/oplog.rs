@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -209,7 +210,17 @@ impl OpLog {
         op: impl FnOnce() -> Result<T, Error>,
     ) -> Result<T, Error> {
         let mut entries = self.load()?;
-        entries.retain(|e| !e.undone);
+        let mut dropped_snapshot = false;
+        entries.retain(|e| {
+            if e.undone {
+                self.remove_files(&e.before);
+                self.remove_files(&e.after);
+                dropped_snapshot |= e.before.worktree.is_some() || e.after.worktree.is_some();
+                false
+            } else {
+                true
+            }
+        });
         let id = entries.last().map_or(1, |e| e.id + 1);
         let git = destructive.map(|(g, _)| g);
         let before = self.capture(repo, git, id, "before")?;
@@ -230,8 +241,13 @@ impl OpLog {
             before,
             after,
         });
-        self.prune(&mut entries);
+        let pruned_snapshot = self.prune(&mut entries);
         self.save(&entries)?;
+        if (dropped_snapshot || pruned_snapshot)
+            && let Some(g) = git
+        {
+            Snapshots::sync_kept(repo, g, &kept_snapshot_trees(&entries))?;
+        }
         Ok(value)
     }
 
@@ -664,17 +680,37 @@ impl OpLog {
     ///
     /// # Errors
     /// [`Error::Read`] when reading log files fails.
-    pub fn stats(&self) -> Result<OpLogStats, Error> {
-        let entries = self.load()?;
-        Ok(self.compute_stats(&entries, KEEP_ENTRIES, KEEP_SECONDS))
+    pub fn stats(&self, repo: &Repo) -> Result<OpLogStats, Error> {
+        self.stats_with_limits(repo, KEEP_ENTRIES, KEEP_SECONDS)
     }
 
-    /// Prunes entries exceeding both `keep_min` and `max_age_secs` (defaults: 2000, 30 days)
+    /// Computes op-log storage and prune preview under custom retention limits.
+    ///
+    /// # Errors
+    /// [`Error::Read`] when reading log files fails.
+    pub fn stats_with_limits(
+        &self,
+        repo: &Repo,
+        keep_min: usize,
+        max_age_secs: i64,
+    ) -> Result<OpLogStats, Error> {
+        let entries = self.load()?;
+        Ok(self.compute_stats(repo, &entries, keep_min, max_age_secs))
+    }
+
+    /// Prunes entries exceeding both `keep_min` and `max_age_secs` (defaults: 2000, 30 days),
+    /// unlinks dropped snapshot trees from [`crate::snapshot::SNAPSHOT_REF`], runs auto-gc,
     /// and returns updated storage stats.
     ///
     /// # Errors
-    /// [`Error::Read`] on disk error.
-    pub fn prune_now(&self, keep_min: usize, max_age_secs: i64) -> Result<OpLogStats, Error> {
+    /// [`Error::Read`] or [`Error::Command`] on disk/git error.
+    pub fn prune_now(
+        &self,
+        repo: &Repo,
+        git: &GitCli,
+        keep_min: usize,
+        max_age_secs: i64,
+    ) -> Result<OpLogStats, Error> {
         let mut entries = self.load()?;
         let cutoff = now() - max_age_secs;
         let mut changed = false;
@@ -688,10 +724,20 @@ impl OpLog {
             fs::create_dir_all(&self.dir).map_err(read_err)?;
             self.save(&entries)?;
         }
-        Ok(self.compute_stats(&entries, keep_min, max_age_secs))
+        let synced = Snapshots::sync_kept(repo, git, &kept_snapshot_trees(&entries))?;
+        if changed || synced {
+            let _ = git.run(repo.root(), &["gc", "--auto"], None);
+        }
+        Ok(self.compute_stats(repo, &entries, keep_min, max_age_secs))
     }
 
-    fn compute_stats(&self, entries: &[Entry], keep_min: usize, max_age_secs: i64) -> OpLogStats {
+    fn compute_stats(
+        &self,
+        repo: &Repo,
+        entries: &[Entry],
+        keep_min: usize,
+        max_age_secs: i64,
+    ) -> OpLogStats {
         let mut total_bytes = 0u64;
         if let Ok(read) = fs::read_dir(&self.dir) {
             for e in read.flatten() {
@@ -703,22 +749,23 @@ impl OpLog {
             }
         }
         let cutoff = now() - max_age_secs;
-        let mut prunable_count = 0usize;
+        let mut prune_end = 0usize;
         let mut reclaimable_bytes = 0u64;
         for (idx, e) in entries.iter().enumerate() {
             if entries.len() - idx > keep_min && e.time < cutoff {
-                prunable_count += 1;
+                prune_end = idx + 1;
                 reclaimable_bytes +=
                     self.state_file_size(&e.before) + self.state_file_size(&e.after);
             } else {
                 break;
             }
         }
+        let (lfs_total, lfs_reclaimable) = oplog_only_lfs_bytes(repo, entries, prune_end);
         OpLogStats {
             entry_count: entries.len(),
-            total_bytes,
-            prunable_count,
-            reclaimable_bytes,
+            total_bytes: total_bytes + lfs_total,
+            prunable_count: prune_end,
+            reclaimable_bytes: reclaimable_bytes + lfs_reclaimable,
         }
     }
 
@@ -730,13 +777,16 @@ impl OpLog {
             .map_or(0, |m| m.len())
     }
 
-    fn prune(&self, entries: &mut Vec<Entry>) {
+    fn prune(&self, entries: &mut Vec<Entry>) -> bool {
         let cutoff = now() - KEEP_SECONDS;
+        let mut dropped_snapshot = false;
         while entries.len() > KEEP_ENTRIES && entries[0].time < cutoff {
             let old = entries.remove(0);
+            dropped_snapshot |= old.before.worktree.is_some() || old.after.worktree.is_some();
             self.remove_files(&old.before);
             self.remove_files(&old.after);
         }
+        dropped_snapshot
     }
 
     fn remove_files(&self, state: &State) {
@@ -937,6 +987,252 @@ fn index_entries(path: &Path) -> Result<Vec<(String, String, u32, u32)>, Error> 
             )
         })
         .collect())
+}
+
+fn kept_snapshot_trees(entries: &[Entry]) -> Vec<String> {
+    let mut kept = Vec::new();
+    for entry in entries {
+        if let Some(tree) = &entry.before.worktree {
+            kept.push(tree.clone());
+        }
+        if let Some(tree) = &entry.after.worktree {
+            kept.push(tree.clone());
+        }
+    }
+    kept
+}
+
+const MAX_LFS_POINTER_BYTES: u64 = 512;
+
+fn oplog_only_lfs_bytes(repo: &Repo, entries: &[Entry], prune_end: usize) -> (u64, u64) {
+    let gix = &repo.gix();
+    let lfs_objects_dir = gix.common_dir().join("lfs").join("objects");
+    if !lfs_objects_dir.is_dir() {
+        return (0, 0);
+    }
+
+    let mut blob_cache: HashMap<gix::ObjectId, Option<String>> = HashMap::new();
+    let mut prunable_trees_seen = HashSet::new();
+    let mut kept_trees_seen = HashSet::new();
+    let mut prunable_oids = HashSet::new();
+    let mut kept_oids = HashSet::new();
+
+    for e in &entries[..prune_end] {
+        collect_state_lfs_oids(
+            gix,
+            &e.before,
+            &mut prunable_trees_seen,
+            &mut blob_cache,
+            &mut prunable_oids,
+        );
+        collect_state_lfs_oids(
+            gix,
+            &e.after,
+            &mut prunable_trees_seen,
+            &mut blob_cache,
+            &mut prunable_oids,
+        );
+    }
+    for e in &entries[prune_end..] {
+        collect_state_lfs_oids(
+            gix,
+            &e.before,
+            &mut kept_trees_seen,
+            &mut blob_cache,
+            &mut kept_oids,
+        );
+        collect_state_lfs_oids(
+            gix,
+            &e.after,
+            &mut kept_trees_seen,
+            &mut blob_cache,
+            &mut kept_oids,
+        );
+    }
+
+    let mut snapshot_sizes: HashMap<String, u64> = HashMap::new();
+    for oid in prunable_oids.iter().chain(kept_oids.iter()) {
+        if snapshot_sizes.contains_key(oid) || oid.len() < 4 {
+            continue;
+        }
+        let obj_path = lfs_objects_dir.join(&oid[..2]).join(&oid[2..4]).join(oid);
+        if let Ok(meta) = fs::metadata(obj_path)
+            && meta.is_file()
+        {
+            snapshot_sizes.insert(oid.clone(), meta.len());
+        }
+    }
+    if snapshot_sizes.is_empty() {
+        return (0, 0);
+    }
+
+    let mut remaining: HashSet<String> = snapshot_sizes.keys().cloned().collect();
+    if let Ok(index) = gix.index_or_empty() {
+        for entry in index.entries() {
+            if let Some(oid) = blob_lfs_oid(gix, entry.id, &mut blob_cache) {
+                remaining.remove(&oid);
+                if remaining.is_empty() {
+                    return (0, 0);
+                }
+            }
+        }
+    }
+
+    let mut commit_stack = Vec::new();
+    let mut live_tree_stack = Vec::new();
+    if let Ok(head_id) = gix.head_id() {
+        commit_stack.push(head_id.detach());
+    }
+    if let Ok(refs) = gix.references()
+        && let Ok(iter) = refs.all()
+    {
+        for mut r in iter.flatten() {
+            if r.name().as_bstr().starts_with(b"refs/gitgud/") {
+                continue;
+            }
+            let Ok(id) = r.peel_to_id() else {
+                continue;
+            };
+            let oid = id.detach();
+            let Ok(header) = gix.find_header(oid) else {
+                continue;
+            };
+            match header.kind() {
+                gix::object::Kind::Commit => commit_stack.push(oid),
+                gix::object::Kind::Tree => live_tree_stack.push(oid),
+                gix::object::Kind::Blob => {
+                    if let Some(lfs_oid) = blob_lfs_oid(gix, oid, &mut blob_cache) {
+                        remaining.remove(&lfs_oid);
+                    }
+                }
+                gix::object::Kind::Tag => {}
+            }
+        }
+    }
+
+    let mut visited_commits = HashSet::new();
+    let mut live_trees_seen = HashSet::new();
+    if !remaining.is_empty() && !live_tree_stack.is_empty() {
+        walk_trees_for_lfs(
+            gix,
+            &mut live_tree_stack,
+            &mut live_trees_seen,
+            &mut blob_cache,
+            |lfs_oid| {
+                remaining.remove(lfs_oid);
+                !remaining.is_empty()
+            },
+        );
+    }
+    while let Some(commit_id) = commit_stack.pop() {
+        if remaining.is_empty() {
+            break;
+        }
+        if !visited_commits.insert(commit_id) {
+            continue;
+        }
+        let Ok(commit) = gix.find_commit(commit_id) else {
+            continue;
+        };
+        if let Ok(tree_id) = commit.tree_id() {
+            live_tree_stack.push(tree_id.detach());
+        }
+        for parent_id in commit.parent_ids() {
+            commit_stack.push(parent_id.detach());
+        }
+        walk_trees_for_lfs(
+            gix,
+            &mut live_tree_stack,
+            &mut live_trees_seen,
+            &mut blob_cache,
+            |lfs_oid| {
+                remaining.remove(lfs_oid);
+                !remaining.is_empty()
+            },
+        );
+    }
+
+    let total_lfs: u64 = remaining
+        .iter()
+        .filter_map(|oid| snapshot_sizes.get(oid))
+        .copied()
+        .sum();
+    let reclaimable_lfs: u64 = remaining
+        .iter()
+        .filter(|oid| prunable_oids.contains(*oid) && !kept_oids.contains(*oid))
+        .filter_map(|oid| snapshot_sizes.get(oid))
+        .copied()
+        .sum();
+    (total_lfs, reclaimable_lfs)
+}
+
+fn collect_state_lfs_oids(
+    gix: &gix::Repository,
+    state: &State,
+    seen_trees: &mut HashSet<gix::ObjectId>,
+    blob_cache: &mut HashMap<gix::ObjectId, Option<String>>,
+    out: &mut HashSet<String>,
+) {
+    let Some(tree_hex) = &state.worktree else {
+        return;
+    };
+    let Ok(tree_id) = gix::ObjectId::from_hex(tree_hex.as_bytes()) else {
+        return;
+    };
+    let mut stack = vec![tree_id];
+    walk_trees_for_lfs(gix, &mut stack, seen_trees, blob_cache, |oid| {
+        out.insert(oid.to_owned());
+        true
+    });
+}
+
+fn walk_trees_for_lfs(
+    gix: &gix::Repository,
+    tree_stack: &mut Vec<gix::ObjectId>,
+    seen_trees: &mut HashSet<gix::ObjectId>,
+    blob_cache: &mut HashMap<gix::ObjectId, Option<String>>,
+    mut on_lfs: impl FnMut(&str) -> bool,
+) {
+    while let Some(tree_id) = tree_stack.pop() {
+        if !seen_trees.insert(tree_id) {
+            continue;
+        }
+        let Ok(tree) = gix.find_tree(tree_id) else {
+            continue;
+        };
+        for entry in tree.iter().flatten() {
+            if entry.mode().is_tree() {
+                tree_stack.push(entry.object_id());
+            } else if entry.mode().is_blob()
+                && let Some(oid) = blob_lfs_oid(gix, entry.object_id(), blob_cache)
+                && !on_lfs(&oid)
+            {
+                return;
+            }
+        }
+    }
+}
+
+fn blob_lfs_oid(
+    gix: &gix::Repository,
+    id: gix::ObjectId,
+    blob_cache: &mut HashMap<gix::ObjectId, Option<String>>,
+) -> Option<String> {
+    if let Some(cached) = blob_cache.get(&id) {
+        return cached.clone();
+    }
+    let header_ok = gix
+        .find_header(id)
+        .is_ok_and(|h| h.kind() == gix::object::Kind::Blob && h.size() <= MAX_LFS_POINTER_BYTES);
+    let parsed = if header_ok {
+        gix.find_blob(id)
+            .ok()
+            .and_then(|blob| crate::lfs::parse_lfs_pointer(&blob.data).map(|(oid, _)| oid))
+    } else {
+        None
+    };
+    blob_cache.insert(id, parsed.clone());
+    parsed
 }
 
 fn stash_changed(entry: &Entry) -> bool {

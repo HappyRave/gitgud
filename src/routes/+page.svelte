@@ -37,7 +37,7 @@
     tabCycleKey,
   } from "$lib/keys";
   import { folderPathLabel, pathKey } from "$lib/library/filter";
-  import { applyTheme, prefs } from "$lib/prefs.svelte";
+  import { applyDensity, applyTheme, prefs } from "$lib/prefs.svelte";
 
   const git = gitInfo();
 
@@ -77,6 +77,7 @@
 
   $effect(() => {
     applyTheme(prefs.theme);
+    applyDensity(prefs.density);
   });
 
   function repoName(path: string) {

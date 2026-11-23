@@ -130,6 +130,14 @@
     height: 22px;
     font-size: 11.5px;
     padding: 0 7px;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    background: var(--panel);
+    color: var(--fg);
+  }
+  .flt:focus {
+    outline: none;
+    border-color: var(--l0);
   }
   .cards {
     flex: 1;
@@ -140,6 +148,7 @@
     align-content: start;
   }
   .card {
+    margin: 0;
     border: 1px solid var(--line);
     border-radius: 5px;
     background: var(--panel);
@@ -161,11 +170,11 @@
     text-transform: uppercase;
   }
   .k-added {
-    background: var(--add-bg);
-    color: var(--l2);
+    background: var(--add);
+    color: var(--add-ink);
   }
   .k-removed {
-    background: var(--del-bg);
+    background: var(--del);
     color: var(--bad-ink);
   }
   .k-modified {
@@ -195,7 +204,7 @@
   }
   .pname {
     width: 34%;
-    color: var(--ink);
+    color: var(--fg);
     word-break: break-word;
   }
   .pval {
@@ -203,11 +212,11 @@
   }
   .pval.old {
     color: var(--bad-ink);
-    background: var(--del-bg);
+    background: var(--del);
   }
   .pval.new {
-    color: var(--l2);
-    background: var(--add-bg);
+    color: var(--add-ink);
+    background: var(--add);
   }
   .arr {
     width: 18px;

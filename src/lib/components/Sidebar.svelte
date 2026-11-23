@@ -611,7 +611,7 @@
     align-items: center;
     gap: 6px;
     width: 100%;
-    height: 22px;
+    height: var(--row-h-sm, 22px);
     padding: 0 10px 0 calc(10px + var(--depth, 0) * 14px);
     white-space: nowrap;
     overflow: hidden;

@@ -114,3 +114,187 @@ MonoBehaviour:\n\
     assert!(merged_disk.contains("hp: 90"));
     assert!(merged_disk.contains("speed: 9"));
 }
+
+#[test]
+fn complex_unity_prefab_variants_nested_instances_stripped_and_flow_collections() {
+    let repo = TestRepo::init();
+    let script_guid = "cafebabecafebabecafebabecafebabe";
+    let nested_guid = "feedfacefeedfacefeedfacefeedface";
+
+    let scene = |tint: &str, mod_x: &str, child_ref: &str| {
+        format!(
+            "%YAML 1.1
+--- !u!1 &10
+GameObject:
+  m_Name: ArenaRoot
+  m_TagString: Untagged
+--- !u!4 &11
+Transform:
+  m_GameObject: {{fileID: 10}}
+  m_Father: {{fileID: 0}}
+  m_Children:
+  - {{fileID: {child_ref}}}
+  - {{fileID: 102}}
+--- !u!1001 &200
+PrefabInstance:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Modification:
+    m_TransformParent: {{fileID: 11}}
+    m_Modifications:
+    - target: {{fileID: 100001, guid: {nested_guid}, type: 3}}
+      propertyPath: m_Name
+      value: BossVariant
+      objectReference: {{fileID: 0}}
+    - target: {{fileID: 100002, guid: {nested_guid}, type: 3}}
+      propertyPath: m_LocalPosition.x
+      value: {mod_x}
+      objectReference: {{fileID: 0}}
+    m_RemovedComponents: []
+  m_SourcePrefab: {{fileID: 100100000, guid: {nested_guid}, type: 3}}
+--- !u!1 &101 stripped
+GameObject:
+  m_CorrespondingSourceObject: {{fileID: 100001, guid: {nested_guid}, type: 3}}
+  m_PrefabInstance: {{fileID: 200}}
+--- !u!4 &102 stripped
+Transform:
+  m_CorrespondingSourceObject: {{fileID: 100002, guid: {nested_guid}, type: 3}}
+  m_PrefabInstance: {{fileID: 200}}
+  m_Father: {{fileID: 11}}
+--- !u!114 &300
+MonoBehaviour:
+  m_GameObject: {{fileID: 10}}
+  m_Script: {{fileID: 11500000, guid: {script_guid}, type: 3}}
+  tint: {tint}
+  tags:
+  - Arena
+  phases: [Intro, Enrage]
+"
+        )
+    };
+
+    repo.write(
+        "ProjectSettings/ProjectVersion.txt",
+        "m_EditorVersion: 6000.0.12f1\n",
+    )
+    .write("Assets/Scripts/ArenaCtrl.cs", "class ArenaCtrl {}")
+    .write(
+        "Assets/Scripts/ArenaCtrl.cs.meta",
+        &format!("fileFormatVersion: 2\nguid: {script_guid}\n"),
+    )
+    .write("Assets/Prefabs/BossBase.prefab", "base")
+    .write(
+        "Assets/Prefabs/BossBase.prefab.meta",
+        &format!("fileFormatVersion: 2\nguid: {nested_guid}\n"),
+    )
+    .write(
+        "Assets/Scenes/BossArena.unity",
+        &scene("{r: 1, g: 0.5, b: 0, a: 1}", "1.5", "301"),
+    )
+    .write("Assets/Scenes/BossArena.unity~placeholder", "")
+    .commit_all("base arena");
+
+    // Add referenced child Transform &301 and merge branches with stripped/flow/mod diffs.
+    let extra =
+        "--- !u!4 &301\nTransform:\n  m_GameObject: {fileID: 10}\n  m_Father: {fileID: 11}\n";
+    let base_full = format!(
+        "{}{extra}",
+        scene("{r: 1, g: 0.5, b: 0, a: 1}", "1.5", "301")
+    );
+    repo.write("Assets/Scenes/BossArena.unity", &base_full)
+        .commit_all("valid refs");
+
+    let default_branch = repo
+        .git(&["rev-parse", "--abbrev-ref", "HEAD"])
+        .trim()
+        .to_owned();
+
+    repo.git(&["checkout", "-q", "-b", "theirs"]);
+    repo.write(
+        "Assets/Scenes/BossArena.unity",
+        &format!(
+            "{}{extra}",
+            scene("{r: 0.2, g: 0.8, b: 1, a: 1}", "3.25", "301")
+        ),
+    )
+    .commit_all("theirs arena");
+
+    repo.git(&["checkout", "-q", &default_branch]);
+    repo.write(
+        "Assets/Scenes/BossArena.unity",
+        &format!(
+            "{}{extra}",
+            scene("{r: 0.9, g: 0.1, b: 0.1, a: 1}", "1.5", "102")
+        ),
+    )
+    .commit_all("yours arena");
+
+    let session = Session::default();
+    let id = session.open(repo.path()).unwrap().id;
+
+    // Structural diff parses nested PrefabInstance + flow collections + sequence item cleanly.
+    repo.write(
+        "Assets/Scenes/BossArena.unity",
+        &format!(
+            "{}{extra}",
+            scene("{r: 0.9, g: 0.1, b: 0.1, a: 1}", "2.75", "102")
+        ),
+    );
+    let wdiff = session
+        .worktree_unity_diff(id, "Assets/Scenes/BossArena.unity", Side::Unstaged)
+        .unwrap();
+    assert_eq!(wdiff.objects.len(), 1, "{wdiff:#?}");
+    assert_eq!(
+        wdiff.objects[0].object_path, "ArenaRoot / BossVariant",
+        "{wdiff:#?}"
+    );
+    assert_eq!(
+        wdiff.objects[0].properties[0].property,
+        "override:m_LocalPosition.x"
+    );
+
+    repo.git(&["checkout", "--", "Assets/Scenes/BossArena.unity"]);
+    session.merge(id, "theirs").unwrap();
+
+    let table = session
+        .unity_conflict_table(id, "Assets/Scenes/BossArena.unity")
+        .unwrap();
+    assert_eq!(table.conflicts.len(), 1);
+    assert_eq!(table.conflicts[0].property, "tint");
+    assert!(
+        table
+            .auto_merged
+            .iter()
+            .any(|a| a.property == "override:m_LocalPosition.x" && a.side == "theirs")
+    );
+    assert!(
+        table
+            .auto_merged
+            .iter()
+            .any(|a| a.property == "m_Children[0]" && a.side == "yours")
+    );
+
+    session
+        .resolve_unity_conflict(
+            id,
+            "Assets/Scenes/BossArena.unity",
+            &[UnityPropertyPick {
+                file_id: "300".into(),
+                property: "tint".into(),
+                value: Some("{r: 0.5, g: 0.5, b: 1, a: 1}".into()),
+            }],
+        )
+        .unwrap();
+
+    let issues = session
+        .unity_post_merge_check(id, &["Assets/Scenes/BossArena.unity".into()])
+        .unwrap();
+    assert!(issues.is_empty(), "{issues:?}");
+
+    let resolved =
+        std::fs::read_to_string(repo.path().join("Assets/Scenes/BossArena.unity")).unwrap();
+    assert!(resolved.contains("tint: {r: 0.5, g: 0.5, b: 1, a: 1}"));
+    assert!(resolved.contains("value: 3.25"));
+    assert!(resolved.contains("  - {fileID: 102}"));
+    assert!(resolved.contains("--- !u!1 &101 stripped"));
+}

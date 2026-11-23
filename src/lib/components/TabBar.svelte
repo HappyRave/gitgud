@@ -34,6 +34,20 @@
 
   const VISIBLE_CAP = 8;
   let overflowOpen = $state(false);
+  let overflowWrap = $state<HTMLDivElement | null>(null);
+
+  function onWindowPointerDown(event: PointerEvent) {
+    if (overflowOpen && overflowWrap && !overflowWrap.contains(event.target as Node)) {
+      overflowOpen = false;
+    }
+  }
+
+  function onWindowKeydown(event: KeyboardEvent) {
+    if (overflowOpen && event.key === "Escape") {
+      event.preventDefault();
+      overflowOpen = false;
+    }
+  }
 
   const visibleTabs = $derived.by(() => {
     if (tabs.length <= VISIBLE_CAP) {
@@ -56,6 +70,8 @@
 
   const isSelected = (path: string) => activePath !== null && pathKey(activePath) === pathKey(path);
 </script>
+
+<svelte:window onpointerdown={onWindowPointerDown} onkeydown={onWindowKeydown} />
 
 <nav class="tabs" aria-label="Workspace tabs">
   <div class="list" role="tablist" aria-label="Repositories">
@@ -112,7 +128,7 @@
     {/each}
 
     {#if overflowTabs.length > 0}
-      <div class="ovwrap">
+      <div class="ovwrap" bind:this={overflowWrap}>
         <button
           type="button"
           class="tab ov"

@@ -1441,7 +1441,7 @@ impl Session {
     /// [`Error::UnknownRepo`] or [`Error::Read`].
     pub fn op_log_stats(&self, id: u32) -> Result<OpLogStats, Error> {
         let open = self.get(id)?;
-        OpLog::for_repo(&open.repo).stats()
+        OpLog::for_repo(&open.repo).stats(&open.repo)
     }
 
     /// Prunes op log entries older than 30 days beyond the most recent 2,000 entries.
@@ -1449,8 +1449,8 @@ impl Session {
     /// # Errors
     /// [`Error::UnknownRepo`] or [`Error::Read`].
     pub fn op_log_prune(&self, id: u32) -> Result<OpLogStats, Error> {
-        self.exclusive(id, |open, _| {
-            OpLog::for_repo(&open.repo).prune_now(2000, 30 * 24 * 60 * 60)
+        self.exclusive(id, |open, git| {
+            OpLog::for_repo(&open.repo).prune_now(&open.repo, git, 2000, 30 * 24 * 60 * 60)
         })
     }
 
@@ -1758,9 +1758,15 @@ impl Session {
     ///
     /// # Errors
     /// [`Error::UnknownRepo`] or [`Error::Read`].
-    pub fn agent_setup(&self, id: u32, target: &str) -> Result<String, Error> {
+    pub fn agent_setup(&self, id: u32, target: &str, with_hooks: bool) -> Result<String, Error> {
         let open = self.get(id)?;
-        proposals::write_agent_setup(open.repo.root(), target)
+        let root = open.repo.root();
+        let rel = proposals::write_agent_setup(root, target)?;
+        if with_hooks && target == "claude" {
+            let hook_rel = proposals::write_claude_stop_hook(root)?;
+            return Ok(format!("{rel} + {hook_rel}"));
+        }
+        Ok(rel)
     }
 
     /// Returns recent local operation timings, newest first (capped at 50).

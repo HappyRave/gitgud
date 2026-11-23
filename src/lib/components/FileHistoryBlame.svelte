@@ -89,7 +89,7 @@
     for (let i = 0; i < Math.min(commit.length, 8); i++) {
       sum += commit.charCodeAt(i);
     }
-    return `var(--l${sum % 6})`;
+    return `var(--l${sum % 5})`;
   }
 </script>
 
@@ -184,6 +184,8 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    text-transform: none;
+    letter-spacing: 0;
   }
   .actions {
     display: inline-flex;
@@ -233,7 +235,9 @@
     outline-offset: -2px;
   }
   .badge {
+    all: unset;
     font: 600 10.5px var(--mono);
+    width: 16px;
     text-align: center;
     color: var(--l4);
   }
@@ -294,7 +298,7 @@
   .au {
     overflow: hidden;
     text-overflow: ellipsis;
-    color: var(--ink);
+    color: var(--fg);
   }
   .dt {
     color: var(--muted);

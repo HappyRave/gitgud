@@ -296,4 +296,101 @@ describe("Graph", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("repository 1 is not open");
   });
+
+  it("exposes virtualized ARIA setsize, posinset, and aria-activedescendant", async () => {
+    serve(100);
+    render(Graph, { repoId: 1, rowCount: 100 });
+    const row2 = (await screen.findByText("commit 2")).closest("li")!;
+
+    expect(list()).not.toHaveAttribute("aria-activedescendant");
+    expect(row2).toHaveAttribute("aria-setsize", "100");
+    expect(row2).toHaveAttribute("aria-posinset", "3");
+    expect(row2.id).not.toBe("");
+
+    await fireEvent.click(row2);
+    expect(list()).toHaveAttribute("aria-activedescendant", row2.id);
+
+    await fireEvent.keyDown(list(), { key: "Escape" });
+    expect(list()).not.toHaveAttribute("aria-activedescendant");
+  });
+
+  it("resizes the canvas backing store when devicePixelRatio changes", async () => {
+    const origDpr = Object.getOwnPropertyDescriptor(window, "devicePixelRatio");
+    const origMatchMedia = window.matchMedia;
+    let currentDpr = 1;
+    const listeners = new Map<string, Set<() => void>>();
+
+    Object.defineProperty(window, "devicePixelRatio", {
+      configurable: true,
+      get: () => currentDpr,
+    });
+    window.matchMedia = ((query: string) => {
+      const set = listeners.get(query) ?? new Set<() => void>();
+      listeners.set(query, set);
+      return {
+        matches: false,
+        media: query,
+        addEventListener: (_: string, fn: () => void) => set.add(fn),
+        removeEventListener: (_: string, fn: () => void) => set.delete(fn),
+      } as unknown as MediaQueryList;
+    }) as typeof window.matchMedia;
+
+    try {
+      serve(3);
+      const { container } = render(Graph, { repoId: 1, rowCount: 3 });
+      await screen.findByText("commit 2");
+
+      const canvas = container.querySelector("canvas")!;
+      expect(canvas.height).toBe(VIEWPORT);
+
+      currentDpr = 2;
+      for (const fn of listeners.get("(resolution: 1dppx)") ?? []) {
+        fn();
+      }
+
+      await vi.waitFor(() => expect(canvas.height).toBe(VIEWPORT * 2));
+      expect(listeners.get("(resolution: 2dppx)")?.size).toBe(1);
+    } finally {
+      window.matchMedia = origMatchMedia;
+      if (origDpr) {
+        Object.defineProperty(window, "devicePixelRatio", origDpr);
+      } else {
+        delete (window as { devicePixelRatio?: number }).devicePixelRatio;
+      }
+    }
+  });
+
+  it("updates visible rows via ResizeObserver when the pane resizes", async () => {
+    const origResizeObserver = globalThis.ResizeObserver;
+    const observers: ((entries: ResizeObserverEntry[]) => void)[] = [];
+    const disconnect = vi.fn();
+
+    globalThis.ResizeObserver = class {
+      constructor(cb: (entries: ResizeObserverEntry[]) => void) {
+        observers.push(cb);
+      }
+      observe() {}
+      unobserve() {}
+      disconnect() {
+        disconnect();
+      }
+    } as unknown as typeof ResizeObserver;
+
+    try {
+      serve(5000);
+      const view = render(Graph, { repoId: 1, rowCount: 5000 });
+      await screen.findByText("commit 0");
+      expect(items()).toHaveLength(30);
+
+      for (const cb of observers) {
+        cb([{ contentRect: { height: 2 * ROW_HEIGHT } as DOMRectReadOnly } as ResizeObserverEntry]);
+      }
+      await vi.waitFor(() => expect(items()).toHaveLength(12));
+
+      view.unmount();
+      expect(disconnect).toHaveBeenCalledTimes(1);
+    } finally {
+      globalThis.ResizeObserver = origResizeObserver;
+    }
+  });
 });

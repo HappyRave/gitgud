@@ -58,7 +58,10 @@ describe("SettingsModal", () => {
         pruned = true;
         return { objectCount: 1, totalBytes: 2048, prunableCount: 0, prunableBytes: 0 };
       },
-      agent_setup: ({ target }) => (target === "cursor" ? ".cursor/rules/gitgud.mdc" : ".claude/skills/gitgud/SKILL.md"),
+      agent_setup: ({ target, withHooks }) => {
+        const base = target === "cursor" ? ".cursor/rules/gitgud.mdc" : ".claude/skills/gitgud/SKILL.md";
+        return target === "claude" && withHooks ? `${base} + .claude/settings.local.json` : base;
+      },
       refresh_index: () => ({ id: 7, root: "C:/work/boat", rows: 1, graphVersion: 0 }),
       recent_timings: () => [{ op: "status", elapsedMs: 12, at: 1_700_000_000 }],
     });
@@ -73,9 +76,19 @@ describe("SettingsModal", () => {
     expect(calls.find((c) => c.cmd === "lfs_prune")?.args).toEqual({ id: 7 });
 
     await fireEvent.change(screen.getByLabelText("Agent target"), { target: { value: "cursor" } });
+    expect(screen.queryByRole("checkbox", { name: /Install Claude Stop hook/ })).not.toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "Write agent instructions" }));
     expect(await screen.findByText("Wrote .cursor/rules/gitgud.mdc")).toBeInTheDocument();
     expect(calls.find((c) => c.cmd === "agent_setup")?.args).toEqual({ id: 7, target: "cursor" });
+
+    await fireEvent.change(screen.getByLabelText("Agent target"), { target: { value: "claude" } });
+    await fireEvent.click(screen.getByRole("checkbox", { name: /Install Claude Stop hook/ }));
+    await fireEvent.click(screen.getByRole("button", { name: "Write agent instructions" }));
+    expect(await screen.findByText("Wrote .claude/skills/gitgud/SKILL.md + .claude/settings.local.json")).toBeInTheDocument();
+    expect(calls.filter((c) => c.cmd === "agent_setup").map((c) => c.args)).toEqual([
+      { id: 7, target: "cursor" },
+      { id: 7, target: "claude", withHooks: true },
+    ]);
 
     await fireEvent.click(screen.getByRole("button", { name: "Refresh index" }));
     expect(await screen.findByText("Refreshed")).toBeInTheDocument();

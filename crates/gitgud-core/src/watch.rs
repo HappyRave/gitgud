@@ -11,7 +11,7 @@ use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use crate::repo::{Error, Repo, read_err};
 
 /// Quiet time before a burst of changes is reported (spike 4.4).
-pub const DEBOUNCE: Duration = Duration::from_millis(150);
+pub const DEBOUNCE: Duration = Duration::from_millis(100);
 /// A change storm is still reported at least this often.
 pub const MAX_WAIT: Duration = Duration::from_secs(1);
 

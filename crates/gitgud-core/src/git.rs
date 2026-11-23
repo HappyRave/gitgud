@@ -3,7 +3,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use serde::{Serialize, Serializer};
+use serde::{Deserialize, Serialize, Serializer};
 
 use crate::cli::no_console_window;
 
@@ -13,6 +13,22 @@ pub const MIN_GIT: GitVersion = GitVersion {
     minor: 45,
     patch: 2,
 };
+
+/// Minimum git-lfs version assumed for `--json` lock queries and `GIT_LFS_PROGRESS` (spec §2).
+pub const MIN_GIT_LFS: GitVersion = GitVersion {
+    major: 3,
+    minor: 3,
+    patch: 0,
+};
+
+/// Where the resolved git binary came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum GitSource {
+    #[default]
+    System,
+    Bundled,
+}
 
 /// A git release, compared by major, minor, then patch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -30,6 +46,28 @@ impl GitVersion {
     pub fn parse(output: &str) -> Result<Self, Error> {
         let bad = || Error::UnparsableVersion(output.trim().to_owned());
         let rest = output.trim().strip_prefix("git version ").ok_or_else(bad)?;
+        let mut parts = rest.split('.').map(leading_number);
+        let major = parts.next().flatten().ok_or_else(bad)?;
+        let minor = parts.next().flatten().ok_or_else(bad)?;
+        let patch = parts.next().flatten().unwrap_or(0);
+        Ok(Self {
+            major,
+            minor,
+            patch,
+        })
+    }
+
+    /// Parses `git lfs version` output such as `git-lfs/3.8.1 (GitHub; windows amd64; ...)`.
+    ///
+    /// # Errors
+    /// [`Error::UnparsableVersion`] when the output has no `major.minor` number.
+    pub fn parse_lfs(output: &str) -> Result<Self, Error> {
+        let bad = || Error::UnparsableVersion(output.trim().to_owned());
+        let trimmed = output.trim();
+        let rest = trimmed
+            .strip_prefix("git-lfs/")
+            .or_else(|| trimmed.strip_prefix("git-lfs "))
+            .ok_or_else(bad)?;
         let mut parts = rest.split('.').map(leading_number);
         let major = parts.next().flatten().ok_or_else(bad)?;
         let minor = parts.next().flatten().ok_or_else(bad)?;
@@ -59,11 +97,12 @@ impl Serialize for GitVersion {
     }
 }
 
-/// The git executable gitgud runs, and its version.
+/// The git executable gitgud runs, its version, and whether it is system or bundled.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct GitInfo {
     pub path: PathBuf,
     pub version: GitVersion,
+    pub source: GitSource,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -87,12 +126,123 @@ impl Serialize for Error {
     }
 }
 
-/// Finds `git` on the process `PATH` and checks it against [`MIN_GIT`].
+#[cfg(windows)]
+const GIT_EXE: &str = "git.exe";
+#[cfg(not(windows))]
+const GIT_EXE: &str = "git";
+
+fn push_unique(out: &mut Vec<PathBuf>, candidate: PathBuf) {
+    if !out.contains(&candidate) {
+        out.push(candidate);
+    }
+}
+
+/// Candidate paths for the bundled MinGit executable (installed layout + workspace dev layout).
+#[must_use]
+pub fn bundled_git_candidates() -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    if let Some(raw) = std::env::var_os("GITGUD_BUNDLED_GIT").filter(|v| !v.is_empty()) {
+        let p = PathBuf::from(raw);
+        if p.is_file() {
+            push_unique(&mut out, p);
+        } else {
+            push_unique(&mut out, p.join("cmd").join(GIT_EXE));
+            push_unique(&mut out, p.join(GIT_EXE));
+        }
+    }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(exe_dir) = exe.parent()
+    {
+        push_unique(
+            &mut out,
+            exe_dir
+                .join("resources")
+                .join("git")
+                .join("cmd")
+                .join(GIT_EXE),
+        );
+        push_unique(&mut out, exe_dir.join("git").join("cmd").join(GIT_EXE));
+        push_unique(
+            &mut out,
+            exe_dir
+                .join("..")
+                .join("resources")
+                .join("git")
+                .join("cmd")
+                .join(GIT_EXE),
+        );
+        let mut cur = Some(exe_dir);
+        for _ in 0..6 {
+            let Some(dir) = cur else {
+                break;
+            };
+            push_unique(
+                &mut out,
+                dir.join("src-tauri")
+                    .join("resources")
+                    .join("git")
+                    .join("cmd")
+                    .join(GIT_EXE),
+            );
+            cur = dir.parent();
+        }
+    }
+    #[cfg(debug_assertions)]
+    if let Some(manifest_dir) = option_env!("CARGO_MANIFEST_DIR") {
+        let root = Path::new(manifest_dir).join("..").join("..");
+        push_unique(
+            &mut out,
+            root.join("src-tauri")
+                .join("resources")
+                .join("git")
+                .join("cmd")
+                .join(GIT_EXE),
+        );
+    }
+    out
+}
+
+/// Finds `git` on the process `PATH`, falling back to a bundled MinGit executable when missing
+/// or older than [`MIN_GIT`].
 ///
 /// # Errors
-/// See [`locate_in`].
+/// See [`locate_with_fallback`].
 pub fn locate() -> Result<GitInfo, Error> {
-    locate_in(std::env::var_os("PATH").unwrap_or_default())
+    locate_with_fallback(
+        std::env::var_os("PATH").unwrap_or_default(),
+        &bundled_git_candidates(),
+    )
+}
+
+/// Finds `git` on `search_path`, or falls back to the first valid executable in `bundled_candidates`.
+///
+/// # Errors
+/// Returns the system lookup error when neither `search_path` nor `bundled_candidates` provides a
+/// git >= [`MIN_GIT`].
+pub fn locate_with_fallback(
+    search_path: impl AsRef<OsStr>,
+    bundled_candidates: &[PathBuf],
+) -> Result<GitInfo, Error> {
+    match locate_in(search_path) {
+        Ok(info) => Ok(info),
+        Err(sys_err) => {
+            for candidate in bundled_candidates {
+                if !candidate.is_file() {
+                    continue;
+                }
+                if let Ok(version) = version_of(candidate)
+                    && version >= MIN_GIT
+                {
+                    return Ok(GitInfo {
+                        path: candidate.clone(),
+                        version,
+                        source: GitSource::Bundled,
+                    });
+                }
+            }
+            Err(sys_err)
+        }
+    }
 }
 
 /// Finds `git` on the given search path and checks it against [`MIN_GIT`].
@@ -109,7 +259,11 @@ pub fn locate_in(search_path: impl AsRef<OsStr>) -> Result<GitInfo, Error> {
             min: MIN_GIT,
         });
     }
-    Ok(GitInfo { path, version })
+    Ok(GitInfo {
+        path,
+        version,
+        source: GitSource::System,
+    })
 }
 
 fn version_of(git: &Path) -> Result<GitVersion, Error> {

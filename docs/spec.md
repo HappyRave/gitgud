@@ -338,12 +338,12 @@ Rows in section 3 marked **must (v1.1)** belong to v1.1; every other must is v1.
 | # | Question | Label |
 |---|---|---|
 | O1 | ~~Bitbucket Cloud or Data Center?~~ Answered 2026-11-21: **Bitbucket Cloud** (Max: "Bitbucket Cloud"). Cloud has no LFS lock API (gamedev.md ยง2.9), so lock features work only on the GitHub repos; on Bitbucket repos the lock surfaces hide with the reason. Q2's "lock features target both" can't hold for Bitbucket | decided |
-| O2 | Hunk-ID stability when Max edits near an agent's hunks between `status` and `propose` | open, design (blocks the agent `status` row) |
+| O2 | ~~Hunk-ID stability when Max edits near an agent's hunks between `status` and `propose`~~ Implemented 2026-11-23 (`proposals.rs` `stable_hunk_id_at` / `assign_hunk_ids`): hash `path` + changed `+`/`-` lines + duplicate-occurrence index rather than line offsets | done |
 | O3 | Screens marked "no" in section 4 need a design round or sketch | open, design |
 | O4 | Narrator (screen reader) with the canvas graph and virtualised lists | open, test |
 | O5 | 4K DPR-2 and weaker-laptop rendering | open, test |
-| O6 | Agent waiting for a verdict: MCP elicitation vs polling `proposal` | open, design |
-| O7 | Hooks-driven auto-proposals vs explicit `propose` calls | open, design |
+| O6 | ~~Agent waiting for a verdict: MCP elicitation vs polling `proposal`~~ Decided 2026-11-23: polling `proposal` plus optional blocking `proposal_wait` MCP tool and `proposal --wait` CLI flag | decided |
+| O7 | ~~Hooks-driven auto-proposals vs explicit `propose` calls~~ Decided 2026-11-23: explicit `propose` default plus opt-in `agent hook --event stop` and `agent setup --target claude --with-hooks` | decided |
 | O8 | git-lfs floor version (3.3 assumed) | open, verify |
 | O9 | Sourcetree baseline: clone, LFS pull, status, open on BoatAttack and a 150-repo setup | open, measure (by hand or with Max) |
 | S1 | ~~Op-log snapshot cost~~ Done 2026-11-21 (spikes 4.8): ~23 ms per git process on Windows; led to the split op log (section 3.3) | done |
@@ -378,6 +378,8 @@ Max's verdicts with dates and his words. Full text: `docs/lab/decisions.md` (R1โ
 | Many projects | R3-A Library + nested folders, one per repo; local-only status; reopen tabs | "A, as picked"; "One folder per repo"; "Nest freely"; "Local only, no auto-fetch"; "Reopen last session's tabs" | 2026-11-21 | R3 |
 | Conflicts | R4-A Property table; Smart Merge offered at first merge; auto merges listed collapsed; verify blocks commit; three-column code merge | "A, as picked"; "Offer at first merge"; "Listed, collapsed"; "Block until confirmed"; "Three columns" | 2026-11-21 | R4 |
 | Bitbucket | Repos are on Bitbucket Cloud: no LFS locks there | "Bitbucket Cloud" | 2026-11-21 | O1 |
+| Agent wait | Polling + optional blocking `proposal_wait` MCP / `proposal --wait` CLI | "Polling + optional blocking wait (proposal_wait MCP tool & proposal --wait CLI flag)" | 2026-11-23 | O6 |
+| Agent hooks | Explicit `propose` default + opt-in `agent hook` / `agent setup --with-hooks` | "Explicit propose default + opt-in Stop hook helper (agent hook & agent setup --with-hooks)" | 2026-11-23 | O7 |
 | Phasing | v1.0, then v1.1 (Unity structural work + agents) | "v1.0 then v1.1" | 2026-11-21 | section 7 |
 | Op log | Split: index copy before every action, working-tree snapshot only before destructive actions | "Split it" | 2026-11-21 | spike S1, section 3.3 |
 

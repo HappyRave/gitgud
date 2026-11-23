@@ -25,6 +25,7 @@ export async function launchApp(env: Record<string, string> = {}): Promise<App> 
   const child = spawn(EXE, [], {
     env: {
       ...process.env,
+      GITGUD_LIBRARY: join(profile, "library.json"),
       WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${CDP_PORT}`,
       WEBVIEW2_USER_DATA_FOLDER: profile,
       ...env,

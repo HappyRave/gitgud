@@ -444,32 +444,50 @@ fn write_png_chunk(out: &mut Vec<u8>, kind: [u8; 4], data: &[u8]) {
     out.extend_from_slice(&len.to_be_bytes());
     out.extend_from_slice(&kind);
     out.extend_from_slice(data);
-    let mut crc_input = Vec::with_capacity(4 + data.len());
-    crc_input.extend_from_slice(&kind);
-    crc_input.extend_from_slice(data);
-    out.extend_from_slice(&crc32(&crc_input).to_be_bytes());
+    let crc = !crc32_update(crc32_update(0xFFFF_FFFF, &kind), data);
+    out.extend_from_slice(&crc.to_be_bytes());
 }
 
 fn adler32(data: &[u8]) -> u32 {
     const MOD: u32 = 65_521;
+    const NMAX: usize = 5552;
     let (mut s1, mut s2) = (1u32, 0u32);
-    for &b in data {
-        s1 = (s1 + u32::from(b)) % MOD;
-        s2 = (s2 + s1) % MOD;
+    for chunk in data.chunks(NMAX) {
+        for &b in chunk {
+            s1 += u32::from(b);
+            s2 += s1;
+        }
+        s1 %= MOD;
+        s2 %= MOD;
     }
     (s2 << 16) | s1
 }
 
-fn crc32(data: &[u8]) -> u32 {
-    let mut crc = 0xFFFF_FFFFu32;
-    for &b in data {
-        crc ^= u32::from(b);
-        for _ in 0..8 {
-            let mask = (crc & 1).wrapping_neg();
-            crc = (crc >> 1) ^ (0xEDB8_8320 & mask);
+const CRC32_TABLE: [u32; 256] = {
+    let mut table = [0u32; 256];
+    let mut i = 0usize;
+    while i < 256 {
+        let mut c = i as u32;
+        let mut k = 0;
+        while k < 8 {
+            c = if c & 1 != 0 {
+                0xEDB8_8320 ^ (c >> 1)
+            } else {
+                c >> 1
+            };
+            k += 1;
         }
+        table[i] = c;
+        i += 1;
     }
-    !crc
+    table
+};
+
+fn crc32_update(mut crc: u32, data: &[u8]) -> u32 {
+    for &b in data {
+        crc = CRC32_TABLE[((crc ^ u32::from(b)) & 0xFF) as usize] ^ (crc >> 8);
+    }
+    crc
 }
 
 #[cfg(test)]

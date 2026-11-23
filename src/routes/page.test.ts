@@ -2487,7 +2487,7 @@ describe("Unity, LFS locks, Smart Merge verify, and open-editor guard", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Op log" }));
     await fireEvent.click(await screen.findByText(/Outside gitgud \(reflog\)/));
     expect(await screen.findByText("HEAD@{0}")).toBeInTheDocument();
-    await fireEvent.click(await screen.findByRole("button", { name: "Prune old (4)" }));
+    await fireEvent.click(await screen.findByRole("button", { name: "Prune old (4 · 3.5 KB)" }));
     expect(calls.some((c) => c.cmd === "op_log_prune")).toBe(true);
   });
 

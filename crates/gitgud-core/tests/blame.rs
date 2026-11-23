@@ -36,6 +36,6 @@ fn file_history_follow_blame_and_outside_reflog_and_commit_graph() {
     opened.write_commit_graph(&git).unwrap();
     assert!(opened.has_commit_graph());
 
-    let stats = OpLog::for_repo(&opened).stats().unwrap();
+    let stats = OpLog::for_repo(&opened).stats(&opened).unwrap();
     assert_eq!(stats.entry_count, 0);
 }

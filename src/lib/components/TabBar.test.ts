@@ -58,5 +58,16 @@ describe("TabBar", () => {
     await fireEvent.click(more);
     await fireEvent.click(screen.getByRole("menuitem", { name: /repo-9/ }));
     expect(onselect).toHaveBeenCalledWith("C:/work/repo-9");
+
+    // Reopen and verify Escape and outside click dismiss the overflow menu.
+    await fireEvent.click(more);
+    expect(screen.getByRole("menu", { name: "More open tabs" })).toBeInTheDocument();
+    await fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("menu", { name: "More open tabs" })).not.toBeInTheDocument();
+
+    await fireEvent.click(more);
+    expect(screen.getByRole("menu", { name: "More open tabs" })).toBeInTheDocument();
+    await fireEvent.pointerDown(document.body);
+    expect(screen.queryByRole("menu", { name: "More open tabs" })).not.toBeInTheDocument();
   });
 });

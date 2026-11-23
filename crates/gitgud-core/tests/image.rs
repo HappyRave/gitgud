@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use gitgud_core::image::Version;
 use gitgud_core::repo::{self, Error};
 use gitgud_core::session::Session;
@@ -114,4 +116,65 @@ fn reads_both_sides_of_a_conflict() {
 
     assert_eq!(r.image_bytes("t.png", &Version::Yours).unwrap(), V2);
     assert_eq!(r.image_bytes("t.png", &Version::Theirs).unwrap(), V3);
+}
+
+#[test]
+fn decodes_2048px_tga_and_large_flat_psd_within_spec_targets() {
+    let repo = TestRepo::init();
+
+    // 2048x2048 32-bit uncompressed TGA (16 MiB pixel payload).
+    let w_tga = 2048usize;
+    let h_tga = 2048usize;
+    let mut tga = vec![0u8; 18 + w_tga * h_tga * 4];
+    tga[2] = 2;
+    tga[12..14].copy_from_slice(&(w_tga as u16).to_le_bytes());
+    tga[14..16].copy_from_slice(&(h_tga as u16).to_le_bytes());
+    tga[16] = 32;
+    tga[17] = 0x20;
+    tga[18..22].copy_from_slice(&[10, 20, 30, 255]);
+    std::fs::write(repo.path().join("big.tga"), &tga).unwrap();
+
+    // 5000x5000 4-channel 8-bit flat RGB PSD (~100 MB raw pixel payload, compression 0).
+    let w_psd = 5000usize;
+    let h_psd = 5000usize;
+    let psd_header = 26 + 4 + 4 + 4 + 2;
+    let mut psd = vec![0u8; psd_header + w_psd * h_psd * 4];
+    psd[0..4].copy_from_slice(b"8BPS");
+    psd[4..6].copy_from_slice(&1u16.to_be_bytes());
+    psd[12..14].copy_from_slice(&4u16.to_be_bytes());
+    psd[14..18].copy_from_slice(&(h_psd as u32).to_be_bytes());
+    psd[18..22].copy_from_slice(&(w_psd as u32).to_be_bytes());
+    psd[22..24].copy_from_slice(&8u16.to_be_bytes());
+    psd[24..26].copy_from_slice(&3u16.to_be_bytes());
+    std::fs::write(repo.path().join("big.psd"), &psd).unwrap();
+
+    let r = repo::open(repo.path()).unwrap();
+
+    let t0 = Instant::now();
+    let tga_png = r.image_bytes("big.tga", &Version::Worktree).unwrap();
+    let tga_ms = t0.elapsed().as_secs_f64() * 1000.0;
+    assert!(tga_png.starts_with(b"\x89PNG\r\n\x1a\n"));
+
+    let t1 = Instant::now();
+    let psd_png = r.image_bytes("big.psd", &Version::Worktree).unwrap();
+    let psd_ms = t1.elapsed().as_secs_f64() * 1000.0;
+    assert!(psd_png.starts_with(b"\x89PNG\r\n\x1a\n"));
+
+    println!("perf image decode: 2048px TGA={tga_ms:.1} ms, 100MB flat PSD={psd_ms:.1} ms");
+    #[cfg(not(debug_assertions))]
+    {
+        assert!(tga_ms <= 300.0, "2048px TGA took {tga_ms:.1} ms > 300 ms");
+        assert!(
+            psd_ms <= 1500.0,
+            "100 MB flat PSD took {psd_ms:.1} ms > 1500 ms"
+        );
+    }
+    #[cfg(debug_assertions)]
+    {
+        assert!(tga_ms <= 3000.0, "debug 2048px TGA took {tga_ms:.1} ms");
+        assert!(
+            psd_ms <= 15000.0,
+            "debug 100 MB flat PSD took {psd_ms:.1} ms"
+        );
+    }
 }

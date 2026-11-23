@@ -1,3 +1,6 @@
+use std::path::Path;
+use std::time::Instant;
+
 use gitgud_core::library::{
     AddRepoEntry, DEFAULT_SCAN_DEPTH, LibraryStore, OpenTabState, scan_folder,
 };
@@ -231,4 +234,65 @@ fn library_locate_missing_repo_and_scan_folder() {
     )
     .unwrap();
     assert!(scan2.groups[0].repos.iter().all(|r| r.already_in_library));
+}
+
+fn copy_dir_all(src: &Path, dst: &Path) {
+    std::fs::create_dir_all(dst).unwrap();
+    for entry in std::fs::read_dir(src).unwrap() {
+        let entry = entry.unwrap();
+        let target = dst.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_dir_all(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), target).unwrap();
+        }
+    }
+}
+
+#[test]
+fn library_refreshes_150_repos_cleanly_and_fast() {
+    let dir = tempfile::tempdir().unwrap();
+    let template = TestRepo::init();
+    template.write("README.md", "template\n").commit_all("init");
+
+    let unity_template = TestRepo::init();
+    unity_template
+        .write("README.md", "unity\n")
+        .write(
+            "ProjectSettings/ProjectVersion.txt",
+            "m_EditorVersion: 6000.3.21f1\n",
+        )
+        .commit_all("init unity");
+
+    let mut entries = Vec::with_capacity(150);
+    for i in 0..150 {
+        let repo_dir = dir.path().join(format!("repo-{i:03}"));
+        let src = if i % 5 == 0 {
+            unity_template.path()
+        } else {
+            template.path()
+        };
+        copy_dir_all(src, &repo_dir);
+        if i % 10 == 0 {
+            std::fs::write(repo_dir.join("dirty.txt"), "wip\n").unwrap();
+        }
+        entries.push(AddRepoEntry {
+            path: repo_dir.to_string_lossy().into_owned(),
+            folder_path: Some(format!("Studio / Group {}", i / 30)),
+            name: Some(format!("repo-{i:03}")),
+        });
+    }
+
+    let store = LibraryStore::load(dir.path().join("library.json")).unwrap();
+    store.add_repos(&entries).unwrap();
+
+    let t = Instant::now();
+    let sums = store.refresh_summaries(&[]).unwrap();
+    let ms = t.elapsed().as_secs_f64() * 1000.0;
+
+    assert_eq!(sums.len(), 150);
+    assert_eq!(sums.iter().filter(|s| s.missing).count(), 0);
+    assert_eq!(sums.iter().filter(|s| s.is_unity).count(), 30);
+    assert_eq!(sums.iter().filter(|s| s.dirty_count > 0).count(), 15);
+    println!("perf 150-repo library refresh: {ms:.1} ms");
 }

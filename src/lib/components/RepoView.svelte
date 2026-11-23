@@ -2159,7 +2159,7 @@
       {#await git}
         <span>Looking for git…</span>
       {:then info}
-        <span class="git" data-testid="git-info" title={info.path}>git {info.version} <code>{info.path}</code></span>
+        <span class="git" data-testid="git-info" title={info.path}>git {info.version}{info.source === "bundled" ? " (bundled)" : ""} <code>{info.path}</code></span>
       {:catch err}
         <span role="alert" class="bad">{err}</span>
       {/await}
@@ -2305,7 +2305,7 @@
   .inspector > :global(.oplog),
   .inspector > :global(.fhb) {
     flex: 1;
-    overflow-y: auto;
+    min-height: 0;
   }
   .start {
     flex: 1;

@@ -2,14 +2,15 @@ mod mcp;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::time::Duration;
 
 use gitgud_core::cli::GitCli;
 use gitgud_core::git;
 use gitgud_core::graph::Graph;
 use gitgud_core::lfs;
 use gitgud_core::proposals::{
-    CreateProposalInput, agent_status, create_proposal, get_proposal, list_proposals,
-    withdraw_proposal,
+    CreateProposalInput, agent_status, claude_stop_hook_snippet, create_proposal, get_proposal,
+    list_proposals, run_agent_hook, wait_for_proposal, withdraw_proposal, write_claude_stop_hook,
 };
 use gitgud_core::repo;
 use gitgud_core::worktree::Side;
@@ -201,8 +202,36 @@ fn run() -> Result<(), String> {
             }
         }
         "proposal" => {
-            if let Some(id) = rest.first() {
-                let p = get_proposal(&opened, id).map_err(|e| e.to_string())?;
+            let mut id: Option<String> = None;
+            let mut wait = false;
+            let mut timeout_secs = 300u64;
+            let mut idx = 0;
+            while idx < rest.len() {
+                match rest[idx].as_str() {
+                    "--wait" => wait = true,
+                    "--timeout" => {
+                        idx += 1;
+                        timeout_secs = rest
+                            .get(idx)
+                            .and_then(|s| s.parse().ok())
+                            .ok_or("--timeout requires an integer number of seconds")?;
+                    }
+                    other if id.is_none() => id = Some(other.to_owned()),
+                    other => return Err(format!("unexpected proposal argument: {other}")),
+                }
+                idx += 1;
+            }
+            if wait {
+                let pid = id.ok_or("proposal --wait requires <id>")?;
+                let res =
+                    wait_for_proposal(&opened, &pid, timeout_secs, Duration::from_millis(250))
+                        .map_err(|e| e.to_string())?;
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&res).map_err(|e| e.to_string())?
+                );
+            } else if let Some(pid) = id {
+                let p = get_proposal(&opened, &pid).map_err(|e| e.to_string())?;
                 println!(
                     "{}",
                     serde_json::to_string_pretty(&p).map_err(|e| e.to_string())?
@@ -262,14 +291,21 @@ fn run() -> Result<(), String> {
 }
 
 fn handle_agent(repo_root: &Path, args: &[String], json_out: bool) -> Result<(), String> {
-    if args.first().map(String::as_str) != Some("setup") {
-        return Err(
-            "expected `agent setup [--target claude|codex|cursor|generic] [--write]`".into(),
-        );
+    match args.first().map(String::as_str) {
+        Some("setup") => handle_agent_setup(repo_root, &args[1..], json_out),
+        Some("hook") => handle_agent_hook(repo_root, &args[1..], json_out),
+        _ => Err(
+            "expected `agent setup [--target claude|codex|cursor|generic] [--write] [--with-hooks]` or `agent hook [--event stop]`"
+                .into(),
+        ),
     }
+}
+
+fn handle_agent_setup(repo_root: &Path, args: &[String], json_out: bool) -> Result<(), String> {
     let mut target = "generic";
     let mut write_file = false;
-    let mut i = 1;
+    let mut with_hooks = false;
+    let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
             "--target" => {
@@ -280,9 +316,13 @@ fn handle_agent(repo_root: &Path, args: &[String], json_out: bool) -> Result<(),
                     .ok_or("--target requires a value")?;
             }
             "--write" => write_file = true,
+            "--with-hooks" => with_hooks = true,
             other => return Err(format!("unknown agent setup flag: {other}")),
         }
         i += 1;
+    }
+    if with_hooks && target != "claude" {
+        return Err("--with-hooks currently supports --target claude only".into());
     }
 
     let skill_text = gitgud_core::proposals::agent_setup_text();
@@ -292,6 +332,11 @@ fn handle_agent(repo_root: &Path, args: &[String], json_out: bool) -> Result<(),
     if write_file {
         gitgud_core::proposals::write_agent_setup(repo_root, target).map_err(|e| e.to_string())?;
     }
+    let hook_rel = if with_hooks && write_file {
+        Some(write_claude_stop_hook(repo_root).map_err(|e| e.to_string())?)
+    } else {
+        None
+    };
 
     if json_out {
         println!(
@@ -300,13 +345,76 @@ fn handle_agent(repo_root: &Path, args: &[String], json_out: bool) -> Result<(),
                 "target": target,
                 "path": dest.to_string_lossy(),
                 "written": write_file,
-                "content": skill_text
+                "content": skill_text,
+                "withHooks": with_hooks,
+                "hookPath": hook_rel.as_deref(),
+                "hookSnippet": if with_hooks { Some(claude_stop_hook_snippet()) } else { None },
             })
         );
     } else if write_file {
         println!("Wrote {}", dest.display());
+        if let Some(hr) = &hook_rel {
+            println!("Updated {}", repo_root.join(hr).display());
+        }
     } else {
         println!("Target: {}\n\n{skill_text}", dest.display());
+        if with_hooks {
+            println!("\nHook snippet:\n{}", claude_stop_hook_snippet());
+        }
+    }
+    Ok(())
+}
+
+fn handle_agent_hook(repo_root: &Path, args: &[String], json_out: bool) -> Result<(), String> {
+    let mut event = "stop";
+    let mut agent = "claude";
+    let mut message: Option<String> = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--event" => {
+                i += 1;
+                event = args
+                    .get(i)
+                    .map(String::as_str)
+                    .ok_or("--event requires a value")?;
+            }
+            "--agent" => {
+                i += 1;
+                agent = args
+                    .get(i)
+                    .map(String::as_str)
+                    .ok_or("--agent requires a value")?;
+            }
+            "-m" | "--message" => {
+                i += 1;
+                message = Some(args.get(i).ok_or("-m requires a message")?.clone());
+            }
+            other => return Err(format!("unknown agent hook flag: {other}")),
+        }
+        i += 1;
+    }
+    if event != "stop" {
+        return Err(format!("unsupported hook event: {event} (supported: stop)"));
+    }
+
+    let opened = repo::open(repo_root).map_err(|e| e.to_string())?;
+    let git_cli = GitCli::new(&git::locate().map_err(|e| e.to_string())?);
+    let created =
+        run_agent_hook(&opened, &git_cli, agent, message.as_deref()).map_err(|e| e.to_string())?;
+
+    if json_out {
+        match &created {
+            Some(p) => println!("{}", serde_json::json!({ "created": true, "proposal": p })),
+            None => println!(
+                "{}",
+                serde_json::json!({ "created": false, "reason": "no_new_changes" })
+            ),
+        }
+    } else if let Some(p) = &created {
+        println!("Created proposal {} ({})", p.id, p.short_commit);
+    } else {
+        println!("No new changes to propose");
     }
     Ok(())
 }
@@ -317,9 +425,10 @@ fn print_usage() {
 gitgud-cli [--repo <path>] [--json] <command>
   status | diff [--staged] [--path <file>] | log [-n <N>] | show <commit> [<path>]
   propose -m <msg> [--why <why>] [--agent <name>] [--path <p>...] [--hunk <id>...]
-  proposal [<id>] | withdraw <id>
+  proposal [<id>] [--wait] [--timeout <secs>] | withdraw <id>
   locks [list | lock <path> | unlock <path> [--force]]
-  agent setup [--target claude|codex|cursor|generic] [--write]
+  agent setup [--target claude|codex|cursor|generic] [--write] [--with-hooks]
+  agent hook [--event stop] [--agent <name>] [-m <msg>]
   mcp [--repo <path>]"
     );
 }

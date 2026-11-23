@@ -515,7 +515,7 @@
                   <button
                     type="button"
                     class="bare pin"
-                    class:on={repo.pinned}
+                    class:pinned={repo.pinned}
                     aria-label={repo.pinned ? `Unpin ${repo.name}` : `Pin ${repo.name}`}
                     onclick={(e) => {
                       e.stopPropagation();
@@ -540,7 +540,7 @@
                 <span class="ch">{c && c.dirtyCount > 0 ? `${c.dirtyCount} changed` : ""}</span>
                 <span class="ab2" title={c?.fetchedAt ? `Last fetched ${age(c.fetchedAt)} ago` : undefined}>
                   {#if c && (c.ahead || c.behind)}
-                    {c.ahead ? `↑${c.ahead} ` : ""}{c.behind ? `↓${c.behind}` : ""}
+                    {c.ahead ? `↑${c.ahead} ` : ""}{c.behind ? `↓${c.behind}` : ""}{#if c.behind && c.fetchedAt} · {age(c.fetchedAt)}{/if}
                   {/if}
                 </span>
                 <span>{c && c.locksHeld > 0 ? `🔒 ${c.locksHeld}` : ""}</span>
@@ -569,7 +569,7 @@
       {#await git}
         <span>Looking for git…</span>
       {:then info}
-        <span class="git" data-testid="git-info" title={info.path}>git {info.version} <code>{info.path}</code></span>
+        <span class="git" data-testid="git-info" title={info.path}>git {info.version}{info.source === "bundled" ? " (bundled)" : ""} <code>{info.path}</code></span>
       {:catch err}
         <span role="alert" class="bad">{err}</span>
       {/await}
@@ -633,7 +633,8 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 4px 10px;
+    min-height: var(--row-h-sm, 22px);
+    padding: 2px 10px;
     border: 0;
     background: transparent;
     color: var(--fg);
@@ -708,17 +709,23 @@
   .search input {
     flex: 1;
     border: 0;
+    padding: 0;
     background: transparent;
     color: var(--fg);
     font: inherit;
     outline: none;
   }
+  .search input:focus {
+    background: transparent;
+    border: 0;
+  }
   .lr {
     display: grid;
-    grid-template-columns: 20px 180px minmax(140px, 1.2fr) 150px 85px 70px 60px 65px 38px;
+    grid-template-columns: 20px 180px minmax(140px, 1.2fr) 150px 85px 96px 60px 65px 38px;
     align-items: center;
     gap: 8px;
-    padding: 5px 12px;
+    min-height: var(--row-h, 24px);
+    padding: 2px 12px;
     border-bottom: 1px solid var(--line);
     font-size: 12px;
   }
@@ -781,11 +788,11 @@
     color: var(--muted);
     opacity: 0.45;
   }
-  .pin.on,
+  .pin.pinned,
   .lr:hover .pin {
     opacity: 1;
   }
-  .pin.on {
+  .pin.pinned {
     color: var(--l4);
   }
   .unity {

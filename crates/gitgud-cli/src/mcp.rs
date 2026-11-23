@@ -1,12 +1,13 @@
 use std::io::{self, BufRead, Write};
 use std::path::Path;
+use std::time::Duration;
 
 use gitgud_core::cli::GitCli;
 use gitgud_core::git;
 use gitgud_core::lfs;
 use gitgud_core::proposals::{
     CreateProposalInput, agent_status, create_proposal, get_proposal, list_proposals,
-    withdraw_proposal,
+    wait_for_proposal, withdraw_proposal,
 };
 use gitgud_core::repo::{self, Repo};
 use gitgud_core::worktree::Side;
@@ -162,6 +163,15 @@ fn execute_tool(repo_root: &Path, name: &str, args: &Value) -> Result<Value, Str
                 serde_json::to_value(list).map_err(|e| e.to_string())
             }
         }
+        "proposal_wait" => {
+            let id = args["id"]
+                .as_str()
+                .ok_or_else(|| "missing required argument: id".to_owned())?;
+            let timeout_secs = args["timeoutSecs"].as_u64().unwrap_or(300).clamp(1, 3600);
+            let waited = wait_for_proposal(&opened, id, timeout_secs, Duration::from_millis(250))
+                .map_err(|e| e.to_string())?;
+            serde_json::to_value(waited).map_err(|e| e.to_string())
+        }
         "withdraw" => {
             let id = args["id"]
                 .as_str()
@@ -252,6 +262,18 @@ fn tool_definitions() -> Vec<Value> {
             "inputSchema": {
                 "type": "object",
                 "properties": { "id": { "type": "string" } }
+            }
+        }),
+        json!({
+            "name": "proposal_wait",
+            "description": "Block up to timeoutSecs waiting for human verdict (approved, changesRequested, rejected, withdrawn) on a pending proposal.",
+            "inputSchema": {
+                "type": "object",
+                "required": ["id"],
+                "properties": {
+                    "id": { "type": "string" },
+                    "timeoutSecs": { "type": "integer", "minimum": 1, "maximum": 3600 }
+                }
             }
         }),
         json!({

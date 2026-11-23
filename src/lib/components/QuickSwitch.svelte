@@ -26,6 +26,7 @@
   let query = $state("");
   let activeIdx = $state(0);
   let input = $state<HTMLInputElement | null>(null);
+  let listEl = $state<HTMLUListElement | null>(null);
 
   const matches = $derived.by(() => {
     const scored: { repo: LibraryRepo; folder: string; isOpen: boolean; score: number }[] = [];
@@ -45,6 +46,12 @@
     if (activeIdx >= matches.length) {
       activeIdx = Math.max(0, matches.length - 1);
     }
+  });
+
+  $effect(() => {
+    void activeIdx;
+    const opt = listEl?.querySelectorAll<HTMLElement>("[role='option']")[activeIdx];
+    opt?.scrollIntoView?.({ block: "nearest" });
   });
 
   onMount(() => {
@@ -84,7 +91,7 @@
     {#if matches.length === 0}
       <div class="empty ab">No matching repositories</div>
     {:else}
-      <ul class="list" role="listbox" aria-label="Matching repositories">
+      <ul bind:this={listEl} class="list" role="listbox" aria-label="Matching repositories">
         {#each matches as m, i (m.repo.id)}
           <li>
             <button
@@ -93,6 +100,7 @@
               aria-selected={i === activeIdx}
               class="bare row"
               class:sel={i === activeIdx}
+              onmouseenter={() => (activeIdx = i)}
               onclick={() => onopen(m.repo.path)}
             >
               <span class="ic">{m.isOpen ? "⇥" : "▣"}</span>
@@ -148,10 +156,15 @@
   .search input {
     flex: 1;
     border: 0;
+    padding: 0;
     background: transparent;
     color: var(--fg);
     font: 13px var(--body);
     outline: none;
+  }
+  .search input:focus {
+    background: transparent;
+    border: 0;
   }
   .list {
     list-style: none;

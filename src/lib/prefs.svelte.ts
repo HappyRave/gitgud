@@ -60,9 +60,22 @@ export function toggleIgnoreWhitespace() {
   writeStorage(WS_KEY, prefs.ignoreWhitespace ? "1" : "0");
 }
 
+export function applyDensity(density: Density = prefs.density) {
+  if (typeof document === "undefined") {
+    return;
+  }
+  const root = document.documentElement;
+  if (density === "compact") {
+    root.dataset.density = "compact";
+  } else {
+    delete root.dataset.density;
+  }
+}
+
 export function setDensity(density: Density) {
   prefs.density = density;
   writeStorage(DENSITY_KEY, density);
+  applyDensity(density);
 }
 
 export function applyTheme(theme: ThemeMode = prefs.theme) {
@@ -82,3 +95,6 @@ export function setTheme(theme: ThemeMode) {
   writeStorage(THEME_KEY, theme);
   applyTheme(theme);
 }
+
+applyTheme(prefs.theme);
+applyDensity(prefs.density);

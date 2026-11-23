@@ -44,6 +44,7 @@
     id: string;
     label: string;
     group: string;
+    git?: string;
     hint?: string;
     disabled?: boolean;
     branchOp?: BranchOp;
@@ -74,25 +75,26 @@
   let branchOp = $state<{ op: BranchOp; title: string } | null>(null);
   let activeIdx = $state(0);
   let input = $state<HTMLInputElement | null>(null);
+  let listEl = $state<HTMLUListElement | null>(null);
 
   const commands = $derived.by((): CommandItem[] => {
     const items: CommandItem[] = [];
     if (repo) {
       items.push(
-        { id: "fetch", label: "Fetch all remotes", group: repo.repoName, hint: "Ctrl+Shift+F", run: repo.onfetch },
-        { id: "pull", label: "Pull current branch", group: repo.repoName, hint: "Ctrl+Shift+L", disabled: !repo.canPull, run: repo.onpull },
-        { id: "push", label: "Push current branch", group: repo.repoName, hint: "Ctrl+Shift+P", disabled: !repo.canPush, run: repo.onpush },
-        { id: "stash", label: "Stash uncommitted changes…", group: repo.repoName, disabled: !repo.canStash, run: repo.onstash },
-        { id: "checkout", label: "Checkout branch…", group: repo.repoName, branchOp: "checkout" },
-        { id: "merge", label: "Merge branch into HEAD…", group: repo.repoName, branchOp: "merge" },
-        { id: "rebase", label: "Rebase current branch onto…", group: repo.repoName, branchOp: "rebase" },
-        { id: "new-branch", label: "Create new branch…", group: repo.repoName, hint: "Ctrl+B", run: repo.onnewbranch },
-        ...(repo.oncreatetag ? [{ id: "new-tag", label: "Create tag…", group: repo.repoName, run: repo.oncreatetag }] : []),
-        { id: "delete-branch", label: "Delete branch…", group: repo.repoName, branchOp: "delete" },
+        { id: "fetch", label: "Fetch all remotes", group: repo.repoName, git: "git fetch --all", hint: "Ctrl+Shift+F", run: repo.onfetch },
+        { id: "pull", label: "Pull current branch", group: repo.repoName, git: "git pull", hint: "Ctrl+Shift+L", disabled: !repo.canPull, run: repo.onpull },
+        { id: "push", label: "Push current branch", group: repo.repoName, git: "git push", hint: "Ctrl+Shift+P", disabled: !repo.canPush, run: repo.onpush },
+        { id: "stash", label: "Stash uncommitted changes…", group: repo.repoName, git: "git stash push", disabled: !repo.canStash, run: repo.onstash },
+        { id: "checkout", label: "Checkout branch…", group: repo.repoName, git: "git switch <branch>", branchOp: "checkout" },
+        { id: "merge", label: "Merge branch into HEAD…", group: repo.repoName, git: "git merge <branch>", branchOp: "merge" },
+        { id: "rebase", label: "Rebase current branch onto…", group: repo.repoName, git: "git rebase <branch>", branchOp: "rebase" },
+        { id: "new-branch", label: "Create new branch…", group: repo.repoName, git: "git switch -c", hint: "Ctrl+B", run: repo.onnewbranch },
+        ...(repo.oncreatetag ? [{ id: "new-tag", label: "Create tag…", group: repo.repoName, git: "git tag", run: repo.oncreatetag }] : []),
+        { id: "delete-branch", label: "Delete branch…", group: repo.repoName, git: "git branch -d", branchOp: "delete" },
         { id: "find", label: "Find in commit graph", group: repo.repoName, hint: "Ctrl+F", run: repo.onfind },
         { id: "oplog", label: "Toggle operation history (Op log)", group: repo.repoName, hint: "Ctrl+3", run: repo.onoplog },
         ...(repo.onoptimizegraph
-          ? [{ id: "optimize-graph", label: "Optimize commit-graph cache", group: repo.repoName, run: repo.onoptimizegraph }]
+          ? [{ id: "optimize-graph", label: "Optimize commit-graph cache", group: repo.repoName, git: "git commit-graph write", run: repo.onoptimizegraph }]
           : []),
         { id: "undo", label: "Undo last repository action", group: repo.repoName, hint: "Ctrl+Z", disabled: !repo.canUndo, run: repo.onundo },
         { id: "redo", label: "Redo last undone action", group: repo.repoName, hint: "Ctrl+Y", disabled: !repo.canRedo, run: repo.onredo },
@@ -130,7 +132,7 @@
       { id: "quick-switch", label: "Go to repository…", group: "Library", hint: "Ctrl+P", run: onquickswitch },
       { id: "open-repo", label: "Open local repository…", group: "Library", run: onopenrepo },
       { id: "scan-folder", label: "Scan folder for repositories…", group: "Library", run: onscanfolder },
-      { id: "clone-repo", label: "Clone repository from URL…", group: "Library", run: onclone },
+      { id: "clone-repo", label: "Clone repository from URL…", group: "Library", git: "git clone", run: onclone },
       { id: "settings", label: "Open settings", group: "Application", hint: "Ctrl+,", run: onsettings },
       { id: "shortcuts", label: "Keyboard shortcuts", group: "Application", hint: "?", run: onshortcuts },
     );
@@ -161,7 +163,7 @@
   const filteredCommands = $derived.by(() => {
     const scored: { item: CommandItem; score: number }[] = [];
     for (const item of commands) {
-      const score = fuzzyMatch(`${item.group} ${item.label}`, query);
+      const score = fuzzyMatch(`${item.group} ${item.label} ${item.git ?? ""}`, query);
       if (score !== null) {
         scored.push({ item, score: score - (item.disabled ? 50 : 0) });
       }
@@ -184,14 +186,47 @@
   const itemCount = $derived(branchOp ? filteredBranches.length : filteredCommands.length);
 
   $effect(() => {
-    if (activeIdx >= itemCount) {
-      activeIdx = Math.max(0, itemCount - 1);
+    if (itemCount === 0) {
+      activeIdx = 0;
+      return;
     }
+    if (activeIdx >= itemCount) {
+      activeIdx = itemCount - 1;
+    }
+    if (!branchOp && filteredCommands[activeIdx]?.disabled) {
+      const firstEnabled = filteredCommands.findIndex((c) => !c.disabled);
+      if (firstEnabled >= 0) {
+        activeIdx = firstEnabled;
+      }
+    }
+  });
+
+  $effect(() => {
+    void activeIdx;
+    void branchOp;
+    const opt = listEl?.querySelectorAll<HTMLElement>("[role='option']")[activeIdx];
+    opt?.scrollIntoView?.({ block: "nearest" });
   });
 
   onMount(() => {
     requestAnimationFrame(() => input?.focus());
   });
+
+  function stepSelection(dir: 1 | -1) {
+    if (itemCount === 0) {
+      return;
+    }
+    if (branchOp) {
+      activeIdx = Math.min(itemCount - 1, Math.max(0, activeIdx + dir));
+      return;
+    }
+    for (let idx = activeIdx + dir; idx >= 0 && idx < filteredCommands.length; idx += dir) {
+      if (!filteredCommands[idx].disabled) {
+        activeIdx = idx;
+        return;
+      }
+    }
+  }
 
   function activateCommand(item: CommandItem) {
     if (item.disabled) {
@@ -241,12 +276,10 @@
       activeIdx = 0;
     } else if (event.key === "ArrowDown") {
       event.preventDefault();
-      if (itemCount > 0) {
-        activeIdx = Math.min(itemCount - 1, activeIdx + 1);
-      }
+      stepSelection(1);
     } else if (event.key === "ArrowUp") {
       event.preventDefault();
-      activeIdx = Math.max(0, activeIdx - 1);
+      stepSelection(-1);
     } else if (event.key === "Enter") {
       event.preventDefault();
       if (branchOp) {
@@ -276,7 +309,7 @@
         bind:this={input}
         type="text"
         bind:value={query}
-        placeholder={branchOp ? "Filter branch name… (Backspace to go back)" : "Type a command or action…"}
+        placeholder={branchOp ? "Filter branch name… (Backspace to go back)" : "Type a command or git action…"}
         aria-label={branchOp ? `Filter ${branchOp.title}` : "Filter commands"}
       />
       <span class="ab">↵ run · Esc</span>
@@ -286,7 +319,7 @@
       {#if filteredBranches.length === 0}
         <div class="empty ab">No matching branches</div>
       {:else}
-        <ul class="list" role="listbox" aria-label="Branches">
+        <ul bind:this={listEl} class="list" role="listbox" aria-label="Branches">
           {#each filteredBranches as b, i (b.name)}
             <li>
               <button
@@ -295,6 +328,7 @@
                 class:active={i === activeIdx}
                 role="option"
                 aria-selected={i === activeIdx}
+                onmouseenter={() => (activeIdx = i)}
                 onclick={() => activateBranch(b)}
               >
                 <span class="nm">{b.name}</span>
@@ -307,7 +341,7 @@
     {:else if filteredCommands.length === 0}
       <div class="empty ab">No matching commands</div>
     {:else}
-      <ul class="list" role="listbox" aria-label="Commands">
+      <ul bind:this={listEl} class="list" role="listbox" aria-label="Commands">
         {#each filteredCommands as c, i (c.id)}
           <li>
             <button
@@ -317,10 +351,12 @@
               disabled={c.disabled}
               role="option"
               aria-selected={i === activeIdx}
+              onmouseenter={() => !c.disabled && (activeIdx = i)}
               onclick={() => activateCommand(c)}
             >
-              <span class="grp">{c.group}</span>
+              <span class="cgrp">{c.group}</span>
               <span class="nm">{c.label}</span>
+              {#if c.git}<code class="gitcmd">{c.git}</code>{/if}
               {#if c.hint}<span class="k">{c.hint}</span>{/if}
             </button>
           </li>
@@ -342,7 +378,7 @@
     z-index: 40;
   }
   .pal {
-    width: min(580px, 92vw);
+    width: min(640px, 92vw);
     background: var(--panel);
     border: 1px solid var(--line);
     border-radius: 10px;
@@ -367,10 +403,15 @@
   .search input {
     flex: 1;
     border: 0;
+    padding: 0;
     background: transparent;
     color: var(--fg);
     font: 13px var(--body);
     outline: none;
+  }
+  .search input:focus {
+    background: transparent;
+    border: 0;
   }
   .list {
     list-style: none;
@@ -391,18 +432,33 @@
   .row:disabled {
     opacity: 0.45;
   }
-  .row:hover:not(:disabled),
   .row.active {
     background: var(--sel);
   }
-  .grp {
+  .cgrp {
     min-width: 72px;
     font: 500 10.5px var(--mono);
     color: var(--muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .nm {
     flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     font: 500 12.5px var(--body);
+  }
+  .gitcmd {
+    font: 10.5px var(--mono);
+    color: var(--muted);
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 0 5px;
+    white-space: nowrap;
   }
   .badge {
     font: 10px var(--mono);

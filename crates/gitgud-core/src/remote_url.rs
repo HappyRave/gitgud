@@ -112,8 +112,8 @@ impl Repo {
             .try_find_reference(&format!("refs/heads/{branch}"))
             .map_err(read_err)?
             .and_then(|r| {
-                repo.branch_remote_name(r.name(), Direction::Push)
-                    .or_else(|| repo.branch_remote_name(r.name(), Direction::Fetch))
+                repo.branch_remote_name(r.name().shorten(), Direction::Push)
+                    .or_else(|| repo.branch_remote_name(r.name().shorten(), Direction::Fetch))
             })
             .map(|n| n.as_bstr().to_string());
         let url = match remote_name {

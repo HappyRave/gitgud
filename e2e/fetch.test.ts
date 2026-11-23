@@ -47,7 +47,7 @@ test("Cancel stops a hanging fetch and every process it started", async (t) => {
   repo.write("a.txt", "a\n").commitAll("first");
   const pids = join(repo.path, "pids.txt");
   const script = join(repo.path, "hang.sh");
-  writeFileSync(script, `cat /proc/$$/winpid > '${posix(pids)}'\nsleep 60 &\ncat /proc/$!/winpid >> '${posix(pids)}'\nwait\n`);
+  writeFileSync(script, `cat /proc/$$/winpid > '${posix(pids)}'\ntail -f /dev/null &\ncat /proc/$!/winpid >> '${posix(pids)}'\nwait\n`);
   repo.git("config", "protocol.ext.allow", "always");
   repo.git("remote", "add", "origin", `ext::sh ${posix(script)}`);
 

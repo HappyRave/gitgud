@@ -1,9 +1,11 @@
+use std::time::Duration;
+
 use gitgud_core::cli::GitCli;
 use gitgud_core::git::locate;
 use gitgud_core::graph::Graph;
 use gitgud_core::proposals::{
     CreateProposalInput, ProposalStatus, agent_status, create_proposal, get_proposal,
-    list_proposals, reject_proposal, request_changes, withdraw_proposal,
+    list_proposals, reject_proposal, request_changes, wait_for_proposal, withdraw_proposal,
 };
 use gitgud_core::repo;
 use gitgud_core::session::Session;
@@ -139,4 +141,121 @@ fn proposals_lifecycle_untracked_hunks_replay_and_undo() {
     let rejected = reject_proposal(&opened, &git, &p3.id, Some("duplicate")).unwrap();
     assert_eq!(rejected.status, ProposalStatus::Rejected);
     assert_eq!(rejected.comments[0].text, "duplicate");
+}
+
+#[test]
+fn hunk_ids_survive_nearby_line_shifts_between_status_and_propose() {
+    let repo = TestRepo::init();
+    let initial: String = (1..=20).map(|i| format!("line {i}\n")).collect();
+    repo.write("shift.txt", &initial).commit_all("base");
+
+    let bottom_edit = initial.replace("line 18\n", "line 18 fixed\n");
+    repo.write("shift.txt", &bottom_edit);
+
+    let git = GitCli::new(&locate().unwrap());
+    let opened = repo::open(repo.path()).unwrap();
+    let st1 = agent_status(&opened, &git).unwrap();
+    let hunk_id = st1.files[0].hunks[0].id.clone();
+
+    // Max inserts lines above the agent's hunk, shifting its line numbers without changing it.
+    let shifted = format!("top a\ntop b\n{bottom_edit}");
+    repo.write("shift.txt", &shifted);
+    let st2 = agent_status(&opened, &git).unwrap();
+    let hunks = &st2.files[0].hunks;
+    assert_eq!(hunks.len(), 2);
+    assert_eq!(hunks[1].id, hunk_id);
+
+    // Partial hunk matches must refuse rather than silently dropping unknown IDs.
+    let partial_err = create_proposal(
+        &opened,
+        &git,
+        &CreateProposalInput {
+            message: "mixed hunks".into(),
+            why: None,
+            agent: Some("claude".into()),
+            paths: vec![],
+            hunk_ids: vec![hunk_id.clone(), "deadbeef0000".into()],
+        },
+    )
+    .unwrap_err();
+    match partial_err {
+        gitgud_core::repo::Error::Refused(msg) => assert!(msg.contains("deadbeef0000"), "{msg}"),
+        other => panic!("expected Refused error for unknown hunk ID, got {other:?}"),
+    }
+
+    let prop = create_proposal(
+        &opened,
+        &git,
+        &CreateProposalInput {
+            message: "fix line 18 only".into(),
+            why: None,
+            agent: Some("claude".into()),
+            paths: vec![],
+            hunk_ids: vec![hunk_id.clone()],
+        },
+    )
+    .unwrap();
+    let proposed_content = repo.git(&["show", &format!("{}:shift.txt", prop.commit_id)]);
+    assert!(!proposed_content.contains("top a"));
+    assert!(proposed_content.contains("line 18 fixed"));
+
+    // Editing inside the hunk itself invalidates its ID.
+    repo.write(
+        "shift.txt",
+        &shifted.replace("line 18 fixed", "line 18 rewritten"),
+    );
+    assert!(
+        create_proposal(
+            &opened,
+            &git,
+            &CreateProposalInput {
+                message: "stale hunk".into(),
+                why: None,
+                agent: None,
+                paths: vec![],
+                hunk_ids: vec![hunk_id],
+            },
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn wait_for_proposal_returns_on_verdict_and_times_out_when_pending() {
+    let repo = TestRepo::init();
+    repo.write("a.txt", "before\n").commit_all("base");
+    repo.write("a.txt", "after\n");
+
+    let git = GitCli::new(&locate().unwrap());
+    let opened = repo::open(repo.path()).unwrap();
+    let created = create_proposal(
+        &opened,
+        &git,
+        &CreateProposalInput {
+            message: "pending item".into(),
+            why: None,
+            agent: Some("claude".into()),
+            paths: vec!["a.txt".into()],
+            hunk_ids: vec![],
+        },
+    )
+    .unwrap();
+
+    let timed_out = wait_for_proposal(&opened, &created.id, 0, Duration::from_millis(20)).unwrap();
+    assert!(timed_out.timed_out);
+    assert_eq!(timed_out.proposal.status, ProposalStatus::Pending);
+
+    let path = repo.path().to_owned();
+    let pid = created.id.clone();
+    let updater = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(75));
+        let opened2 = repo::open(&path).unwrap();
+        request_changes(&opened2, &pid, "please rename", None).unwrap();
+    });
+
+    let done = wait_for_proposal(&opened, &created.id, 3, Duration::from_millis(20)).unwrap();
+    updater.join().unwrap();
+    assert!(!done.timed_out);
+    assert_eq!(done.proposal.status, ProposalStatus::ChangesRequested);
+    assert_eq!(done.proposal.comments[0].text, "please rename");
 }

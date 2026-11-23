@@ -275,7 +275,7 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    height: 24px;
+    height: var(--row-h, 24px);
     padding: 0 6px 0 10px;
   }
   li:hover {

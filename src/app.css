@@ -1,4 +1,6 @@
 :root {
+  --row-h: 24px;
+  --row-h-sm: 22px;
   --bg: #f7f8fa;
   --panel: #ffffff;
   --line: #e3e6ec;
@@ -100,6 +102,11 @@
   color-scheme: dark;
 }
 
+:root[data-density="compact"] {
+  --row-h: 20px;
+  --row-h-sm: 19px;
+}
+
 *,
 *::before,
 *::after {
@@ -129,6 +136,13 @@ button {
 :focus-visible {
   outline: 2px solid var(--l0);
   outline-offset: -2px;
+}
+
+:where(button.bare) {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  cursor: default;
 }
 
 /* Buttons: plain <button>s look like the mock's .btn unless a component unsets them. */
@@ -161,12 +175,44 @@ button.pri:hover:not(:disabled) {
   background: color-mix(in srgb, var(--l0) 85%, #000);
 }
 @media (prefers-color-scheme: dark) {
-  button.pri {
+  :root:not([data-theme="light"]) button.pri:not(.bad) {
     color: #0b1622;
   }
 }
+:root[data-theme="dark"] button.pri:not(.bad) {
+  color: #0b1622;
+}
 button.bad {
   color: var(--bad-ink);
+}
+button.pri.bad {
+  background: #b8321c;
+  border-color: #b8321c;
+  color: #fff;
+}
+button.pri.bad:hover:not(:disabled) {
+  background: #9c2815;
+  border-color: #9c2815;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) button.pri.bad {
+    background: #c93b25;
+    border-color: #c93b25;
+    color: #fff;
+  }
+  :root:not([data-theme="light"]) button.pri.bad:hover:not(:disabled) {
+    background: #df4b34;
+    border-color: #df4b34;
+  }
+}
+:root[data-theme="dark"] button.pri.bad {
+  background: #c93b25;
+  border-color: #c93b25;
+  color: #fff;
+}
+:root[data-theme="dark"] button.pri.bad:hover:not(:disabled) {
+  background: #df4b34;
+  border-color: #df4b34;
 }
 button.on {
   background: var(--sel);
@@ -177,17 +223,15 @@ button.on {
   opacity: 0.7;
 }
 
-input[type="text"],
-textarea {
+:where(input[type="text"], input[type="search"], input[type="email"], select, textarea) {
   font: inherit;
   color: var(--fg);
   background: var(--bg);
   border: 1px solid var(--line);
   border-radius: 5px;
-  padding: 6px 8px;
+  padding: 5px 8px;
 }
-input[type="text"]:focus,
-textarea:focus {
+:where(input[type="text"], input[type="search"], input[type="email"], select, textarea):focus {
   outline: none;
   border-color: var(--l0);
   background: var(--panel);

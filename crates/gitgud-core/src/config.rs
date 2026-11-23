@@ -3,7 +3,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::cli::GitCli;
-use crate::git::GitInfo;
+use crate::git::{GitInfo, GitSource, GitVersion, MIN_GIT_LFS};
 use crate::repo::Error;
 
 /// Git `user.name` and `user.email` configured at a scope.
@@ -21,6 +21,8 @@ pub struct ToolDiagnostics {
     pub git_path: String,
     pub git_version: String,
     pub lfs_version: Option<String>,
+    pub git_source: GitSource,
+    pub lfs_ok: bool,
 }
 
 /// Scope for reading or updating git configuration.
@@ -77,10 +79,16 @@ pub fn tool_diagnostics(git: &GitCli, info: &GitInfo) -> ToolDiagnostics {
         .ok()
         .map(|s| s.trim().to_owned())
         .filter(|s| !s.is_empty());
+    let lfs_ok = lfs_version
+        .as_deref()
+        .and_then(|v| GitVersion::parse_lfs(v).ok())
+        .is_some_and(|v| v >= MIN_GIT_LFS);
     ToolDiagnostics {
         git_path: info.path.to_string_lossy().into_owned(),
         git_version: info.version.to_string(),
         lfs_version,
+        git_source: info.source,
+        lfs_ok,
     }
 }
 

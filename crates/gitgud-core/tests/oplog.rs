@@ -318,3 +318,172 @@ fn unknown_repo_ids_fail() {
     assert!(matches!(session.undo(7), Err(Error::UnknownRepo(7))));
     assert!(matches!(session.redo(7), Err(Error::UnknownRepo(7))));
 }
+
+#[test]
+fn prune_now_drops_expired_snapshots_and_keeps_active_ones_across_git_gc() {
+    let repo = TestRepo::init();
+    repo.write("a.txt", "base-a\n")
+        .write("b.txt", "base-b\n")
+        .commit_all("init");
+    let r = gitgud_core::repo::open(repo.path()).unwrap();
+    let git = gitgud_core::cli::GitCli::new(&gitgud_core::git::locate().unwrap());
+    let log = gitgud_core::oplog::OpLog::for_repo(&r);
+
+    repo.write("a.txt", "discarded-one-unique\n");
+    log.record_destructive(&r, &git, "Discard a.txt", &paths(&["a.txt"]), || {
+        repo.write("a.txt", "base-a\n");
+        Ok(())
+    })
+    .unwrap();
+
+    repo.write("b.txt", "discarded-two-unique\n");
+    log.record_destructive(&r, &git, "Discard b.txt", &paths(&["b.txt"]), || {
+        repo.write("b.txt", "base-b\n");
+        Ok(())
+    })
+    .unwrap();
+
+    let log_path = repo.path().join(".git/gitgud/oplog/log.json");
+    let mut raw: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&log_path).unwrap()).unwrap();
+    let arr = raw.as_array_mut().unwrap();
+    assert_eq!(arr.len(), 2);
+    let old_tree = arr[0]["before"]["worktree"].as_str().unwrap().to_owned();
+    let kept_tree = arr[1]["before"]["worktree"].as_str().unwrap().to_owned();
+    assert_ne!(old_tree, kept_tree);
+
+    let expired = arr[0]["time"].as_i64().unwrap() - 40 * 24 * 60 * 60;
+    arr[0]["time"] = serde_json::json!(expired);
+    std::fs::write(&log_path, serde_json::to_vec(&raw).unwrap()).unwrap();
+
+    let stats = log.prune_now(&r, &git, 1, 30 * 24 * 60 * 60).unwrap();
+    assert_eq!(stats.entry_count, 1);
+
+    git.run(repo.path(), &["gc", "--prune=now"], None).unwrap();
+    assert!(
+        git.run(repo.path(), &["cat-file", "-e", &old_tree], None)
+            .is_err(),
+        "pruned snapshot tree should be collected by git gc"
+    );
+    git.run(repo.path(), &["cat-file", "-e", &kept_tree], None)
+        .unwrap();
+
+    let kept_id = log.entries().unwrap()[0].id;
+    log.restore_entry_files(&r, &git, kept_id).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(repo.path().join("b.txt")).unwrap(),
+        "discarded-two-unique\n"
+    );
+
+    let mut raw2: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&log_path).unwrap()).unwrap();
+    raw2[0]["time"] = serde_json::json!(expired);
+    std::fs::write(&log_path, serde_json::to_vec(&raw2).unwrap()).unwrap();
+
+    let empty_stats = log.prune_now(&r, &git, 0, 30 * 24 * 60 * 60).unwrap();
+    assert_eq!(empty_stats.entry_count, 0);
+    assert!(
+        git.run(
+            repo.path(),
+            &[
+                "show-ref",
+                "--verify",
+                "--quiet",
+                gitgud_core::snapshot::SNAPSHOT_REF
+            ],
+            None,
+        )
+        .is_err(),
+        "SNAPSHOT_REF should be deleted when zero entries remain"
+    );
+}
+
+fn write_fake_lfs_object(git_dir: &std::path::Path, oid: &str, bytes: usize) {
+    let dir = git_dir.join("lfs/objects").join(&oid[..2]).join(&oid[2..4]);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join(oid), vec![0xabu8; bytes]).unwrap();
+}
+
+fn dir_files_bytes(dir: &std::path::Path) -> u64 {
+    std::fs::read_dir(dir)
+        .unwrap()
+        .flatten()
+        .filter_map(|e| e.metadata().ok())
+        .filter(|m| m.is_file())
+        .map(|m| m.len())
+        .sum()
+}
+
+#[test]
+fn stats_counts_op_log_only_lfs_objects_and_reclaimable_preview() {
+    let repo = TestRepo::init();
+    let live_oid = "1".repeat(64);
+    let prunable_oid = "2".repeat(64);
+    let kept_oid = "3".repeat(64);
+    let ptr = |oid: &str, len: usize| {
+        format!("version https://git-lfs.github.com/spec/v1\noid sha256:{oid}\nsize {len}\n")
+    };
+
+    repo.write("live.png", &ptr(&live_oid, 4096))
+        .commit_all("commit live lfs pointer");
+    let git_dir = repo.path().join(".git");
+    write_fake_lfs_object(&git_dir, &live_oid, 4096);
+    write_fake_lfs_object(&git_dir, &prunable_oid, 10_000);
+    write_fake_lfs_object(&git_dir, &kept_oid, 6_000);
+
+    let r = gitgud_core::repo::open(repo.path()).unwrap();
+    let git = gitgud_core::cli::GitCli::new(&gitgud_core::git::locate().unwrap());
+    let log = gitgud_core::oplog::OpLog::for_repo(&r);
+
+    repo.write("prunable.png", &ptr(&prunable_oid, 10_000));
+    log.record_destructive(
+        &r,
+        &git,
+        "Discard prunable.png",
+        &paths(&["prunable.png"]),
+        || {
+            std::fs::remove_file(repo.path().join("prunable.png")).unwrap();
+            Ok(())
+        },
+    )
+    .unwrap();
+
+    repo.write("kept.png", &ptr(&kept_oid, 6_000));
+    log.record_destructive(&r, &git, "Discard kept.png", &paths(&["kept.png"]), || {
+        std::fs::remove_file(repo.path().join("kept.png")).unwrap();
+        Ok(())
+    })
+    .unwrap();
+
+    let oplog_dir = git_dir.join("gitgud/oplog");
+    let log_path = oplog_dir.join("log.json");
+    let mut raw: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&log_path).unwrap()).unwrap();
+    let arr = raw.as_array_mut().unwrap();
+    assert_eq!(arr.len(), 2);
+    let expired = arr[0]["time"].as_i64().unwrap() - 40 * 24 * 60 * 60;
+    arr[0]["time"] = serde_json::json!(expired);
+    std::fs::write(&log_path, serde_json::to_vec(&raw).unwrap()).unwrap();
+
+    let index_len = |key: &str| {
+        raw[0][key]["index"]
+            .as_str()
+            .and_then(|name| std::fs::metadata(oplog_dir.join(name)).ok())
+            .map_or(0, |m| m.len())
+    };
+    let expected_entry0_index = index_len("before") + index_len("after");
+    let oplog_dir_bytes = dir_files_bytes(&oplog_dir);
+
+    let stats = log.stats_with_limits(&r, 1, 30 * 24 * 60 * 60).unwrap();
+    assert_eq!(stats.entry_count, 2);
+    assert_eq!(stats.prunable_count, 1);
+    assert_eq!(stats.total_bytes, oplog_dir_bytes + 10_000 + 6_000);
+    assert_eq!(stats.reclaimable_bytes, expected_entry0_index + 10_000);
+
+    let pruned = log.prune_now(&r, &git, 1, 30 * 24 * 60 * 60).unwrap();
+    let oplog_dir_after = dir_files_bytes(&oplog_dir);
+    assert_eq!(pruned.entry_count, 1);
+    assert_eq!(pruned.prunable_count, 0);
+    assert_eq!(pruned.reclaimable_bytes, 0);
+    assert_eq!(pruned.total_bytes, oplog_dir_after + 6_000);
+}

@@ -108,7 +108,7 @@ fn a_failed_fetch_returns_gits_message() {
 }
 
 /// A remote whose transport hangs: an `ext::` helper that records the Windows
-/// PIDs of its shell and a `sleep` grandchild, drops a partial pack, and waits.
+/// PIDs of its shell and a `tail` grandchild, drops a partial pack, and waits.
 fn hanging_remote(local: &TestRepo) -> std::path::PathBuf {
     let pids = local.path().join("pids.txt");
     let script = local.path().join("hang.sh");
@@ -117,7 +117,7 @@ fn hanging_remote(local: &TestRepo) -> std::path::PathBuf {
         format!(
             "cat /proc/$$/winpid > '{pids}'\n\
              touch .git/objects/pack/tmp_pack_gitgud_test\n\
-             sleep 30 &\n\
+             tail -f /dev/null &\n\
              cat /proc/$!/winpid >> '{pids}'\n\
              wait\n",
             pids = pids.to_str().unwrap().replace('\\', "/"),
