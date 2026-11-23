@@ -1,4 +1,5 @@
 use gitgud_core::image::{Version, image_type};
+use gitgud_core::model::{model_kind, model_mime};
 use gitgud_core::repo::Error;
 use gitgud_core::session::Session;
 use tauri::Url;
@@ -8,12 +9,16 @@ use tauri::http::{Response, StatusCode, header};
 /// `http://gitgud.localhost/image?...`) with the image bytes, so the webview can
 /// show a version of an image without base64 over IPC. `at` is `head`,
 /// `index`, `worktree`, `yours`, `theirs`, or `commit` / `parent` with `commit=<id>`.
+/// `/model` serves a 3D model the same way; `/ref?path=<model>&ref=<name>`
+/// serves the file that model refers to as `ref` (a texture, a glTF buffer).
 pub fn respond(session: &Session, uri: &str) -> Response<Vec<u8>> {
     match read(session, uri) {
         Ok((bytes, mime)) => Response::builder()
             .header(header::CONTENT_TYPE, mime)
+            .header(header::CONTENT_LENGTH, bytes.len())
             .header(header::CACHE_CONTROL, "no-store")
             .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+            .header(header::ACCESS_CONTROL_EXPOSE_HEADERS, "Content-Length")
             .body(bytes),
         Err((status, message)) => Response::builder()
             .status(status)
@@ -47,12 +52,29 @@ fn read(session: &Session, uri: &str) -> Result<(Vec<u8>, &'static str), (Status
         Some("parent") => Version::Parent(commit()?),
         _ => return Err(bad("unknown version")),
     };
-    let mime = image_type(&path).ok_or_else(|| bad("not an image"))?;
-    let auto_fetch = param("autofetch").as_deref() != Some("0");
-    let bytes = session
-        .image_bytes(repo, &path, &version, auto_fetch)
-        .map_err(fail)?;
-    Ok((bytes, mime))
+    match url.path() {
+        "/model" => {
+            let kind = model_kind(&path).ok_or_else(|| bad("not a 3D model"))?;
+            let bytes = session.model_bytes(repo, &path, &version).map_err(fail)?;
+            Ok((bytes, model_mime(kind)))
+        }
+        "/ref" => {
+            let reference = param("ref").ok_or_else(|| bad("missing ref"))?;
+            let mime = image_type(&reference).unwrap_or("application/octet-stream");
+            let bytes = session
+                .model_ref_bytes(repo, &path, &reference, &version)
+                .map_err(fail)?;
+            Ok((bytes, mime))
+        }
+        _ => {
+            let mime = image_type(&path).ok_or_else(|| bad("not an image"))?;
+            let auto_fetch = param("autofetch").as_deref() != Some("0");
+            let bytes = session
+                .image_bytes(repo, &path, &version, auto_fetch)
+                .map_err(fail)?;
+            Ok((bytes, mime))
+        }
+    }
 }
 
 fn fail(e: Error) -> (StatusCode, String) {
@@ -101,6 +123,70 @@ mod tests {
         assert_eq!(image_type("light.exr"), Some("image/png"));
         assert_eq!(image_type("sky.hdr"), Some("image/png"));
         assert_eq!(image_type("mask.tiff"), Some("image/png"));
+    }
+
+    #[test]
+    fn serves_models_and_the_textures_they_refer_to() {
+        let repo = TestRepo::init();
+        repo.write("Art/boat.gltf", "{\"asset\":{}}")
+            .write("Art/Textures/hull.png", "\u{89}PNG-hull")
+            .write("Art/boat.bin", "buffer")
+            .commit_all("one");
+        repo.write("Art/boat.gltf", "{\"asset\":{\"v\":2}}");
+        let session = Session::default();
+        let id = session.open(repo.path()).unwrap().id;
+
+        let r = respond(
+            &session,
+            &format!("http://gitgud.localhost/model?repo={id}&path=Art%2Fboat.gltf&at=head"),
+        );
+        assert_eq!(r.status(), StatusCode::OK);
+        assert_eq!(r.headers()[header::CONTENT_TYPE], "model/gltf+json");
+        assert_eq!(r.headers()[header::CONTENT_LENGTH], "12");
+        assert_eq!(r.body(), b"{\"asset\":{}}");
+        let r = respond(
+            &session,
+            &format!("http://gitgud.localhost/model?repo={id}&path=Art%2Fboat.gltf&at=worktree"),
+        );
+        assert_eq!(r.body(), b"{\"asset\":{\"v\":2}}");
+
+        let r = respond(
+            &session,
+            &format!(
+                "http://gitgud.localhost/ref?repo={id}&path=Art%2Fboat.gltf&ref=C%3A%5Cart%5Chull.png&at=head"
+            ),
+        );
+        assert_eq!(r.status(), StatusCode::OK);
+        assert_eq!(r.headers()[header::CONTENT_TYPE], "image/png");
+        assert_eq!(r.body(), "\u{89}PNG-hull".as_bytes());
+
+        let bin = respond(
+            &session,
+            &format!(
+                "http://gitgud.localhost/ref?repo={id}&path=Art%2Fboat.gltf&ref=boat.bin&at=head"
+            ),
+        );
+        assert_eq!(bin.status(), StatusCode::OK);
+        assert_eq!(
+            bin.headers()[header::CONTENT_TYPE],
+            "application/octet-stream"
+        );
+        assert_eq!(bin.body(), b"buffer");
+        let missing = respond(
+            &session,
+            &format!(
+                "http://gitgud.localhost/ref?repo={id}&path=Art%2Fboat.gltf&ref=deck.png&at=head"
+            ),
+        );
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+        assert!(body(&missing).contains("deck.png"));
+        let not_model = respond(
+            &session,
+            &format!(
+                "http://gitgud.localhost/model?repo={id}&path=Art%2FTextures%2Fhull.png&at=head"
+            ),
+        );
+        assert_eq!(not_model.status(), StatusCode::BAD_REQUEST);
     }
 
     #[test]

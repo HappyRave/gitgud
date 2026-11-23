@@ -302,6 +302,88 @@ export interface UnityObjectChange {
   properties: UnityPropChange[];
 }
 
+/** A file version as the backend names it (`image::Version`). */
+export type FileVersion =
+  | "head"
+  | "index"
+  | "worktree"
+  | "yours"
+  | "theirs"
+  | { commit: string }
+  | { parent: string };
+
+export type ModelKind = "fbx" | "obj" | "gltf" | "glb" | "prefab" | "asset";
+
+/** Keys for one property of the object at `path`, relative to the Animator. */
+export interface ClipTrack {
+  path: string;
+  property: "position" | "quaternion" | "scale";
+  times: number[];
+  values: number[];
+}
+
+export type ClipSource =
+  | { type: "curves"; duration: number; looping: boolean; tracks: ClipTrack[] }
+  | { type: "model"; path: string; take: string };
+
+/** A clip the Animator on `node` can play. */
+export interface SceneClip {
+  node: number;
+  name: string;
+  source: ClipSource;
+}
+
+/** A Unity material reduced to what a standard PBR material shows. */
+export interface ModelMaterial {
+  name: string;
+  path: string | null;
+  shader: string;
+  approximated: boolean;
+  unlit: boolean;
+  color: [number, number, number, number];
+  baseMap: string | null;
+  normalMap: string | null;
+  tiling: [number, number];
+  offset: [number, number];
+  metallic: number;
+  smoothness: number;
+  missing: boolean;
+}
+
+export type MeshRef =
+  | { type: "asset"; path: string; name: string | null; id: string | null; scale: number }
+  | { type: "builtin"; name: "Cube" | "Sphere" | "Capsule" | "Cylinder" | "Plane" | "Quad" }
+  | { type: "missing" };
+
+/** One GameObject of an assembled prefab, already in three.js's right-handed space. */
+export interface ModelNode {
+  name: string;
+  parent: number | null;
+  position: [number, number, number];
+  rotation: [number, number, number, number];
+  scale: [number, number, number];
+  active: boolean;
+  mesh: MeshRef | null;
+  materials: number[];
+  skinned: boolean;
+  controller: string | null;
+}
+
+export interface ModelScene {
+  nodes: ModelNode[];
+  missing: string[];
+  clips: SceneClip[];
+}
+
+export interface ModelInfo {
+  kind: ModelKind;
+  materials: ModelMaterial[];
+  /** Material name inside the model → index in `materials`. */
+  remaps: Record<string, number>;
+  scale: number;
+  scene: ModelScene | null;
+}
+
 export interface UnityYamlDiff {
   path: string;
   addedObjects: number;
@@ -858,6 +940,7 @@ export interface Commands {
   write_commit_graph: { args: { id: number }; result: null };
   worktree_unity_diff: { args: { id: number; path: string; side: Side }; result: UnityYamlDiff };
   commit_unity_diff: { args: { id: number; commit: string; path: string }; result: UnityYamlDiff };
+  model_info: { args: { id: number; path: string; version: FileVersion }; result: ModelInfo };
   unity_conflict_table: { args: { id: number; path: string }; result: UnityConflictTable };
   resolve_unity_conflict: { args: { id: number; path: string; picks: UnityPropertyPick[] }; result: Opened };
   unity_post_merge_check: { args: { id: number; paths: string[] }; result: UnityIntegrityIssue[] };
@@ -1148,6 +1231,7 @@ export const writeCommitGraph = (id: number) => call("write_commit_graph", { id 
 export const worktreeUnityDiff = (id: number, path: string, side: Side) => call("worktree_unity_diff", { id, path, side });
 export const commitUnityDiff = (id: number, commit: string, path: string) =>
   call("commit_unity_diff", { id, commit, path });
+export const modelInfo = (id: number, path: string, version: FileVersion) => call("model_info", { id, path, version });
 export const unityConflictTable = (id: number, path: string) => call("unity_conflict_table", { id, path });
 export const resolveUnityConflict = (id: number, path: string, picks: UnityPropertyPick[]) =>
   call("resolve_unity_conflict", { id, path, picks });

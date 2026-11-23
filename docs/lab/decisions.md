@@ -34,8 +34,20 @@ side, onionskin and slider)").
   (tris, verts, meshes, materials, textures, with deltas); real key-light shadow on an invisible
   floor; faint grid; the four states drawn on D (new file, missing references in magenta, LFS not
   downloaded, approximated shader note) carry over to A.
-- **Not applied yet:** nothing is built. The decided combination is drawn as "R6 · As decided" on
-  `docs/lab/viewer3d.html`.
+- **Applied 2026-11-23:** built as `ModelViewer` (see CLAUDE.md "3D models"); the decided combination
+  is drawn as "R6 · As decided" on `docs/lab/viewer3d.html`. Not built: viewing a `.asset` Mesh file on
+  its own (it still opens as Unity YAML; prefabs that use one draw it), trimming FBX clips to a
+  `clipAnimations` frame range (the whole take plays), and OBJ `.mtl` materials.
+- **Decided 2026-11-23** (build plan):
+  - A prefab change opens **in 3D first**, with a Structure | 3D switch in its diff header that then
+    remembers the last choice. Max picked "Switch, 3D first".
+  - GUIDs in old versions resolve through the **working copy's index, falling back to the `.meta`
+    files at that commit**. Max picked "Current + fallback".
+  - **All three phases ship together**: standalone models (FBX / OBJ / glTF / GLB), Unity prefabs
+    (materials, nested prefabs, variants), and `.asset` meshes, Animator / `.anim` clips, the
+    big-mesh warning. Max picked "All three phases".
+  - A standalone FBX **honours its `.meta` material remapping** (`externalObjects`), falling back to
+    embedded / relative textures. Max picked "Honour .meta remaps".
 
 ## R4 · Merge conflicts, Unity first (2026-11-21)
 

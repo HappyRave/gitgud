@@ -2,6 +2,7 @@ import { fireEvent, render, screen, within } from "@testing-library/svelte";
 import { emit } from "@tauri-apps/api/event";
 import { describe, expect, it, vi } from "vitest";
 import type { Commands, MergeState, ProposalSummary, RebaseState, Row, SequencerState, Status } from "$lib/api";
+import { prefs } from "$lib/prefs.svelte";
 import { mockCommands } from "$lib/test/ipc";
 import Page from "./+page.svelte";
 
@@ -2563,6 +2564,7 @@ describe("Unity, LFS locks, Smart Merge verify, and open-editor guard", () => {
   });
 
   it("shows structural Unity prefab diff and auto-lock suggestion for unlocked LFS assets", async () => {
+    prefs.modelView = "source";
     const calls = app({
       launch_path: () => "C:/work/unity",
       lfs_info: () => ({

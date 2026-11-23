@@ -4,6 +4,9 @@ const WS_KEY = "gitgud.diff.ignoreWs";
 const DENSITY_KEY = "gitgud.ui.density";
 const THEME_KEY = "gitgud.ui.theme";
 const PANES_KEY = "gitgud.ui.panes";
+const MODEL_SHADING_KEY = "gitgud.model.shading";
+const MODEL_PLAYING_KEY = "gitgud.model.playing";
+const MODEL_VIEW_KEY = "gitgud.model.view";
 
 export type DiffLayout = "auto" | "unified" | "split";
 export type Density = "standard" | "compact";
@@ -81,7 +84,31 @@ export const prefs = $state({
   density: (storedDensity === "compact" ? "compact" : "standard") as Density,
   theme: (storedTheme === "light" || storedTheme === "dark" ? storedTheme : "system") as ThemeMode,
   panes: readPanes(),
+  /** The 3D viewer's last shading (R6: remembered). */
+  modelShading: (readStorage(MODEL_SHADING_KEY) === "changes" ? "changes" : "textured") as ModelShading,
+  /** Whether the 3D viewer was left playing (R6: remembered). */
+  modelPlaying: readStorage(MODEL_PLAYING_KEY) === "1",
+  /** 3D or the text view for prefabs and text model files (3D first, then remembered). */
+  modelView: (readStorage(MODEL_VIEW_KEY) === "source" ? "source" : "3d") as ModelView,
 });
+
+export type ModelShading = "textured" | "changes";
+export type ModelView = "3d" | "source";
+
+export function setModelShading(shading: ModelShading) {
+  prefs.modelShading = shading;
+  writeStorage(MODEL_SHADING_KEY, shading);
+}
+
+export function setModelPlaying(playing: boolean) {
+  prefs.modelPlaying = playing;
+  writeStorage(MODEL_PLAYING_KEY, playing ? "1" : "0");
+}
+
+export function setModelView(view: ModelView) {
+  prefs.modelView = view;
+  writeStorage(MODEL_VIEW_KEY, view);
+}
 
 export function setPaneSize<K extends keyof PaneSizes>(key: K, value: number | null) {
   prefs.panes[key] = value != null && Number.isFinite(value) && value > 0 ? Math.round(value) : null;

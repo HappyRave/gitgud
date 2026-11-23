@@ -1800,6 +1800,67 @@ impl Session {
         repo.image_bytes_with_fetch(None, path, version, lfs::AUTO_FETCH_MAX_BYTES)
     }
 
+    /// Model `path` at `version`, LFS objects up to the auto-fetch limit fetched first.
+    ///
+    /// # Errors
+    /// As [`Repo::model_bytes`].
+    pub fn model_bytes(
+        &self,
+        id: u32,
+        path: &str,
+        version: &crate::image::Version,
+    ) -> Result<Vec<u8>, Error> {
+        let repo = self.get(id)?.repo.clone();
+        if crate::model::model_kind(path).is_some()
+            && let Some((oid, size)) = lfs::parse_lfs_pointer(&repo.file_at(path, version)?)
+            && size <= lfs::AUTO_FETCH_MAX_BYTES
+            && !lfs::lfs_is_hydrated(&repo, &oid)
+            && repo.primary_remote_url().is_some()
+        {
+            self.lfs_fetch_object(id, &oid, size, Some(path))?;
+        }
+        repo.model_bytes(None, path, version, lfs::AUTO_FETCH_MAX_BYTES)
+    }
+
+    /// The file model `near` refers to as `reference` at `version`, found by
+    /// [`Repo::model_reference`]: images decoded as [`Session::image_bytes`]
+    /// does, anything else (a glTF `.bin`) as stored.
+    ///
+    /// # Errors
+    /// [`Error::Refused`] when no such file is in that version; as [`Session::image_bytes`] otherwise.
+    pub fn model_ref_bytes(
+        &self,
+        id: u32,
+        near: &str,
+        reference: &str,
+        version: &crate::image::Version,
+    ) -> Result<Vec<u8>, Error> {
+        let repo = self.get(id)?.repo.clone();
+        let path = repo
+            .model_reference(near, reference, version)?
+            .ok_or_else(|| Error::Refused(format!("{reference} is not in that version")))?;
+        if crate::image::image_type(&path).is_some() {
+            return self.image_bytes(id, &path, version, true);
+        }
+        let bytes = repo.file_at(&path, version)?;
+        repo.lfs_resolve_with_fetch(None, &path, bytes, 0)
+    }
+
+    /// See [`Repo::model_info`].
+    ///
+    /// # Errors
+    /// As [`Repo::model_info`].
+    pub fn model_info(
+        &self,
+        id: u32,
+        path: &str,
+        version: &crate::image::Version,
+    ) -> Result<crate::model::ModelInfo, Error> {
+        let repo = self.get(id)?.repo.clone();
+        let git = self.git().ok();
+        repo.model_info(git, path, version)
+    }
+
     /// Detects available local AI CLIs and env key presence (never reads key values).
     #[must_use]
     pub fn ai_providers(&self) -> AiProviderStatus {

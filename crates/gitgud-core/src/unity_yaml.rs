@@ -1119,7 +1119,7 @@ pub(crate) fn forget_guid_index(repo: &Repo) {
     *repo.guid_index.lock().expect("guid index lock poisoned") = None;
 }
 
-fn parse_doc_header(line: &str) -> Option<(u32, String, bool)> {
+pub(crate) fn parse_doc_header(line: &str) -> Option<(u32, String, bool)> {
     let rest = line.strip_prefix("--- !u!")?;
     let (cls_s, after_cls) = rest.split_once('&')?;
     let class_id = cls_s.trim().parse::<u32>().ok()?;

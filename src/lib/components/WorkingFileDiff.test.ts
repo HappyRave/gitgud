@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import { describe, expect, it, vi } from "vitest";
 import type { FileDiff, Side } from "$lib/api";
+import { prefs } from "$lib/prefs.svelte";
 import { mockCommands } from "$lib/test/ipc";
 import WorkingFileDiff from "./WorkingFileDiff.svelte";
 
@@ -147,7 +148,26 @@ describe("WorkingFileDiff", () => {
     await waitFor(() => expect(screen.getAllByText("Hydrated")).toHaveLength(2));
   });
 
+  it("opens a prefab in 3D first, and Structure is remembered", async () => {
+    prefs.modelView = "3d";
+    const structural = { path: "Gun.prefab", addedObjects: 1, removedObjects: 0, modifiedProperties: 0, objects: [] };
+    mockCommands({
+      worktree_file_diff: () => diff("raw yaml line"),
+      worktree_unity_diff: () => structural,
+      model_info: () => {
+        throw "Gun.prefab is not in that version";
+      },
+    });
+    render(WorkingFileDiff, { repoId: 3, path: "Gun.prefab", side: "unstaged", perHunk: false, revision: 0, onhunk: vi.fn() });
+    expect(await screen.findByRole("application", { name: "3D preview of Gun.prefab" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "3D" })).toHaveAttribute("aria-pressed", "true");
+    await fireEvent.click(screen.getByRole("button", { name: "Structural" }));
+    expect(localStorage.getItem("gitgud.model.view")).toBe("source");
+    expect(screen.queryByRole("application")).toBeNull();
+  });
+
   it("shows a loading bar instead of the old view while a slow structural diff loads", async () => {
+    prefs.modelView = "source";
     let finish: (() => void) | null = null;
     const structural = { path: "Gun.prefab", addedObjects: 1, removedObjects: 0, modifiedProperties: 0, objects: [] };
     mockCommands({

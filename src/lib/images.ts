@@ -42,9 +42,14 @@ export function imageUrl(repoId: number, path: string, version: ImageAt, bust = 
     query.set("commit", version.commit);
   }
   query.set("v", String(bust));
-  return `${windows ? "http://gitgud.localhost" : "gitgud://localhost"}/image?${query}`;
+  return protocolUrl("image", query, windows);
 }
 
-function isWindows() {
+/** `route?query` on the `gitgud` custom protocol, as this webview reaches it. */
+export function protocolUrl(route: string, query: URLSearchParams, windows = isWindows()): string {
+  return `${windows ? "http://gitgud.localhost" : "gitgud://localhost"}/${route}?${query}`;
+}
+
+export function isWindows() {
   return typeof navigator !== "undefined" && navigator.userAgent.includes("Windows");
 }

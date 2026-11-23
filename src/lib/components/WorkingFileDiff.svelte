@@ -12,7 +12,9 @@
     type UnityYamlDiff,
   } from "$lib/api";
   import { imageUrl, isImage } from "$lib/images";
-  import { prefs, setDiffLayout, toggleIgnoreWhitespace } from "$lib/prefs.svelte";
+  import { isModel, modelKind } from "$lib/model/source";
+  import ModelViewer from "./ModelViewer.svelte";
+  import { prefs, setDiffLayout, setModelView, toggleIgnoreWhitespace } from "$lib/prefs.svelte";
   import { isUnityYaml } from "$lib/unity";
   import DiffView, { type LineAction } from "./DiffView.svelte";
   import LoadingBar from "./LoadingBar.svelte";
@@ -87,6 +89,20 @@
             before: { label: "Index", url: imageUrl(repoId, path, { at: "index" }, revision + fetchRev) },
             after: { label: "On disk", url: imageUrl(repoId, path, { at: "worktree" }, revision + fetchRev) },
           },
+  );
+
+  const isPrefab = $derived(modelKind(path) === "prefab");
+  const show3d = $derived(isPrefab && prefs.modelView === "3d");
+  const models = $derived(
+    !isModel(path)
+      ? null
+      : {
+          repoId,
+          bust: revision + fetchRev,
+          ...(side === "staged"
+            ? { before: { label: "HEAD", at: { at: "head" as const } }, after: { label: "Staged", at: { at: "index" as const } } }
+            : { before: { label: "Index", at: { at: "index" as const } }, after: { label: "On disk", at: { at: "worktree" as const } } }),
+        },
   );
 
   async function handleFetchLfs(_which: "before" | "after", meta: BinarySide) {
@@ -213,14 +229,25 @@
     <span class="name">{path}</span> <span class="side">{side === "staged" ? "staged" : "unstaged"}</span>
     <span class="keys">
       {#if perHunk && (diff?.hunks.length ?? 0) > 1}Alt+↑↓ hunks ·{/if}
+      {#if isPrefab}
+        <button
+          type="button"
+          class="bare mode"
+          class:active={show3d}
+          aria-pressed={show3d}
+          title="Show the prefab in 3D"
+          onclick={() => setModelView("3d")}>3D</button
+        > ·
+      {/if}
       {#if isUnityFile}
         <button
           type="button"
           class="bare mode"
-          class:active={preferStructural}
-          aria-pressed={preferStructural}
+          class:active={!show3d && preferStructural}
+          aria-pressed={!show3d && preferStructural}
           title="Toggle Unity structural property diff vs raw YAML diff"
-          onclick={() => (preferStructural = !preferStructural)}>{preferStructural ? "Structural" : "Raw"}</button
+          onclick={() => (show3d ? setModelView("source") : (preferStructural = !preferStructural))}
+          >{preferStructural ? "Structural" : "Raw"}</button
         > ·
       {/if}
       {#if onhistory}
@@ -243,7 +270,9 @@
       >
     </span>
   </h3>
-  {#if error}
+  {#if show3d && models}
+    <ModelViewer repoId={models.repoId} {path} before={models.before} after={models.after} bust={models.bust} />
+  {:else if error}
     <p role="alert">{error}</p>
   {:else if isUnityFile && preferStructural && unityDiff}
     <UnityDiffView diff={unityDiff} />
@@ -255,6 +284,7 @@
       {lineActions}
       focused={perHunk ? focused : null}
       {images}
+      models={isUnityFile ? null : models}
       split={effectiveSplit}
       onfetchlfs={handleFetchLfs}
     />

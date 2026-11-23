@@ -3,8 +3,13 @@
   import { detectLanguage, highlightLine, mergeInline, type StyledSegment } from "$lib/diff/highlight";
   import { pairHunkLines, type InlineSpan } from "$lib/diff/intraline";
   import { splitRows } from "$lib/diff/split";
+  import { hasSourceView } from "$lib/model/source";
+  import type { ModelSide } from "$lib/model/open";
+  import { prefs } from "$lib/prefs.svelte";
   import ImageDiff, { type ImageSide } from "./ImageDiff.svelte";
   import LfsBinaryCard from "./LfsBinaryCard.svelte";
+  import ModelViewer from "./ModelViewer.svelte";
+  import ModelViewSwitch from "./ModelViewSwitch.svelte";
 
   export interface LineAction {
     label: string | ((count: number) => string);
@@ -18,6 +23,7 @@
     busy = false,
     focused = null,
     images = null,
+    models = null,
     split = false,
     onfetchlfs,
   }: {
@@ -25,6 +31,8 @@
     split?: boolean;
     /** For a binary image: its two versions, shown as an image diff. */
     images?: { before: ImageSide; after: ImageSide } | null;
+    /** For a 3D model: its two versions, shown in the 3D viewer. */
+    models?: { repoId: number; before: ModelSide | null; after: ModelSide; bust: number } | null;
     diff: FileDiff;
     /** Buttons on each hunk's header row, e.g. "Stage hunk", "Discard hunk". */
     hunkActions?: { label: string; key?: string; run: (hunk: Hunk) => void }[];
@@ -128,7 +136,20 @@
 </script>
 
 <section class="diff" aria-label="Diff of {diff.path}">
-  {#if diff.binary && images}
+  {#if models && !diff.binary && hasSourceView(diff.path)}
+    <ModelViewSwitch />
+  {/if}
+  {#if models && (diff.binary || !hasSourceView(diff.path) || prefs.modelView === "3d")}
+    <ModelViewer
+      repoId={models.repoId}
+      path={diff.path}
+      before={models.before}
+      after={models.after}
+      bust={models.bust}
+      meta={diff.binaryMeta ?? null}
+      onfetch={onfetchlfs}
+    />
+  {:else if diff.binary && images}
     <ImageDiff
       before={images.before}
       after={images.after}

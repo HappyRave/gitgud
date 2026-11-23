@@ -13,6 +13,7 @@ mod job;
 pub mod lfs;
 pub mod library;
 pub mod merge;
+pub mod model;
 pub mod oplog;
 pub mod ops;
 pub mod proposals;

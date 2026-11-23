@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/svelte";
 import { describe, expect, it, vi } from "vitest";
 import type { CommitDetail as Detail, FileDiff } from "$lib/api";
+import { prefs } from "$lib/prefs.svelte";
 import { mockCommands } from "$lib/test/ipc";
 import CommitDetail from "./CommitDetail.svelte";
 
@@ -110,6 +111,7 @@ describe("CommitDetail", () => {
   });
 
   it("shows a loading bar while a slow structural diff loads", async () => {
+    prefs.modelView = "source";
     let finish!: () => void;
     const structural = { path: "Gun.prefab", addedObjects: 1, removedObjects: 0, modifiedProperties: 0, objects: [] };
     setup({

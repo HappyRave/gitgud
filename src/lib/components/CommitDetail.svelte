@@ -11,7 +11,9 @@
     type UnityYamlDiff,
   } from "$lib/api";
   import { imageUrl, isImage } from "$lib/images";
-  import { prefs, setPaneSize, toggleIgnoreWhitespace } from "$lib/prefs.svelte";
+  import { isModel, modelKind } from "$lib/model/source";
+  import ModelViewer from "./ModelViewer.svelte";
+  import { prefs, setModelView, setPaneSize, toggleIgnoreWhitespace } from "$lib/prefs.svelte";
   import { isUnityYaml } from "$lib/unity";
   import DiffView from "./DiffView.svelte";
   import Splitter from "./Splitter.svelte";
@@ -52,6 +54,7 @@
   let diff = $state<FileDiff | null>(null);
   let unityDiff = $state<UnityYamlDiff | null>(null);
   let preferStructural = $state(true);
+  const show3d = $derived(!!file && modelKind(file) === "prefab" && prefs.modelView === "3d");
   let fetchRev = $state(0);
   let error = $state<string | null>(null);
 
@@ -151,14 +154,25 @@
   <div class="ph">
     Commit <span class="ct">· {detail?.shortId ?? commit.slice(0, 7)}</span>
     <span class="r">
+      {#if file && modelKind(file) === "prefab"}
+        <button
+          type="button"
+          class="close"
+          class:on={show3d}
+          aria-pressed={show3d}
+          title="Show the prefab in 3D"
+          onclick={() => setModelView("3d")}>3D</button
+        >
+      {/if}
       {#if file && isUnityYaml(file)}
         <button
           type="button"
           class="close"
-          class:on={preferStructural}
-          aria-pressed={preferStructural}
+          class:on={!show3d && preferStructural}
+          aria-pressed={!show3d && preferStructural}
           title="Toggle Unity structural property diff vs raw YAML diff"
-          onclick={() => (preferStructural = !preferStructural)}>{preferStructural ? "Structural" : "Raw"}</button
+          onclick={() => (show3d ? setModelView("source") : (preferStructural = !preferStructural))}
+          >{preferStructural ? "Structural" : "Raw"}</button
         >
       {/if}
       {#if file && onhistory}
@@ -237,7 +251,15 @@
     />
 
     <div class="diff-col">
-      {#if unityDiff && file && isUnityYaml(file) && preferStructural}
+      {#if show3d && file}
+        <ModelViewer
+          {repoId}
+          path={file}
+          before={detail.parents[0] ? { label: `Parent ${detail.parents[0].slice(0, 7)}`, at: { at: "parent", commit } } : null}
+          after={{ label: detail.shortId, at: { at: "commit", commit } }}
+          bust={fetchRev}
+        />
+      {:else if unityDiff && file && isUnityYaml(file) && preferStructural}
         <UnityDiffView diff={unityDiff} />
       {:else if diff}
         <DiffView
@@ -250,6 +272,16 @@
                   url: imageUrl(repoId, file, { at: "parent", commit }, fetchRev),
                 },
                 after: { label: detail.shortId, url: imageUrl(repoId, file, { at: "commit", commit }, fetchRev) },
+              }
+            : null}
+          models={file && isModel(file) && !isUnityYaml(file)
+            ? {
+                repoId,
+                bust: fetchRev,
+                before: detail.parents[0]
+                  ? { label: `Parent ${detail.parents[0].slice(0, 7)}`, at: { at: "parent", commit } }
+                  : null,
+                after: { label: detail.shortId, at: { at: "commit", commit } },
               }
             : null}
           onfetchlfs={handleFetchLfs}

@@ -113,6 +113,15 @@ impl Repo {
         if image_type(path).is_none() {
             return Err(Error::Refused(format!("{path} is not an image")));
         }
+        self.file_at(path, version)
+    }
+
+    /// The raw bytes of any file `path` at `version` (LFS pointers are not resolved).
+    ///
+    /// # Errors
+    /// [`Error::Refused`] when `path` escapes the repo or isn't in that version,
+    /// [`Error::Read`] otherwise.
+    pub fn file_at(&self, path: &str, version: &Version) -> Result<Vec<u8>, Error> {
         let inside = Path::new(path)
             .components()
             .all(|c| matches!(c, std::path::Component::Normal(_)));

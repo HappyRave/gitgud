@@ -1,10 +1,18 @@
 <script lang="ts">
-  let { label }: { label: string } = $props();
+  let { label, value = null }: { label: string; value?: number | null } = $props();
+  const pct = $derived(value === null ? null : Math.round(Math.min(1, Math.max(0, value)) * 100));
 </script>
 
-<span class="loading" role="progressbar" aria-label={label}>
+<span
+  class="loading"
+  role="progressbar"
+  aria-label={label}
+  aria-valuemin={pct === null ? undefined : 0}
+  aria-valuemax={pct === null ? undefined : 100}
+  aria-valuenow={pct ?? undefined}
+>
   {label}
-  <span class="bar" aria-hidden="true"><i></i></span>
+  <span class="bar" aria-hidden="true"><i class:fill={pct !== null} style:width={pct === null ? undefined : `${pct}%`}></i></span>
 </span>
 
 <style>
@@ -34,6 +42,10 @@
     height: 100%;
     background: var(--l0);
     animation: sweep 1.1s ease-in-out infinite;
+  }
+  .bar i.fill {
+    animation: none;
+    transition: width 0.15s linear;
   }
   @keyframes sweep {
     from {

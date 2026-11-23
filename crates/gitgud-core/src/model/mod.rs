@@ -1,0 +1,245 @@
+mod anim;
+mod guids;
+mod material;
+mod mesh_asset;
+mod meta;
+mod prefab;
+mod tree;
+mod yaml;
+
+use std::collections::BTreeMap;
+use std::path::Path;
+
+use serde::Serialize;
+
+pub use anim::{ClipSource, SceneClip, Track};
+pub use material::Material;
+pub use prefab::{MeshRef, ModelNode, ModelScene};
+
+use crate::cli::GitCli;
+use crate::image::Version;
+use crate::repo::{Error, Repo};
+use guids::Guids;
+use meta::Meta;
+use tree::Files;
+
+/// The kinds of 3D asset the viewer opens.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ModelKind {
+    Fbx,
+    Obj,
+    Gltf,
+    Glb,
+    Prefab,
+    /// A Unity `Mesh` saved as `.asset`; served converted to GLB.
+    #[serde(rename = "asset")]
+    UnityMesh,
+}
+
+/// The kind of 3D asset `path` is, by extension.
+#[must_use]
+pub fn model_kind(path: &str) -> Option<ModelKind> {
+    let ext = Path::new(path).extension()?.to_str()?.to_ascii_lowercase();
+    Some(match ext.as_str() {
+        "fbx" => ModelKind::Fbx,
+        "obj" => ModelKind::Obj,
+        "gltf" => ModelKind::Gltf,
+        "glb" => ModelKind::Glb,
+        "prefab" => ModelKind::Prefab,
+        "asset" => ModelKind::UnityMesh,
+        _ => return None,
+    })
+}
+
+/// The MIME type a model file is served with.
+#[must_use]
+pub fn model_mime(kind: ModelKind) -> &'static str {
+    match kind {
+        ModelKind::Gltf => "model/gltf+json",
+        ModelKind::Glb | ModelKind::UnityMesh => "model/gltf-binary",
+        ModelKind::Obj | ModelKind::Prefab => "text/plain; charset=utf-8",
+        ModelKind::Fbx => "application/octet-stream",
+    }
+}
+
+/// What the viewer needs besides the model file itself.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelInfo {
+    pub kind: ModelKind,
+    pub materials: Vec<Material>,
+    /// Material name inside the model → index in `materials`, from the
+    /// importer's material remapping.
+    pub remaps: BTreeMap<String, usize>,
+    /// The importer's scale on top of the file's own units.
+    pub scale: f32,
+    /// A prefab's GameObjects, nested prefabs and variants applied.
+    pub scene: Option<ModelScene>,
+}
+
+impl Repo {
+    /// The bytes of model `path` at `version`, LFS pointers swapped for their
+    /// objects (fetched up to `auto_fetch_max_bytes`).
+    ///
+    /// # Errors
+    /// [`Error::Refused`] when `path` isn't a model or isn't in that version, or
+    /// its LFS object isn't downloaded; [`Error::Read`] otherwise.
+    pub fn model_bytes(
+        &self,
+        git: Option<&GitCli>,
+        path: &str,
+        version: &Version,
+        auto_fetch_max_bytes: u64,
+    ) -> Result<Vec<u8>, Error> {
+        let Some(kind) = model_kind(path) else {
+            return Err(Error::Refused(format!("{path} is not a 3D model")));
+        };
+        let bytes = self.file_at(path, version)?;
+        let bytes = self.lfs_resolve_with_fetch(git, path, bytes, auto_fetch_max_bytes)?;
+        if kind == ModelKind::UnityMesh {
+            return mesh_asset::mesh_asset_to_glb(&String::from_utf8_lossy(&bytes))
+                .map_err(|e| Error::Read(format!("{path}: {e}")));
+        }
+        Ok(bytes)
+    }
+
+    /// The repo path of the file model `near` refers to as `reference` at `version`.
+    ///
+    /// # Errors
+    /// [`Error::Read`] when the version can't be listed.
+    pub fn model_reference(
+        &self,
+        near: &str,
+        reference: &str,
+        version: &Version,
+    ) -> Result<Option<String>, Error> {
+        Files::new(self, version).map(|f| f.find_near(reference, near))
+    }
+
+    /// Materials, remaps and scale for model `path` at `version`. Files stored
+    /// in LFS are read from their objects; with `git`, objects up to the
+    /// auto-fetch limit are downloaded first.
+    ///
+    /// # Errors
+    /// [`Error::Refused`] when `path` isn't a model or an LFS object it needs
+    /// isn't downloaded; [`Error::Read`] when the version can't be read.
+    pub fn model_info(
+        &self,
+        git: Option<&GitCli>,
+        path: &str,
+        version: &Version,
+    ) -> Result<ModelInfo, Error> {
+        let kind =
+            model_kind(path).ok_or_else(|| Error::Refused(format!("{path} is not a 3D model")))?;
+        let files = Files::new(self, version)?.with_git(git);
+        let guids = Guids::new(&files);
+        let mut info = ModelInfo {
+            kind,
+            materials: Vec::new(),
+            remaps: BTreeMap::new(),
+            scale: 1.0,
+            scene: None,
+        };
+        if kind == ModelKind::Prefab {
+            let (mut scene, materials) = prefab::PrefabBuilder::new(&guids).build(path)?;
+            for (node, controller) in scene
+                .nodes
+                .iter()
+                .enumerate()
+                .filter_map(|(i, n)| Some((i, n.controller.clone()?)))
+                .collect::<Vec<_>>()
+            {
+                for (name, source) in anim::controller_clips(&controller, &guids)? {
+                    scene.clips.push(SceneClip { node, name, source });
+                }
+            }
+            info.scene = Some(scene);
+            info.materials = materials;
+            return Ok(info);
+        }
+        if let Some(text) = files.read_text(&format!("{path}.meta"))? {
+            let meta = Meta::parse(&text);
+            info.scale = meta.global_scale;
+            let mut remaps: Vec<_> = meta.material_remaps.into_iter().collect();
+            remaps.sort_by(|a, b| a.0.cmp(&b.0));
+            for (name, r) in remaps {
+                let m = match r
+                    .guid
+                    .as_deref()
+                    .map(|g| guids.path(g))
+                    .transpose()?
+                    .flatten()
+                {
+                    Some(p) => Material::load(&p, &guids)?,
+                    None => Material::missing(&name),
+                };
+                info.remaps.insert(name, info.materials.len());
+                info.materials.push(m);
+            }
+        }
+        Ok(info)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::TestRepo;
+
+    #[test]
+    fn recognises_model_files() {
+        assert_eq!(model_kind("a/Boat.FBX"), Some(ModelKind::Fbx));
+        assert_eq!(model_kind("x.glb"), Some(ModelKind::Glb));
+        assert_eq!(model_kind("x.prefab"), Some(ModelKind::Prefab));
+        assert_eq!(model_kind("x.png"), None);
+        assert_eq!(model_mime(ModelKind::Gltf), "model/gltf+json");
+    }
+
+    #[test]
+    fn serves_versions_and_reads_remaps() {
+        let mat_guid = "3333cccc000000000000000000000000";
+        let repo = TestRepo::init();
+        repo.write("ProjectSettings/ProjectVersion.txt", "m_EditorVersion: 6000.0.1f1\n")
+            .write("Assets/boat.fbx", "one")
+            .write(
+                "Assets/boat.fbx.meta",
+                &format!("guid: 4444dddd000000000000000000000000\nModelImporter:\n  externalObjects:\n  - first:\n      type: UnityEngine:Material\n      assembly: UnityEngine.CoreModule\n      name: HullMat\n    second: {{fileID: 2100000, guid: {mat_guid}, type: 2}}\n  - first:\n      type: UnityEngine:Material\n      assembly: UnityEngine.CoreModule\n      name: Lost\n    second: {{fileID: 2100000, guid: 5555eeee000000000000000000000000, type: 2}}\n  meshes:\n    globalScale: 2\n"),
+            )
+            .write("Assets/hull.mat", "--- !u!21 &2100000\nMaterial:\n  m_Name: Hull\n  m_Shader: {fileID: 46, guid: 0000000000000000f000000000000000, type: 0}\n")
+            .write("Assets/hull.mat.meta", &format!("guid: {mat_guid}\n"))
+            .commit_all("one");
+        repo.write("Assets/boat.fbx", "two");
+        let r = crate::repo::open(repo.path()).unwrap();
+
+        assert_eq!(
+            r.model_bytes(None, "Assets/boat.fbx", &Version::Head, 0)
+                .unwrap(),
+            b"one"
+        );
+        assert_eq!(
+            r.model_bytes(None, "Assets/boat.fbx", &Version::Worktree, 0)
+                .unwrap(),
+            b"two"
+        );
+        assert!(matches!(
+            r.model_bytes(None, "Assets/hull.mat", &Version::Head, 0),
+            Err(Error::Refused(_))
+        ));
+
+        let info = r
+            .model_info(None, "Assets/boat.fbx", &Version::Head)
+            .unwrap();
+        assert_eq!(info.kind, ModelKind::Fbx);
+        assert_eq!(info.scale, 2.0);
+        assert_eq!(info.materials[info.remaps["HullMat"]].name, "Hull");
+        assert_eq!(info.materials[info.remaps["HullMat"]].shader, "Standard");
+        assert!(info.materials[info.remaps["Lost"]].missing);
+        assert_eq!(
+            r.model_reference("Assets/boat.fbx", "D:/art/hull.mat", &Version::Head)
+                .unwrap()
+                .as_deref(),
+            Some("Assets/hull.mat")
+        );
+    }
+}

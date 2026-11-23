@@ -1307,6 +1307,16 @@ async fn commit_unity_diff(
 }
 
 #[tauri::command]
+async fn model_info(
+    session: State<'_, Session>,
+    id: u32,
+    path: String,
+    version: gitgud_core::image::Version,
+) -> Result<gitgud_core::model::ModelInfo, Error> {
+    session.model_info(id, &path, &version)
+}
+
+#[tauri::command]
 async fn unity_conflict_table(
     session: State<'_, Session>,
     id: u32,
@@ -1664,6 +1674,7 @@ fn app_with_library<R: Runtime>(builder: Builder<R>, library: Option<LibraryStor
             write_commit_graph,
             worktree_unity_diff,
             commit_unity_diff,
+            model_info,
             unity_conflict_table,
             resolve_unity_conflict,
             unity_post_merge_check,
@@ -1790,6 +1801,45 @@ mod tests {
     fn open(ipc: &Ipc, repo: &TestRepo) -> Value {
         ipc.call("open_repo", json!({ "path": repo.path() }))
             .unwrap()
+    }
+
+    #[test]
+    fn model_info_reads_the_fbx_material_remaps() {
+        let repo = TestRepo::init();
+        repo.write("ProjectSettings/ProjectVersion.txt", "m_EditorVersion: 6000.0.1f1\n")
+            .write("Assets/boat.fbx", "fbx")
+            .write(
+                "Assets/boat.fbx.meta",
+                "guid: 4444dddd000000000000000000000000\nModelImporter:\n  externalObjects:\n  - first:\n      type: UnityEngine:Material\n      assembly: UnityEngine.CoreModule\n      name: HullMat\n    second: {fileID: 2100000, guid: 3333cccc000000000000000000000000, type: 2}\n",
+            )
+            .write(
+                "Assets/hull.mat",
+                "--- !u!21 &2100000\nMaterial:\n  m_Name: Hull\n  m_Shader: {fileID: 46, guid: 0000000000000000f000000000000000, type: 0}\n",
+            )
+            .write("Assets/hull.mat.meta", "guid: 3333cccc000000000000000000000000\n")
+            .commit_all("one");
+        let ipc = Ipc::new();
+        let id = open(&ipc, &repo)["id"].clone();
+        let head = repo.git(&["rev-parse", "HEAD"]).trim().to_owned();
+        for version in [json!("worktree"), json!({ "commit": head })] {
+            let info = ipc
+                .call(
+                    "model_info",
+                    json!({ "id": id, "path": "Assets/boat.fbx", "version": version }),
+                )
+                .unwrap();
+            assert_eq!(info["kind"], "fbx");
+            assert_eq!(info["remaps"]["HullMat"], 0);
+            assert_eq!(info["materials"][0]["shader"], "Standard");
+            assert_eq!(info["materials"][0]["baseMap"], Value::Null);
+        }
+        let err = ipc
+            .call(
+                "model_info",
+                json!({ "id": id, "path": "Assets/hull.mat", "version": "head" }),
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("not a 3D model"));
     }
 
     #[test]

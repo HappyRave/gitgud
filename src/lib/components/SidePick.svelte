@@ -3,7 +3,9 @@
   import { formatSizeDelta, imageFormatLabel, imageUrl, isImage } from "$lib/images";
   import { sideKey } from "$lib/keys";
   import { formatSize } from "$lib/merge/resolve";
+  import { isModel } from "$lib/model/source";
   import ImageDiff from "./ImageDiff.svelte";
+  import ModelViewer from "./ModelViewer.svelte";
 
   let {
     repoId,
@@ -125,6 +127,20 @@
           onfetch={(which, meta) => fetchSide(which, meta)}
         />
       </div>
+    {:else if isModel(path) && (sides.yours || sides.theirs)}
+      <div class="viewer model">
+        <ModelViewer
+          {repoId}
+          {path}
+          before={sides.yours ? { label: `Yours · ${yoursLabel}`, at: { at: "yours" } } : null}
+          after={sides.theirs
+            ? { label: `Theirs · ${theirsLabel}`, at: { at: "theirs" } }
+            : { label: `Yours · ${yoursLabel}`, at: { at: "yours" } }}
+          bust={revision + fetchRev}
+          meta={{ before: sides.yours, after: sides.theirs }}
+          onfetch={(which, meta) => fetchSide(which, meta)}
+        />
+      </div>
     {/if}
     <div class="cards">
       {#each [{ side: "yours" as const, label: `Yours · ${yoursLabel}`, info: sides.yours, key: "1", delta: null }, { side: "theirs" as const, label: `Theirs · ${theirsLabel}`, info: sides.theirs, key: "2", delta: theirsDelta }] as card (card.side)}
@@ -214,6 +230,9 @@
   .viewer {
     border-bottom: 1px solid var(--line);
     background: var(--bg);
+  }
+  .viewer.model {
+    height: 460px;
   }
   .pad {
     padding: 0 16px 14px;
