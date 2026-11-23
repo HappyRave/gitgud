@@ -54,8 +54,8 @@ Written 2026-11-22 for the next session picking up `gitgud`.
 3. **UI/UX design polish (`O3` in `docs/spec.md` — CSS/layout pass + `docs/lab/polish.html` done; live visual review pending)**
    - Done offline: CSS token/density/dark-theme/ultrawide fixes (`app.css`, dialogs, inspectors, lists), Linear-style `?` shortcut filter, Sublime Merge-style CLI hints in `Ctrl+K`, 2-column Settings rail + Git/LFS badges, viewport-clamped `ContextMenu`, click-outside `TabBar` overflow, aligned level-dots app icon, and `docs/lab/polish.html`.
    - Remaining: Max's live review in `pnpm tauri dev`.
-4. **Release & installer packaging (implemented via `pnpm package`; interactive installer test pending)**
-   - Done: bundled MinGit `2.56.1` + `git-lfs` `3.8.1` fallback (`scripts/fetch-bundled-git.ps1`, `git.rs`, `cli.rs`, `ToolDiagnostics` / Settings / status strip), `gitgud-cli` sidecar (`scripts/prepare-bundle.ps1`, `src-tauri/tauri.bundle.conf.json`), custom level-dots icon (`src-tauri/icons/`), and current-user Windows NSIS installer (`src-tauri/tauri.conf.json`, `src-tauri/windows/hooks.nsh` adding/removing `$INSTDIR` on user `PATH`).
+4. **Release & installer packaging (implemented via `pnpm package` / `pnpm package:portable`; interactive installer test pending)**
+   - Done: bundled MinGit `2.56.1` + `git-lfs` `3.8.1` fallback (`scripts/fetch-bundled-git.ps1`, `git.rs`, `cli.rs`, `ToolDiagnostics` / Settings / status strip), `gitgud-cli` sidecar (`scripts/prepare-bundle.ps1`, `src-tauri/tauri.bundle.conf.json`), custom level-dots icon (`src-tauri/icons/`), current-user Windows NSIS installer (`src-tauri/tauri.conf.json`, `src-tauri/windows/hooks.nsh` adding/removing `$INSTDIR` on user `PATH`), and portable zip + standalone exe builder (`scripts/package-portable.ps1`).
    - Remaining: manual interactive run/uninstall test of `target/release/bundle/nsis/gitgud_0.1.0_x64-setup.exe` on clean/target Windows user profile and code-signing decision if distributing broadly.
 5. **Remaining open / follow-up engineering items**
    - History edits (`R2-A`) over merge commits or the root commit are intentionally refused for now (`CLAUDE.md`).

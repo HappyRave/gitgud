@@ -13,6 +13,7 @@
     "test": "vitest run",
     "e2e": "tauri build --debug --no-bundle && node --test --test-concurrency=1 \"e2e/*.test.ts\"",
     "package": "powershell -ExecutionPolicy Bypass -File scripts/prepare-bundle.ps1 && tauri build --bundles nsis --config src-tauri/tauri.bundle.conf.json",
+    "package:portable": "powershell -ExecutionPolicy Bypass -File scripts/package-portable.ps1",
     "tauri": "tauri"
   },
   "dependencies": {
