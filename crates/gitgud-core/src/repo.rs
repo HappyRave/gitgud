@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use gix::bstr::BStr;
 use gix::diff::index::ChangeRef;
@@ -9,10 +10,14 @@ use gix::status::tree_index::TrackRenames;
 use gix::status::{Item, UntrackedFiles};
 use serde::{Serialize, Serializer};
 
+use crate::unity_yaml::GuidIndex;
+
 /// An open repository with a work tree. Cheap to share across threads.
 pub struct Repo {
     inner: gix::ThreadSafeRepository,
     root: PathBuf,
+    /// Unity asset GUIDs -> paths, built on first use; see `unity_yaml::repo_guid_index`.
+    pub(crate) guid_index: Mutex<Option<Arc<GuidIndex>>>,
 }
 
 /// Opens the repository containing `path`, walking up from a subfolder.
@@ -29,6 +34,7 @@ pub fn open(path: impl AsRef<Path>) -> Result<Repo, Error> {
     Ok(Repo {
         inner: repo.into_sync(),
         root,
+        guid_index: Mutex::new(None),
     })
 }
 

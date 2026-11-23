@@ -144,6 +144,7 @@
   import FileHistoryBlame from "$lib/components/FileHistoryBlame.svelte";
   import FindBar from "$lib/components/FindBar.svelte";
   import Graph from "$lib/components/Graph.svelte";
+  import LoadingBar from "$lib/components/LoadingBar.svelte";
   import MergeBanner from "$lib/components/MergeBanner.svelte";
   import MergeDialog from "$lib/components/MergeDialog.svelte";
   import OpLogPanel from "$lib/components/OpLogPanel.svelte";
@@ -2263,10 +2264,7 @@
         <button class="bare link" onclick={() => cancelTask(id)}>Cancel</button>
       </span>
     {:else if busy}
-      <span class="task working" role="progressbar" aria-label={working}>
-        {working}
-        <span class="bar sweep" aria-hidden="true"><i></i></span>
-      </span>
+      <LoadingBar label={working} />
     {:else if notice}
       <span role="status">{notice}</span>
     {:else if upstreamLine}
@@ -2472,34 +2470,6 @@
     height: 100%;
     background: var(--l0);
     transition: width 0.2s;
-  }
-  /* Quick writes finish before this fades in, so they don't flash the strip. */
-  .working {
-    animation: show-working 0s 120ms both;
-  }
-  @keyframes show-working {
-    from {
-      visibility: hidden;
-    }
-  }
-  .sweep i {
-    width: 35%;
-    animation: sweep 1.1s ease-in-out infinite;
-  }
-  @keyframes sweep {
-    from {
-      transform: translateX(-100%);
-    }
-    to {
-      transform: translateX(290%);
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .sweep i {
-      animation: none;
-      width: 100%;
-      opacity: 0.5;
-    }
   }
   .link {
     all: unset;

@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::Path;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
@@ -1100,11 +1101,22 @@ fn parse_serialization_mode(text: &str) -> Option<i32> {
     None
 }
 
-pub(crate) fn repo_guid_index(repo: &Repo) -> GuidIndex {
-    let Some(project) = find_unity_root(repo.root()) else {
-        return GuidIndex::default();
-    };
-    GuidIndex::build(&project)
+/// The repo's GUID index, scanned once and kept until [`forget_guid_index`].
+pub(crate) fn repo_guid_index(repo: &Repo) -> Arc<GuidIndex> {
+    let mut cached = repo.guid_index.lock().expect("guid index lock poisoned");
+    cached
+        .get_or_insert_with(|| {
+            Arc::new(
+                find_unity_root(repo.root())
+                    .map_or_else(GuidIndex::default, |p| GuidIndex::build(&p)),
+            )
+        })
+        .clone()
+}
+
+/// Drops the cached GUID index, so the next structural diff rescans `.meta` files.
+pub(crate) fn forget_guid_index(repo: &Repo) {
+    *repo.guid_index.lock().expect("guid index lock poisoned") = None;
 }
 
 fn parse_doc_header(line: &str) -> Option<(u32, String, bool)> {

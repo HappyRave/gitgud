@@ -15,6 +15,7 @@
   import { prefs, setDiffLayout, toggleIgnoreWhitespace } from "$lib/prefs.svelte";
   import { isUnityYaml } from "$lib/unity";
   import DiffView, { type LineAction } from "./DiffView.svelte";
+  import LoadingBar from "./LoadingBar.svelte";
   import UnityDiffView from "./UnityDiffView.svelte";
 
   let {
@@ -111,6 +112,8 @@
   /** The hunk Alt+↑↓ moved to; S / U / ⌫ act on it. */
   let focused = $state(0);
   const isUnityFile = $derived(isUnityYaml(path));
+  // A refresh of the same view keeps the old diff up; a different view clears it so it shows loading.
+  let shownView = "";
 
   onMount(() => {
     if (!container || typeof ResizeObserver === "undefined") {
@@ -133,6 +136,12 @@
     const stale = () =>
       key !== `${repoId}:${path}:${side}:${revision}:${prefs.ignoreWhitespace}:${isUnityYaml(path) && preferStructural}`;
     error = null;
+    const view = `${repoId}:${path}:${side}:${ws}:${structural}`;
+    if (view !== shownView) {
+      shownView = view;
+      diff = null;
+      unityDiff = null;
+    }
     const loadRaw = () => {
       unityDiff = null;
       worktreeFileDiff(repoId, path, side, ws).then(
@@ -249,10 +258,16 @@
       split={effectiveSplit}
       onfetchlfs={handleFetchLfs}
     />
+  {:else}
+    <p class="loading-note"><LoadingBar label={isUnityFile && preferStructural ? "Loading structural diff…" : "Loading diff…"} /></p>
   {/if}
 </section>
 
 <style>
+  .loading-note {
+    margin: 12px 10px;
+    font-size: 11.5px;
+  }
   .working-diff {
     display: flex;
     flex-direction: column;

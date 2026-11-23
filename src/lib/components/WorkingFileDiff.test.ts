@@ -146,4 +146,27 @@ describe("WorkingFileDiff", () => {
     });
     await waitFor(() => expect(screen.getAllByText("Hydrated")).toHaveLength(2));
   });
+
+  it("shows a loading bar instead of the old view while a slow structural diff loads", async () => {
+    let finish: (() => void) | null = null;
+    const structural = { path: "Gun.prefab", addedObjects: 1, removedObjects: 0, modifiedProperties: 0, objects: [] };
+    mockCommands({
+      worktree_file_diff: () => diff("raw yaml line"),
+      worktree_unity_diff: () => (finish ? new Promise((resolve) => (finish = () => resolve(structural))) : structural),
+    });
+    render(WorkingFileDiff, { repoId: 3, path: "Gun.prefab", side: "unstaged", revision: 0, perHunk: true, onhunk: vi.fn() });
+    expect(await screen.findByText("+1 objects")).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Structural" }));
+    expect(await screen.findByText("raw yaml line")).toBeInTheDocument();
+
+    finish = () => {};
+    await fireEvent.click(screen.getByRole("button", { name: "Raw" }));
+
+    expect(await screen.findByRole("progressbar", { name: "Loading structural diff…" })).toBeInTheDocument();
+    expect(screen.queryByText("raw yaml line")).toBeNull();
+    finish();
+    expect(await screen.findByText("+1 objects")).toBeInTheDocument();
+    expect(screen.queryByRole("progressbar")).toBeNull();
+  });
 });

@@ -108,4 +108,18 @@ describe("CommitDetail", () => {
 
     expect(screen.getByRole("heading", { name: "Other" })).toBeInTheDocument();
   });
+
+  it("shows a loading bar while a slow structural diff loads", async () => {
+    let finish!: () => void;
+    const structural = { path: "Gun.prefab", addedObjects: 1, removedObjects: 0, modifiedProperties: 0, objects: [] };
+    setup({
+      commit_detail: () => ({ ...DETAIL, files: [{ path: "Gun.prefab", change: "modified" }] }),
+      commit_unity_diff: () => new Promise((resolve) => (finish = () => resolve(structural))),
+    });
+
+    expect(await screen.findByRole("progressbar", { name: "Loading structural diff…" })).toBeInTheDocument();
+    finish();
+    expect(await screen.findByText("+1 objects")).toBeInTheDocument();
+    expect(screen.queryByRole("progressbar")).toBeNull();
+  });
 });

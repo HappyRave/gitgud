@@ -354,3 +354,41 @@ fn structural_diff_reads_lfs_stored_prefabs_from_the_local_cache() {
     let diff = worktree_unity_diff(&r, path, Side::Unstaged).unwrap();
     assert_eq!(hp_change(&diff), (Some("80".into()), Some("95".into())));
 }
+
+#[test]
+fn the_guid_index_is_reused_until_the_repo_refreshes() {
+    let repo = TestRepo::init();
+    let guid = "0123456789abcdef0123456789abcdef";
+    let prefab = |hp: u32| {
+        format!(
+            "%YAML 1.1\n--- !u!1 &1\nGameObject:\n  m_Name: Gun\n--- !u!114 &2\nMonoBehaviour:\n  m_GameObject: {{fileID: 1}}\n  m_Script: {{fileID: 11500000, guid: {guid}, type: 3}}\n  hp: {hp}\n"
+        )
+    };
+    let meta = format!("fileFormatVersion: 2\nguid: {guid}\n");
+    repo.write(
+        "ProjectSettings/ProjectVersion.txt",
+        "m_EditorVersion: 6000.0.12f1\n",
+    )
+    .write("Assets/Old.cs.meta", &meta)
+    .write("Assets/Gun.prefab", &prefab(50))
+    .commit_all("gun");
+    repo.write("Assets/Gun.prefab", &prefab(80));
+    let session = Session::default();
+    let id = session.open(repo.path()).unwrap().id;
+    let component = || {
+        session
+            .worktree_unity_diff(id, "Assets/Gun.prefab", Side::Unstaged)
+            .unwrap()
+            .objects[0]
+            .component
+            .clone()
+    };
+    assert_eq!(component(), "Old.cs");
+
+    repo.remove("Assets/Old.cs.meta")
+        .write("Assets/New.cs.meta", &meta);
+    assert_eq!(component(), "Old.cs", "cached until the repo refreshes");
+
+    session.refresh(id).unwrap();
+    assert_eq!(component(), "New.cs");
+}

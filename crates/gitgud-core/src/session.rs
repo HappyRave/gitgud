@@ -180,6 +180,7 @@ impl Session {
     fn refresh_inner(&self, id: u32, force_reload: bool) -> Result<Opened, Error> {
         let started = Instant::now();
         let open = self.get(id)?;
+        unity_yaml::forget_guid_index(&open.repo);
         let stamp = config_stamp(&open.repo);
         let reload = force_reload || stamp != open.config_stamp;
         let repo = if reload {
@@ -253,7 +254,11 @@ impl Session {
     /// [`Error::UnknownRepo`], or [`Error::Read`] when the watch can't be set up.
     pub fn watch(&self, id: u32, on_change: impl Fn() + Send + 'static) -> Result<(), Error> {
         let repo = self.get(id)?.repo;
-        let watcher = RepoWatcher::start(repo, on_change)?;
+        let watched = repo.clone();
+        let watcher = RepoWatcher::start(repo, move || {
+            unity_yaml::forget_guid_index(&watched);
+            on_change();
+        })?;
         self.watchers().insert(id, watcher);
         Ok(())
     }

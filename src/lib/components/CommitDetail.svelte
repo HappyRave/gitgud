@@ -15,6 +15,7 @@
   import { isUnityYaml } from "$lib/unity";
   import DiffView from "./DiffView.svelte";
   import Splitter from "./Splitter.svelte";
+  import LoadingBar from "./LoadingBar.svelte";
   import UnityDiffView from "./UnityDiffView.svelte";
 
   let {
@@ -253,6 +254,8 @@
             : null}
           onfetchlfs={handleFetchLfs}
         />
+      {:else if file && !error}
+        <p class="note"><LoadingBar label={isUnityYaml(file) && preferStructural ? "Loading structural diff…" : "Loading diff…"} /></p>
       {/if}
     </div>
   {:else if !error}
