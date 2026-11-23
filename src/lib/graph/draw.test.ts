@@ -72,6 +72,36 @@ describe("drawGraph", () => {
     expect(ctx.calls.filter((c) => c.op === "fill")).toHaveLength(1);
   });
 
+  it("draws lane changes diagonally, rounding the corner only at lane ends", () => {
+    const ctx = fakeContext();
+    const shifts: RowLayout = {
+      node: 0,
+      segments: [
+        { from: 2, to: 0, part: "top" },
+        { from: 0, to: 1, part: "bottom" },
+        { from: 3, to: 2, part: "top" },
+      ],
+      overflow: false,
+    };
+    drawGraph(ctx, [{ index: 0, layout: shifts, wip: false }], 0, 100, 200);
+
+    const half = ROW_HEIGHT / 2;
+    const stub = half * 0.4;
+    // Corner points only; the radius is checked below by where its tangent points fall.
+    const corners = ctx.calls.filter((c) => c.op === "arcTo").map((c) => (c.args as number[]).slice(0, 2));
+    expect(corners).toEqual([
+      [laneX(2), stub],
+      [laneX(1), ROW_HEIGHT - stub],
+      [laneX(3), stub],
+      [laneX(2), half - stub],
+    ]);
+
+    // Into the dot: the arc ends where the diagonal starts, which still points straight at the dot.
+    const [, , dx, dy, r] = ctx.calls.find((c) => c.op === "arcTo")!.args as number[];
+    const turn = Math.atan2(dx - laneX(2), dy - stub);
+    expect(r * Math.tan(Math.abs(turn) / 2)).toBeCloseTo(stub);
+  });
+
   it("draws the working-copy dot hollow", () => {
     const ctx = fakeContext();
     drawGraph(ctx, [{ index: 0, layout: layout(0), wip: true }], 0, 100, 200);

@@ -79,6 +79,37 @@ export interface DrawRow {
   stash?: boolean;
 }
 
+/** Share of a lane change's height that runs vertically at a lane end, where the corner is rounded. */
+const CORNER = 0.4;
+
+/**
+ * A lane change is a straight diagonal from the commit dot; where it meets a lane it turns into a
+ * short vertical run through a rounded corner, so it joins the line above or below cleanly.
+ */
+function traceSegment(ctx: CanvasRenderingContext2D, s: Segment, l: Line, node: number) {
+  ctx.moveTo(l.x1, l.y1);
+  if (l.x1 === l.x2) {
+    ctx.lineTo(l.x2, l.y2);
+    return;
+  }
+  const startsAtLane = !(s.part === "bottom" && s.from === node);
+  const endsAtLane = !(s.part === "top" && s.to === node);
+  const height = l.y2 - l.y1;
+  const stub = height * CORNER;
+  const ya = startsAtLane ? l.y1 + stub : l.y1;
+  const yb = endsAtLane ? l.y2 - stub : l.y2;
+  // The radius whose tangent points land exactly at the ends of the vertical run.
+  const turn = Math.atan2(Math.abs(l.x2 - l.x1), yb - ya);
+  const r = stub / Math.tan(turn / 2);
+  if (startsAtLane) {
+    ctx.arcTo(l.x1, ya, l.x2, yb, r);
+  }
+  if (endsAtLane) {
+    ctx.arcTo(l.x2, yb, l.x2, l.y2, r);
+  }
+  ctx.lineTo(l.x2, l.y2);
+}
+
 const DASH = [3, 2];
 const FADED_ALPHA = 0.45;
 
@@ -103,8 +134,7 @@ export function drawGraph(
       ctx.setLineDash(s.stroke === "dashed" ? DASH : []);
       ctx.globalAlpha = s.stroke === "faded" ? FADED_ALPHA : 1;
       ctx.beginPath();
-      ctx.moveTo(l.x1, l.y1);
-      ctx.lineTo(l.x2, l.y2);
+      traceSegment(ctx, s, l, row.layout.node);
       ctx.stroke();
     }
     ctx.setLineDash([]);

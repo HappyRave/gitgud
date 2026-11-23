@@ -2370,10 +2370,11 @@
     flex: 1;
     min-height: 0;
     display: grid;
-    grid-template-columns: var(--side-w) 5px minmax(0, 1fr) 5px var(--insp-w);
+    /* Side panes give way to their drag minimums (clampSidebar / clampInspector) before history drops below 260px. */
+    grid-template-columns: minmax(150px, var(--side-w)) 5px minmax(260px, 1fr) 5px minmax(300px, var(--insp-w));
   }
   .body.merging {
-    grid-template-columns: var(--side-w) 5px minmax(0, 1fr);
+    grid-template-columns: minmax(150px, var(--side-w)) 5px minmax(260px, 1fr);
   }
   @media (min-width: 2400px) {
     .body:not(.merging) {
@@ -2390,6 +2391,9 @@
     min-width: 0;
     min-height: 0;
     background: var(--panel);
+  }
+  .pane.center {
+    overflow: hidden;
   }
   .contents {
     display: contents;
