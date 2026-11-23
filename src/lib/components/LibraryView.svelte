@@ -17,6 +17,7 @@
   } from "$lib/api";
   import ContextMenu, { type MenuItem } from "$lib/components/ContextMenu.svelte";
   import Splitter from "$lib/components/Splitter.svelte";
+  import UnityIcon from "$lib/components/UnityIcon.svelte";
   import { inTextField, opLogKey } from "$lib/keys";
   import { prefs, setPaneSize } from "$lib/prefs.svelte";
   import {
@@ -85,7 +86,7 @@
     { id: "uncommitted", label: "Uncommitted", icon: "●" },
     { id: "notPushed", label: "Not pushed", icon: "↑" },
     { id: "locks", label: "Locks I hold", icon: "🔒" },
-    { id: "unity", label: "Unity projects", icon: "U" },
+    { id: "unity", label: "Unity projects", icon: "" },
     { id: "missing", label: "Missing on disk", icon: "⚠" },
   ];
 
@@ -423,7 +424,7 @@
             class:sel={selection.kind === "smart" && selection.filter === item.id}
             onclick={() => (selection = { kind: "smart", filter: item.id })}
           >
-            <span class="ic">{item.icon}</span>{item.label}<span class="r">{counts[item.id] || ""}</span>
+            <span class="ic">{#if item.id === "unity"}<UnityIcon size={10} />{:else}{item.icon}{/if}</span>{item.label}<span class="r">{counts[item.id] || ""}</span>
           </button>
         {/each}
       </section>
@@ -554,7 +555,7 @@
                     {repo.pinned ? "★" : "☆"}
                   </button>
                   <span class="rname">{repo.name}</span>
-                  {#if c?.isUnity}<span class="unity" title="Unity project">U</span>{/if}
+                  {#if c?.isUnity}<span class="unity"><UnityIcon title="Unity project" /></span>{/if}
                 </span>
                 <span class="pa" title={repo.path}>
                   {#if missing}
@@ -835,11 +836,8 @@
     color: var(--l4);
   }
   .unity {
-    font: 700 10px var(--mono);
-    padding: 0 4px;
-    border-radius: 3px;
-    background: var(--sel);
-    color: var(--l0);
+    display: inline-flex;
+    color: var(--fg);
   }
   .pa,
   .br {

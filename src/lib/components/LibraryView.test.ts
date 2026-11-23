@@ -121,6 +121,11 @@ describe("LibraryView", () => {
     expect(cell).toHaveTextContent("2 untracked");
   });
 
+  it("marks Unity projects with the Unity logo", () => {
+    setup();
+    expect(screen.getByRole("img", { name: "Unity project" }).tagName).toBe("svg");
+  });
+
   it("draws a solid dot when tracked files changed", () => {
     setup();
     const [dot, cell] = screen.getAllByTitle("3 modified · 1 untracked");
