@@ -1,6 +1,6 @@
-# Handoff: gitgud post-Milestone 9
+# Handoff: gitgud v0.1.2
 
-Written 2026-11-22 for the next session picking up `gitgud`.
+Written 2026-11-22, updated 2026-11-23 (through `62c6239`, v0.1.2) for the next session picking up `gitgud`.
 
 ## Read first
 
@@ -11,7 +11,8 @@ Written 2026-11-22 for the next session picking up `gitgud`.
 ## Where things stand
 
 - Branch `main` has **Milestones 1–9** implemented (`e00bdc3` through `3aa28c1`), covering all v1.0 and v1.1 functional rows in `docs/spec.md` plus `gitgud-cli` and its stdio MCP server.
-- All M1–M9 work was verified headlessly (Svelte/TypeScript checks, Vitest, Vite production build, `cargo fmt`, `cargo clippy -- -D warnings`, and Rust unit/integration/IPC suites). **No GUI (`pnpm tauri dev`) or Playwright E2E (`pnpm e2e`) session ran during M1–M9** because desktop GUI launch was explicitly disabled while Max used the machine.
+- After M9: polish + NSIS packaging + full E2E pass (`4a739be`), portable zip/exe (`19fb83a`), v0.1.1 (`9512243`) and v0.1.2 (`62c6239`) — see "Since M9" below.
+- M1–M9 were verified headlessly as they landed; the Playwright E2E suite (`pnpm e2e`) first ran in `4a739be` (33/33). **No interactive `pnpm tauri dev` walkthrough has happened yet.**
 
 ## What is built (Milestones 1–9)
 
@@ -27,7 +28,18 @@ Written 2026-11-22 for the next session picking up `gitgud`.
 | M8 | `bc045ba` | Stacked branches (`depth >= 2`), undoable `git rebase --update-refs` restack, stacked compare PR URLs, LFS cache stats/prune, AI CLI commit drafting (`claude`/`codex`/`gemini`), quick-edit Force-push offer, Coding Agents setup in Settings | `stacks.rs`, `ai.rs`, `lfs.rs`, `CommitBox.svelte`, `Sidebar.svelte`, `SettingsModal.svelte` |
 | M9 | `3aa28c1` | Faded "still on origin" commits after rewriting pushed branches, linked agent worktrees -> proposals import, large-repo commit-graph prompt (`>= 500` rows), manual `update-index --refresh`, in-memory local latency panel, `F5`/`F7` browser key guard | `ops.rs`, `proposals.rs`, `session.rs`, `RepoView.svelte`, `Graph.svelte`, `SettingsModal.svelte`, `+page.svelte` |
 
-## Latest verified checks (at `3aa28c1`)
+## Since M9 (2026-11-23)
+
+| Commit | Scope | Key files |
+|---|---|---|
+| `4a739be` | R5 UI polish (`docs/lab/polish.html`), Windows NSIS installer, bundled MinGit `2.56.1` + `git-lfs` `3.8.1`, `gitgud-cli` sidecar, app icon, O2/O6/O7 agent ergonomics, snapshot pruning, Graph ARIA + DPR scaling, E2E suite 33/33 | `scripts/`, `src-tauri/tauri.bundle.conf.json`, `src-tauri/windows/hooks.nsh`, `git.rs`, `snapshot.rs` |
+| `19fb83a` | Portable zip + standalone exe (`pnpm package:portable`) | `scripts/package-portable.ps1` |
+| `9512243` v0.1.1 | Draggable, persisted panel splitters (`prefs.panes`), op-log `Close` + sidebar `Working copy` toggle, `Ctrl`/`Shift`-click multi-select staging | `Splitter.svelte`, `prefs.svelte.ts`, `StatusList.svelte`, `WorkingCopy.svelte`, `working.ts`, `OpLogPanel.svelte` |
+| `62c6239` v0.1.2 | Texture viewer: DDS/EXR/HDR/TIFF/16-bit PSD decode, channels, zoom, pixelated, diff heatmap; LFS objects `<= 25 MiB` auto-fetched (`lfs_fetch_object`); LFS pointer cards; asset + LFS conflict inspector in `SidePick` | `image.rs`, `lfs.rs`, `ImageDiff.svelte`, `LfsBinaryCard.svelte`, `SidePick.svelte` |
+
+The v0.1.1 / v0.1.2 commits don't record which checks ran; re-run the full list below before trusting them.
+
+## Latest verified checks (at `3aa28c1`; E2E at `4a739be`)
 
 - `pnpm check` (`svelte-check`): **0 errors, 0 warnings**
 - `pnpm vitest run`: **43 test files / 339 tests passed**
@@ -56,7 +68,7 @@ Written 2026-11-22 for the next session picking up `gitgud`.
    - Remaining: Max's live review in `pnpm tauri dev`.
 4. **Release & installer packaging (implemented via `pnpm package` / `pnpm package:portable`; interactive installer test pending)**
    - Done: bundled MinGit `2.56.1` + `git-lfs` `3.8.1` fallback (`scripts/fetch-bundled-git.ps1`, `git.rs`, `cli.rs`, `ToolDiagnostics` / Settings / status strip), `gitgud-cli` sidecar (`scripts/prepare-bundle.ps1`, `src-tauri/tauri.bundle.conf.json`), custom level-dots icon (`src-tauri/icons/`), current-user Windows NSIS installer (`src-tauri/tauri.conf.json`, `src-tauri/windows/hooks.nsh` adding/removing `$INSTDIR` on user `PATH`), and portable zip + standalone exe builder (`scripts/package-portable.ps1`).
-   - Remaining: manual interactive run/uninstall test of `target/release/bundle/nsis/gitgud_0.1.0_x64-setup.exe` on clean/target Windows user profile and code-signing decision if distributing broadly.
+   - Remaining: rebuild (`pnpm package`; no bundle is on disk as of 2026-11-23), then manual interactive run/uninstall test of `target/release/bundle/nsis/gitgud_0.1.2_x64-setup.exe` on clean/target Windows user profile and code-signing decision if distributing broadly.
 5. **Remaining open / follow-up engineering items**
    - History edits (`R2-A`) over merge commits or the root commit are intentionally refused for now (`CLAUDE.md`).
    - Snapshot pruning (`snapshot.rs::Snapshots::sync_kept`) is now wired into `OpLog::prune_now` & retention + `git gc --auto`, and `OpLog::stats` / `OpLogPanel` include LFS-only snapshot object sizes and reclaimable prune previews.
@@ -66,6 +78,7 @@ Written 2026-11-22 for the next session picking up `gitgud`.
 
 ## Things to do next (recommended first session order)
 
-1. Test the built NSIS installer (`target/release/bundle/nsis/gitgud_0.1.0_x64-setup.exe`) interactively on a Windows user profile (install, CLI `PATH`, uninstall).
-2. Start `pnpm tauri dev`, open a real Unity + LFS repo plus a multi-repo Library folder, and do a structured walkthrough of M1–M9 themes/density, WebView2 accelerator keys (`Ctrl+P`/`Ctrl+F`/`Ctrl+R`), + Settings' **Local latency** timings.
-3. Address any layout polish or Unity YAML parser edge cases uncovered on real `.unity`/`.prefab` assets, plus live GitHub/Bitbucket remote LFS lock checks (`O1`) and Sourcetree baseline (`O9`).
+1. Re-run the full check list on v0.1.2 (fmt, clippy, cargo tests, `pnpm check`, vitest, `pnpm e2e`) and update "Latest verified checks".
+2. Build with `pnpm package` and test `target/release/bundle/nsis/gitgud_0.1.2_x64-setup.exe` interactively on a Windows user profile (install, CLI `PATH`, uninstall).
+3. Start `pnpm tauri dev`, open a real Unity + LFS repo plus a multi-repo Library folder, and do a structured walkthrough of M1–M9 themes/density, WebView2 accelerator keys (`Ctrl+P`/`Ctrl+F`/`Ctrl+R`), Settings' **Local latency** timings, and the v0.1.1/v0.1.2 pieces (splitters, multi-select staging, texture viewer on real DDS/EXR/PSD, LFS auto-fetch, LFS conflict inspector).
+4. Address any layout polish or Unity YAML parser edge cases uncovered on real `.unity`/`.prefab` assets, plus live GitHub/Bitbucket remote LFS lock checks (`O1`) and Sourcetree baseline (`O9`).
