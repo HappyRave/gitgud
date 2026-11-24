@@ -21,7 +21,10 @@ export const MISSING_COLOR = "#ff00ff";
 /** Loads a texture from a URL; swapped in tests. */
 export type LoadTexture = (url: string) => Texture;
 
-export const loadTexture: LoadTexture = (url) => new TextureLoader().load(url);
+/** Fires "load" whenever a texture finishes loading, so stages can redraw. */
+export const textureEvents = new EventTarget();
+
+export const loadTexture: LoadTexture = (url) => new TextureLoader().load(url, () => textureEvents.dispatchEvent(new Event("load")));
 
 /**
  * `desc` with the base map taken from the texture property picked for its shader,

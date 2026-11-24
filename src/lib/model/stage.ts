@@ -26,7 +26,7 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { type Comparison, compare, type Status } from "./compare";
 import type { LoadedModel } from "./load";
-import { ShadingKit } from "./materials";
+import { ShadingKit, textureEvents } from "./materials";
 
 /** "merged": the newer version only, with the older one's changed objects as amber wire ghosts. */
 export type CompareMode = "side" | "swipe" | "onion" | "merged";
@@ -94,7 +94,13 @@ export class ModelStage {
     this.controls.addEventListener("change", () => (this.dirty = true));
     this.loop = this.loop.bind(this);
     this.raf = requestAnimationFrame(this.loop);
+    textureEvents.addEventListener("load", this.redraw);
   }
+
+  /** A texture arrived after the last frame: draw again so it shows. */
+  private readonly redraw = () => {
+    this.dirty = true;
+  };
 
   /** Shows `after`, and `before` beside it when given; frames both. */
   setModels(before: LoadedModel | null, after: LoadedModel) {
@@ -252,6 +258,7 @@ export class ModelStage {
   }
 
   dispose() {
+    textureEvents.removeEventListener("load", this.redraw);
     cancelAnimationFrame(this.raf);
     for (const s of this.sides) {
       if (s) {
