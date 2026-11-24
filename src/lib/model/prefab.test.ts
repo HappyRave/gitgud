@@ -79,6 +79,17 @@ const ctx = {
 };
 
 describe("assemblePrefab", () => {
+  it("takes a Mesh .asset's one mesh whatever fileID points at it", async () => {
+    const scene: ModelScene = {
+      nodes: [node("Floor", { mesh: { type: "asset", path: "Assets/Meshes/Floor.asset", name: null, id: "4300000", scale: 1 } })],
+      missing: [],
+      clips: [],
+    };
+    const model = await assemblePrefab(scene, [], ctx);
+    expect((model.root.getObjectByName("Floor")!.children[0] as Mesh).isMesh).toBe(true);
+    expect(model.missing).toEqual([]);
+  });
+
   it("draws meshes stored inside the scene, loading each one once", async () => {
     const { loadModel } = await import("./load");
     const calls = () => vi.mocked(loadModel).mock.calls.filter(([s]) => s.url.includes("mesh=")).map(([s]) => s.url);

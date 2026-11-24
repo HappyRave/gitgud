@@ -141,7 +141,7 @@ export async function loadModel(src: LoadSource): Promise<LoadedModel> {
   let clips: AnimationClip[] = [];
   switch (src.kind) {
     case "fbx": {
-      const { FBXLoader } = await import("three/examples/jsm/loaders/FBXLoader.js");
+      const { FBXLoader } = await import("./vendor/FBXLoader.js");
       const group = new FBXLoader(manager).parse(bytes.buffer as ArrayBuffer, "");
       const fileUnits = (group.userData.unitScaleFactor as number | undefined) ?? 1;
       group.scale.multiplyScalar((fileUnits / 100) * (src.info?.scale ?? 1));

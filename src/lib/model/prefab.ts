@@ -208,7 +208,8 @@ export async function assemblePrefab(scene: ModelScene, materials: ModelMaterial
     if (ref.name === null && ref.id === null) {
       return cloneSkinned(loaded.root);
     }
-    const src = findMesh(loaded.root, ref.name, ref.id);
+    // A Mesh .asset holds one mesh, referenced by its main fileID (4300000), not a hashed one.
+    const src = meshFileKind(ref.path) === "asset" ? firstMesh(loaded.root) : findMesh(loaded.root, ref.name, ref.id);
     if (!src) {
       missing.push(`${ref.path} has no mesh ${ref.name ?? `with fileID ${ref.id}`}`);
       return missingMesh();
