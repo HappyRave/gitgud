@@ -1,6 +1,8 @@
 import { modelInfo } from "$lib/api";
 import { type ImageAt, imageUrl } from "$lib/images";
-import { type LoadedModel, loadModel } from "./load";
+import { clone as cloneSkinned } from "three/examples/jsm/utils/SkeletonUtils.js";
+import { loadShared } from "./shared";
+import type { LoadedModel } from "./load";
 import { assemblePrefab } from "./prefab";
 import { LoadProgress } from "./progress";
 import { modelKind, modelUrl, refUrl, toVersion } from "./source";
@@ -50,7 +52,7 @@ export async function openSide(
       });
       return { model, error: null };
     }
-    const model = await loadModel({
+    const shared = await loadShared({
       kind,
       url: modelUrl(repoId, path, side.at, bust),
       refUrl: (ref) => refUrl(repoId, path, ref, side.at, bust),
@@ -59,7 +61,7 @@ export async function openSide(
       name: fileName(path),
       onProgress: progress.reporter(key(path)),
     });
-    return { model, error: null };
+    return { model: { ...shared, root: cloneSkinned(shared.root) }, error: null };
   } catch (e) {
     progress.report(key(path), { phase: "done" });
     progress.report(key("info"), { phase: "done" });

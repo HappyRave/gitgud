@@ -43,6 +43,8 @@ const mat = (name: string, over: Partial<ModelMaterial> = {}): ModelMaterial => 
   color: [1, 1, 1, 1],
   baseMap: null,
   normalMap: null,
+  baseMapKey: null,
+  normalMapKey: null,
   tiling: [1, 1],
   offset: [0, 0],
   metallic: 0,
@@ -69,7 +71,7 @@ const ctx = {
   modelUrl: (p: string) => `m://${p}`,
   refUrl: () => (r: string) => r,
   imageUrl: (p: string) => p,
-  info: async (): Promise<ModelInfo> => ({ kind: "fbx", materials: [], remaps: {}, scale: 1, scene: null }),
+  info: async (): Promise<ModelInfo> => ({ kind: "fbx", key: null, materials: [], remaps: {}, scale: 1, scene: null }),
   loadTexture: () => new Texture(),
 };
 

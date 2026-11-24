@@ -343,6 +343,9 @@ export interface ModelMaterial {
   color: [number, number, number, number];
   baseMap: string | null;
   normalMap: string | null;
+  /** Names for the maps' contents at this version, for reusing loaded textures. */
+  baseMapKey: string | null;
+  normalMapKey: string | null;
   tiling: [number, number];
   offset: [number, number];
   metallic: number;
@@ -377,6 +380,8 @@ export interface ModelScene {
 
 export interface ModelInfo {
   kind: ModelKind;
+  /** A name for the file's content at this version (blob id, or a work-tree file's size and time). */
+  key: string | null;
   materials: ModelMaterial[];
   /** Material name inside the model → index in `materials`. */
   remaps: Record<string, number>;
@@ -822,6 +827,19 @@ export interface LfsCacheStats {
   prunableBytes: number;
 }
 
+/** What gitgud keeps for a repo to go faster (Settings › Caches). */
+export interface CacheStats {
+  guidIndexFile: string;
+  guidIndexBytes: number;
+  metaFiles: number;
+  commitScans: number;
+  metaBlobs: number;
+  modelInfos: number;
+  commitGraphPath: string;
+  commitGraphBytes: number | null;
+  lfsObjectsPath: string;
+}
+
 export interface AiProviderStatus {
   cliAvailable: string[];
   configuredEnvKey: boolean;
@@ -937,6 +955,8 @@ export interface Commands {
   op_log_prune: { args: { id: number }; result: OpLogStats };
   outside_reflog: { args: { id: number; limit?: number }; result: ReflogEntry[] };
   has_commit_graph: { args: { id: number }; result: boolean };
+  cache_stats: { args: { id: number }; result: CacheStats };
+  clear_unity_caches: { args: { id: number }; result: CacheStats };
   write_commit_graph: { args: { id: number }; result: null };
   worktree_unity_diff: { args: { id: number; path: string; side: Side }; result: UnityYamlDiff };
   commit_unity_diff: { args: { id: number; commit: string; path: string }; result: UnityYamlDiff };
@@ -1227,6 +1247,8 @@ export const opLogStats = (id: number) => call("op_log_stats", { id });
 export const opLogPrune = (id: number) => call("op_log_prune", { id });
 export const outsideReflog = (id: number, limit = 100) => call("outside_reflog", { id, limit });
 export const hasCommitGraph = (id: number) => call("has_commit_graph", { id });
+export const cacheStats = (id: number) => call("cache_stats", { id });
+export const clearUnityCaches = (id: number) => call("clear_unity_caches", { id });
 export const writeCommitGraph = (id: number) => call("write_commit_graph", { id });
 export const worktreeUnityDiff = (id: number, path: string, side: Side) => call("worktree_unity_diff", { id, path, side });
 export const commitUnityDiff = (id: number, commit: string, path: string) =>

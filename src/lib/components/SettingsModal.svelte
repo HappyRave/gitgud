@@ -3,6 +3,8 @@
   import {
     agentSetup,
     aiProviders,
+    cacheStats,
+    clearUnityCaches,
     configGetIdentity,
     configSetIdentity,
     hasCommitGraph,
@@ -15,6 +17,7 @@
     unityRepoSetupStatus,
     writeCommitGraph,
     type AiProviderStatus,
+    type CacheStats,
     type LfsCacheStats,
     type TimingSample,
     type ToolDiagnostics,
@@ -30,6 +33,7 @@
     type DiffLayout,
     type ThemeMode,
   } from "$lib/prefs.svelte";
+  import { modelCache, type ModelCacheStats } from "$lib/model/cache";
 
   let {
     activeRepoId = null,
@@ -63,6 +67,31 @@
   let timings = $state<TimingSample[]>([]);
   let refreshingIndex = $state(false);
   let indexRefreshedMsg = $state<string | null>(null);
+  let caches = $state<CacheStats | null>(null);
+  let models3d = $state<ModelCacheStats>(modelCache.stats());
+  let clearingUnity = $state(false);
+
+  const count = (n: number) => n.toLocaleString("en-US");
+
+  async function clearUnity() {
+    if (activeRepoId == null || clearingUnity) {
+      return;
+    }
+    clearingUnity = true;
+    error = null;
+    try {
+      caches = await clearUnityCaches(activeRepoId);
+    } catch (err) {
+      error = String(err);
+    } finally {
+      clearingUnity = false;
+    }
+  }
+
+  function clearModels() {
+    modelCache.clear();
+    models3d = modelCache.stats();
+  }
 
   function jumpTo(id: string) {
     activeSection = id;
@@ -88,6 +117,9 @@
   }
 
   function formatBytes(bytes: number) {
+    if (bytes >= 1024 * 1024 * 1024) {
+      return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+    }
     if (bytes >= 1024 * 1024) {
       return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
     }
@@ -156,6 +188,7 @@
     try {
       await writeCommitGraph(activeRepoId);
       commitGraph = true;
+      caches = await cacheStats(activeRepoId);
     } catch (err) {
       error = String(err);
     } finally {
@@ -212,6 +245,10 @@
         (s) => (lfsStats = s),
         () => (lfsStats = null),
       );
+      cacheStats(activeRepoId).then(
+        (s) => (caches = s),
+        (err) => (error = String(err)),
+      );
       unityRepoSetupStatus(activeRepoId).then(
         (s) => (unitySetup = s),
         () => (unitySetup = null),
@@ -232,9 +269,6 @@
     <div class="hdr">
       <div class="hdr-title">
         <h2>Settings</h2>
-        {#if activeRepoName}
-          <span class="badge">{activeRepoName}</span>
-        {/if}
       </div>
       <button type="button" class="bare x" aria-label="Close" onclick={onclose}>✕</button>
     </div>
@@ -245,6 +279,7 @@
 
     <div class="layout">
       <nav class="rail" aria-label="Settings sections">
+        <p class="rail-h">App</p>
         <button
           type="button"
           class="bare rail-btn"
@@ -263,6 +298,17 @@
           class:on={activeSection === "sec-tools"}
           onclick={() => jumpTo("sec-tools")}>Tools &amp; Diagnostics</button
         >
+        {#if activeRepoId != null}
+          <p class="rail-h" title={activeRepoName ?? undefined}>
+            Repository{#if activeRepoName}&nbsp;· <span class="rail-repo">{activeRepoName}</span>{/if}
+          </p>
+          <button
+            type="button"
+            class="bare rail-btn"
+            class:on={activeSection === "sec-caches"}
+            onclick={() => jumpTo("sec-caches")}>Caches</button
+          >
+        {/if}
         {#if unitySetup?.isUnity}
           <button
             type="button"
@@ -282,6 +328,7 @@
       </nav>
 
       <div class="content">
+        <p class="group-h">App</p>
         <section id="sec-identity" class="sec">
           <div class="sec-h">
             <h3>Git Identity</h3>
@@ -389,31 +436,13 @@
                 {/if}
               </dd>
               {#if activeRepoId != null}
-                <dt>Commit graph</dt>
+                <dt>Git index</dt>
                 <dd class="gcache">
-                  <span>{commitGraph === null ? "Unknown" : commitGraph ? "Built" : "Not built"}</span>
-                  <button type="button" disabled={optimizingGraph} onclick={optimizeGraph}>
-                    {optimizingGraph ? "Building…" : commitGraph ? "Rebuild graph cache" : "Optimize graph cache"}
-                  </button>
                   <button type="button" disabled={refreshingIndex} onclick={runRefreshIndex}>
                     {refreshingIndex ? "Refreshing…" : "Refresh index"}
                   </button>
                   {#if indexRefreshedMsg}<span class="ok">{indexRefreshedMsg}</span>{/if}
                 </dd>
-                {#if lfsStats && (lfsStats.objectCount > 0 || diag.lfsVersion)}
-                  <dt>LFS cache</dt>
-                  <dd class="gcache">
-                    <span>
-                      {lfsStats.objectCount} object{lfsStats.objectCount === 1 ? "" : "s"} · {formatBytes(lfsStats.totalBytes)}
-                      {#if lfsStats.prunableCount > 0}
-                        · {lfsStats.prunableCount} prunable ({formatBytes(lfsStats.prunableBytes)})
-                      {/if}
-                    </span>
-                    <button type="button" disabled={pruningLfs || lfsStats.prunableCount === 0} onclick={pruneLfs}>
-                      {pruningLfs ? "Pruning…" : "Prune LFS cache"}
-                    </button>
-                  </dd>
-                {/if}
               {/if}
             </dl>
           {:else}
@@ -430,6 +459,75 @@
             </details>
           {/if}
         </section>
+
+        {#if activeRepoId != null}
+          <p class="group-h">
+            Repository{#if activeRepoName}&nbsp;· <span class="rail-repo">{activeRepoName}</span>{/if}
+          </p>
+          <section id="sec-caches" class="sec" aria-label="Caches">
+            <h3>Caches</h3>
+            <p class="ab">What gitgud keeps to go faster. Clearing is safe: each rebuilds when next needed.</p>
+            {#if caches}
+              <dl class="diag caches">
+                <dt>Unity references</dt>
+                <dd>
+                  <div class="gcache">
+                    <span>
+                      {count(caches.metaFiles)} .meta files · {count(caches.commitScans)} commits scanned · {count(caches.modelInfos)} models
+                      read
+                    </span>
+                    <button type="button" disabled={clearingUnity} onclick={clearUnity}>
+                      {clearingUnity ? "Clearing…" : "Clear"}
+                    </button>
+                  </div>
+                  <span class="where" title={caches.guidIndexFile}
+                    >Memory, index saved to <span class="mono">{caches.guidIndexFile}</span>
+                    {caches.guidIndexBytes > 0 ? `(${formatBytes(caches.guidIndexBytes)})` : "(not written yet)"}</span
+                  >
+                </dd>
+                <dt>3D models</dt>
+                <dd>
+                  <div class="gcache">
+                    <span>
+                      {count(models3d.models)} models · {count(models3d.materials)} materials · ~{formatBytes(models3d.bytes)}
+                    </span>
+                    <button type="button" disabled={models3d.models + models3d.materials === 0} onclick={clearModels}>Clear</button>
+                  </div>
+                  <span class="where">Memory, shared by every repo, until gitgud closes</span>
+                </dd>
+                <dt>Commit graph</dt>
+                <dd>
+                  <div class="gcache">
+                    <span>{caches.commitGraphBytes === null ? "Not built" : formatBytes(caches.commitGraphBytes)}</span>
+                    <button type="button" disabled={optimizingGraph} onclick={optimizeGraph}>
+                      {optimizingGraph ? "Building…" : commitGraph ? "Rebuild" : "Build"}
+                    </button>
+                  </div>
+                  <span class="where mono" title={caches.commitGraphPath}>{caches.commitGraphPath}</span>
+                </dd>
+                {#if lfsStats && (lfsStats.objectCount > 0 || diag?.lfsVersion)}
+                  <dt>LFS objects</dt>
+                  <dd>
+                    <div class="gcache">
+                      <span>
+                        {count(lfsStats.objectCount)} object{lfsStats.objectCount === 1 ? "" : "s"} · {formatBytes(lfsStats.totalBytes)}
+                        {#if lfsStats.prunableCount > 0}
+                          · {count(lfsStats.prunableCount)} prunable ({formatBytes(lfsStats.prunableBytes)})
+                        {/if}
+                      </span>
+                      <button type="button" disabled={pruningLfs || lfsStats.prunableCount === 0} onclick={pruneLfs}>
+                        {pruningLfs ? "Pruning…" : "Prune"}
+                      </button>
+                    </div>
+                    <span class="where mono" title={caches.lfsObjectsPath}>{caches.lfsObjectsPath}</span>
+                  </dd>
+                {/if}
+              </dl>
+            {:else}
+              <p class="ab">Measuring caches…</p>
+            {/if}
+          </section>
+        {/if}
 
         {#if unitySetup?.isUnity}
           <section id="sec-unity" class="sec" aria-label="Unity Project Setup">
@@ -550,6 +648,24 @@
     background: var(--bg);
     border-right: 1px solid var(--line);
   }
+  .rail-h {
+    margin: 10px 10px 4px;
+    font: 600 10px var(--mono);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .rail-h:first-child {
+    margin-top: 0;
+  }
+  .rail-repo {
+    color: var(--l0);
+    text-transform: none;
+    letter-spacing: 0;
+  }
   .rail-btn {
     width: 100%;
     text-align: left;
@@ -584,10 +700,30 @@
     margin-top: 14px;
     border-top: 1px solid var(--line);
   }
-  .sec:first-of-type {
+  .sec:first-of-type,
+  .group-h + .sec {
     border-top: 0;
     padding-top: 0;
     margin-top: 0;
+  }
+  /* Sticks while scrolling, so it's always clear whether a section is app-wide or this repo's. */
+  .group-h {
+    position: sticky;
+    top: -14px;
+    z-index: 1;
+    margin: 24px -18px 14px;
+    padding: 7px 18px;
+    background: var(--bg);
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+    font: 600 10.5px var(--mono);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .group-h:first-child {
+    margin-top: -14px;
+    border-top: 0;
   }
   .sec-h {
     display: flex;
@@ -689,6 +825,17 @@
     flex-wrap: wrap;
     gap: 6px 8px;
   }
+  .caches dd {
+    display: grid;
+    gap: 2px;
+  }
+  .caches dd .gcache {
+    justify-content: space-between;
+  }
+  .where {
+    color: var(--muted);
+    font-size: 10.5px;
+  }
   .usetup-act {
     margin-top: 8px;
   }
@@ -756,6 +903,9 @@
     .rail-btn {
       width: auto;
       white-space: nowrap;
+    }
+    .rail-h {
+      display: none;
     }
   }
 </style>

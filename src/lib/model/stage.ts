@@ -257,15 +257,20 @@ export class ModelStage {
     this.renderer.dispose();
   }
 
-  /** Frees a side's GPU resources; the shading kit's shared materials stay. */
+  /** Frees a side's GPU resources; the shading kit's materials and what the model cache holds stay. */
   private release(side: Side) {
     side.mixer.stopAllAction();
     const textures = new Set<{ dispose(): void }>();
     side.scene.traverse((o) => {
       const mesh = o as Mesh;
-      mesh.geometry?.dispose();
+      if (mesh.geometry && !mesh.geometry.userData.shared) {
+        mesh.geometry.dispose();
+      }
       const mats = [o.userData.lit ?? mesh.material].flat().filter(Boolean) as Material[];
       for (const m of mats) {
+        if (m.userData.shared) {
+          continue;
+        }
         for (const v of Object.values(m)) {
           if (v && typeof v === "object" && (v as { isTexture?: boolean }).isTexture) {
             textures.add(v as { dispose(): void });

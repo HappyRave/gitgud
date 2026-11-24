@@ -140,6 +140,7 @@ impl Session {
             writing: Arc::default(),
         };
         let opened = opened(id, &open);
+        warm_guid_index(&open.repo);
         self.lock().insert(id, open);
         self.record_timing("open", started);
         Ok(opened)
@@ -1493,6 +1494,24 @@ impl Session {
         self.exclusive(id, |open, git| open.repo.write_commit_graph(git))
     }
 
+    /// See [`Repo::cache_stats`].
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`].
+    pub fn cache_stats(&self, id: u32) -> Result<crate::caches::CacheStats, Error> {
+        Ok(self.get(id)?.repo.cache_stats())
+    }
+
+    /// See [`Repo::clear_unity_caches`]; returns the stats after.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`], or as [`Repo::clear_unity_caches`].
+    pub fn clear_unity_caches(&self, id: u32) -> Result<crate::caches::CacheStats, Error> {
+        let repo = self.get(id)?.repo;
+        repo.clear_unity_caches()?;
+        Ok(repo.cache_stats())
+    }
+
     /// Structural property diff of a working-copy Unity YAML file (staged or unstaged).
     ///
     /// # Errors
@@ -2026,6 +2045,18 @@ fn label_paths_meta(
     } else {
         format!("{verb} {} files (+ .meta)", expanded.len())
     }
+}
+
+/// Builds a Unity repo's GUID index in the background, so the first 3D preview
+/// or structural diff doesn't wait for it.
+fn warm_guid_index(repo: &Arc<repo::Repo>) {
+    if crate::unity::find_unity_root(repo.root()).is_none() {
+        return;
+    }
+    let repo = repo.clone();
+    std::thread::spawn(move || {
+        unity_yaml::repo_guid_index(&repo);
+    });
 }
 
 fn opened(id: u32, open: &OpenRepo) -> Opened {

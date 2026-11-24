@@ -62,6 +62,8 @@ const desc = (over: Partial<ModelMaterial> = {}): ModelMaterial => ({
   color: [0.5, 0.25, 1, 1],
   baseMap: "Assets/T/hull.png",
   normalMap: null,
+  baseMapKey: null,
+  normalMapKey: null,
   tiling: [2, 3],
   offset: [0.5, 0],
   metallic: 0.25,
@@ -74,7 +76,7 @@ describe("loadModel", () => {
   it("loads glTF with its clips and swaps remapped Unity materials", async () => {
     serve({ "m://boat.gltf": gltf });
     const urls: string[] = [];
-    const info: ModelInfo = { kind: "gltf", materials: [desc()], remaps: { HullMat: 0 }, scale: 1, scene: null };
+    const info: ModelInfo = { kind: "gltf", key: null, materials: [desc()], remaps: { HullMat: 0 }, scale: 1, scene: null };
     const model = await loadModel({
       kind: "gltf",
       url: "m://boat.gltf",

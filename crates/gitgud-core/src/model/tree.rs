@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use gix::traverse::tree::Recorder;
 
+use super::cache::Origin;
 use crate::cli::GitCli;
 use crate::image::Version;
 use crate::lfs::{AUTO_FETCH_MAX_BYTES, parse_lfs_pointer};
@@ -60,6 +61,31 @@ impl<'a> Files<'a> {
 
     pub fn contains(&self, path: &str) -> bool {
         self.index_of(path).is_some()
+    }
+
+    /// A name for `path`'s content at this version that changes whenever the
+    /// content does, so the viewer can reuse what it loaded: the blob id, or for
+    /// the work tree the file's size and modified time. `None` when there is none.
+    pub fn key(&self, path: &str) -> Option<String> {
+        if !self.blobs.is_empty() {
+            return self.index_of(path).map(|i| self.blobs[i].to_string());
+        }
+        match self.version {
+            Version::Worktree => {
+                let meta = std::fs::metadata(self.repo.root().join(path)).ok()?;
+                let modified = meta
+                    .modified()
+                    .ok()?
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .ok()?;
+                Some(format!("wt:{path}:{}:{}", meta.len(), modified.as_nanos()))
+            }
+            Version::Index => {
+                let index = self.repo.gix().index_or_empty().ok()?;
+                index.entry_by_path(path.into()).map(|e| e.id.to_string())
+            }
+            _ => None,
+        }
     }
 
     /// Lets LFS objects up to the auto-fetch limit be downloaded while reading.
@@ -126,27 +152,58 @@ impl<'a> Files<'a> {
     }
 }
 
-fn paths_at(repo: &Repo, version: &Version) -> Result<Listing, Error> {
-    let gix_repo = repo.gix();
-    let commit = match version {
+/// What a version reads its files from.
+enum At<'r> {
+    Commit(gix::Commit<'r>),
+    /// No commit: an unborn HEAD, or the parent of a root commit.
+    Nothing,
+    Index,
+}
+
+fn at<'r>(gix_repo: &'r gix::Repository, version: &Version) -> Result<At<'r>, Error> {
+    Ok(match version {
         Version::Commit(id) | Version::Parent(id) => {
             let oid = gix::ObjectId::from_hex(id.as_bytes())
                 .map_err(|_| Error::Read(format!("{id:?} is not a commit id")))?;
             let c = gix_repo.find_commit(oid).map_err(read_err)?;
             if matches!(version, Version::Parent(_)) {
                 match c.parent_ids().next() {
-                    Some(p) => p.object().map_err(read_err)?.into_commit(),
-                    None => return Ok(Listing::files(Vec::new())),
+                    Some(p) => At::Commit(p.object().map_err(read_err)?.into_commit()),
+                    None => At::Nothing,
                 }
             } else {
-                c
+                At::Commit(c)
             }
         }
-        Version::Head => match gix_repo.head_commit() {
-            Ok(c) => c,
-            Err(_) => return Ok(Listing::files(Vec::new())),
-        },
-        Version::Index | Version::Worktree | Version::Yours | Version::Theirs => {
+        Version::Head => gix_repo.head_commit().map_or(At::Nothing, At::Commit),
+        Version::Index | Version::Worktree | Version::Yours | Version::Theirs => At::Index,
+    })
+}
+
+/// Where `version`'s files come from, without listing them.
+///
+/// # Errors
+/// [`Error::Read`] when the commit can't be read.
+pub(crate) fn origin(repo: &Repo, version: &Version) -> Result<Origin, Error> {
+    let gix_repo = repo.gix();
+    Ok(match at(&gix_repo, version)? {
+        At::Commit(c) => Origin::Tree(c.tree_id().map_err(read_err)?.detach()),
+        At::Nothing => Origin::Live("none"),
+        At::Index => Origin::Live(match version {
+            Version::Index => "index",
+            Version::Yours => "yours",
+            Version::Theirs => "theirs",
+            _ => "worktree",
+        }),
+    })
+}
+
+fn paths_at(repo: &Repo, version: &Version) -> Result<Listing, Error> {
+    let gix_repo = repo.gix();
+    let commit = match at(&gix_repo, version)? {
+        At::Commit(c) => c,
+        At::Nothing => return Ok(Listing::files(Vec::new())),
+        At::Index => {
             let index = gix_repo.index_or_empty().map_err(read_err)?;
             let mut out: Vec<String> = index
                 .entries()

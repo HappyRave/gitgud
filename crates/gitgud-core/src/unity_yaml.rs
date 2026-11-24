@@ -51,7 +51,11 @@ pub struct GuidIndex {
     guid_to_path: HashMap<String, String>,
     /// Every `.meta` file read, by path: its size, modified time and GUID.
     metas: HashMap<String, MetaStamp>,
+    /// How many `.meta` files the last update had to read.
+    reread: usize,
 }
+
+const INDEX_HEADER: &str = "gitgud guid index 1";
 
 #[derive(Debug, Clone)]
 struct MetaStamp {
@@ -72,6 +76,7 @@ impl GuidIndex {
     #[must_use]
     pub(crate) fn update(project_root: &Path, previous: Option<&GuidIndex>) -> Self {
         let mut metas = HashMap::new();
+        let mut reread = 0;
         let assets = project_root.join("Assets");
         if assets.is_dir() {
             walk_metas(
@@ -79,6 +84,7 @@ impl GuidIndex {
                 &assets,
                 previous.map(|p| &p.metas),
                 &mut metas,
+                &mut reread,
             );
         }
         let mut raw: HashMap<&str, Vec<&str>> = HashMap::new();
@@ -97,7 +103,76 @@ impl GuidIndex {
         Self {
             guid_to_path,
             metas,
+            reread,
         }
+    }
+
+    /// How many `.meta` files the index knows.
+    #[must_use]
+    pub fn meta_count(&self) -> usize {
+        self.metas.len()
+    }
+
+    /// Writes each `.meta` file's size, time and GUID to `file`, so the next session
+    /// only re-reads the files that changed.
+    pub(crate) fn save(&self, file: &Path) -> std::io::Result<()> {
+        use std::fmt::Write;
+        let mut out = String::with_capacity(self.metas.len() * 100);
+        out.push_str(INDEX_HEADER);
+        out.push('\n');
+        for (path, s) in &self.metas {
+            let time = s
+                .modified
+                .and_then(|m| m.duration_since(SystemTime::UNIX_EPOCH).ok())
+                .map_or_else(|| "-".to_owned(), |d| d.as_nanos().to_string());
+            let guid = s.guid.as_deref().unwrap_or("-");
+            let _ = writeln!(out, "{}\t{time}\t{guid}\t{path}", s.len);
+        }
+        if let Some(dir) = file.parent() {
+            fs::create_dir_all(dir)?;
+        }
+        let tmp = file.with_extension("tmp");
+        fs::write(&tmp, out)?;
+        fs::rename(tmp, file)
+    }
+
+    /// The stamps [`Self::save`] wrote, to update from; `None` when there's no usable file.
+    pub(crate) fn load(file: &Path) -> Option<Self> {
+        let text = fs::read_to_string(file).ok()?;
+        let mut lines = text.lines();
+        if lines.next()? != INDEX_HEADER {
+            return None;
+        }
+        let mut metas = HashMap::new();
+        for line in lines {
+            let mut f = line.splitn(4, '\t');
+            let (Some(len), Some(time), Some(guid), Some(path)) =
+                (f.next(), f.next(), f.next(), f.next())
+            else {
+                continue;
+            };
+            let Ok(len) = len.parse() else {
+                continue;
+            };
+            let modified = time
+                .parse::<u64>()
+                .ok()
+                .map(|n| SystemTime::UNIX_EPOCH + std::time::Duration::from_nanos(n));
+            let guid = (guid != "-").then(|| guid.to_owned());
+            metas.insert(
+                path.to_owned(),
+                MetaStamp {
+                    len,
+                    modified,
+                    guid,
+                },
+            );
+        }
+        Some(Self {
+            guid_to_path: HashMap::new(),
+            metas,
+            reread: 0,
+        })
     }
 
     /// Resolves a 32-hex Unity asset GUID (case-insensitive) to its project-relative asset path.
@@ -132,6 +207,7 @@ fn walk_metas(
     dir: &Path,
     previous: Option<&HashMap<String, MetaStamp>>,
     out: &mut HashMap<String, MetaStamp>,
+    reread: &mut usize,
 ) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
@@ -147,7 +223,7 @@ fn walk_metas(
             continue;
         };
         if kind.is_dir() || (kind.is_symlink() && path.is_dir()) {
-            walk_metas(root, &path, previous, out);
+            walk_metas(root, &path, previous, out, reread);
             continue;
         }
         if !name.ends_with(".meta") {
@@ -164,7 +240,10 @@ fn walk_metas(
             Some(s) if s.len == len && s.modified == modified && modified.is_some() => {
                 s.guid.clone()
             }
-            _ => read_meta_guid(&path),
+            _ => {
+                *reread += 1;
+                read_meta_guid(&path)
+            }
         };
         out.insert(
             rel,
@@ -1184,7 +1263,13 @@ fn parse_serialization_mode(text: &str) -> Option<i32> {
     None
 }
 
-/// The repo's GUID index, scanned once and brought up to date after [`forget_guid_index`].
+/// Where the GUID index of `repo`'s work tree is saved between sessions.
+pub(crate) fn guid_index_file(repo: &Repo) -> std::path::PathBuf {
+    repo.git_dir().join("gitgud").join("guid-index")
+}
+
+/// The repo's GUID index: built once (from the saved one when there is one) and
+/// brought up to date after [`forget_guid_index`], saved whenever it changed.
 pub(crate) fn repo_guid_index(repo: &Repo) -> Arc<GuidIndex> {
     let mut cached = repo.guid_index.lock().expect("guid index lock poisoned");
     let stale = repo.guid_index_stale.swap(false, Ordering::AcqRel);
@@ -1193,18 +1278,45 @@ pub(crate) fn repo_guid_index(repo: &Repo) -> Arc<GuidIndex> {
     {
         return index.clone();
     }
-    let index = Arc::new(
-        find_unity_root(repo.root()).map_or_else(GuidIndex::default, |p| {
-            GuidIndex::update(&p, cached.as_deref())
-        }),
-    );
+    let Some(project) = find_unity_root(repo.root()) else {
+        let empty = Arc::new(GuidIndex::default());
+        *cached = Some(empty.clone());
+        return empty;
+    };
+    let file = guid_index_file(repo);
+    let previous = cached
+        .clone()
+        .or_else(|| GuidIndex::load(&file).map(Arc::new));
+    let index = Arc::new(GuidIndex::update(&project, previous.as_deref()));
+    let changed = index.reread > 0 || previous.is_none_or(|p| p.metas.len() != index.metas.len());
+    if changed && let Err(e) = index.save(&file) {
+        eprintln!(
+            "gitgud: cannot save the GUID index to {}: {e}",
+            file.display()
+        );
+    }
     *cached = Some(index.clone());
     index
 }
 
-/// Marks the GUID index out of date, so its next use re-reads the `.meta` files that changed.
+/// Drops the GUID index from memory and disk; the next use rebuilds it from scratch.
+pub(crate) fn clear_guid_index(repo: &Repo) -> Result<(), Error> {
+    *repo.guid_index.lock().expect("guid index lock poisoned") = None;
+    match fs::remove_file(guid_index_file(repo)) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(read_err(e)),
+    }
+}
+
+/// Marks the GUID index out of date, so its next use re-reads the `.meta` files that
+/// changed, and drops the model infos read from the index or work tree.
 pub(crate) fn forget_guid_index(repo: &Repo) {
     repo.guid_index_stale.store(true, Ordering::Release);
+    repo.model_infos
+        .lock()
+        .expect("model info lock poisoned")
+        .forget_live();
 }
 
 pub(crate) fn parse_doc_header(line: &str) -> Option<(u32, String, bool)> {
@@ -1555,6 +1667,35 @@ mod tests {
         assert_eq!(now.resolve_guid(c), Some("Assets/a.png"));
         assert_eq!(now.resolve_guid(b), Some("Assets/New/b.png"));
         assert_eq!(now.resolve_guid(d), None);
+    }
+
+    #[test]
+    fn saves_the_guid_index_for_the_next_session() {
+        let repo = crate::testing::TestRepo::init();
+        let a = "aaaa0000000000000000000000000001";
+        repo.write(
+            "ProjectSettings/ProjectVersion.txt",
+            "m_EditorVersion: 6000.0.1f1\n",
+        )
+        .write(
+            "Assets/a b.png.meta",
+            &format!("fileFormatVersion: 2\nguid: {a}\n"),
+        )
+        .write("Assets/plain.txt", "x");
+        let first = crate::repo::open(repo.path()).unwrap();
+        assert_eq!(repo_guid_index(&first).reread, 1);
+        let file = guid_index_file(&first);
+        assert!(file.is_file());
+
+        let next = crate::repo::open(repo.path()).unwrap();
+        let index = repo_guid_index(&next);
+        assert_eq!(index.reread, 0, "every stamp matched the saved one");
+        assert_eq!(index.resolve_guid(a), Some("Assets/a b.png"));
+        assert_eq!(index.meta_count(), 1);
+
+        clear_guid_index(&next).unwrap();
+        assert!(!file.exists());
+        assert_eq!(repo_guid_index(&next).reread, 1);
     }
 
     fn sample_scene(player_speed: &str, guid: &str) -> String {

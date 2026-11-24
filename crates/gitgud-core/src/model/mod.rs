@@ -1,4 +1,5 @@
 mod anim;
+pub(crate) mod cache;
 mod guids;
 mod material;
 mod mesh_asset;
@@ -9,6 +10,7 @@ mod yaml;
 
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::sync::Arc;
 
 use serde::Serialize;
 
@@ -68,6 +70,9 @@ pub fn model_mime(kind: ModelKind) -> &'static str {
 #[serde(rename_all = "camelCase")]
 pub struct ModelInfo {
     pub kind: ModelKind,
+    /// A name for the model file's content at this version, for reusing what the
+    /// viewer loaded: a blob id, or the size and time of a work-tree file.
+    pub key: Option<String>,
     pub materials: Vec<Material>,
     /// Material name inside the model → index in `materials`, from the
     /// importer's material remapping.
@@ -119,7 +124,8 @@ impl Repo {
 
     /// Materials, remaps and scale for model `path` at `version`. Files stored
     /// in LFS are read from their objects; with `git`, objects up to the
-    /// auto-fetch limit are downloaded first.
+    /// auto-fetch limit are downloaded first. Results are kept: a commit's for
+    /// good, the index's and work tree's until the next refresh.
     ///
     /// # Errors
     /// [`Error::Refused`] when `path` isn't a model or an LFS object it needs
@@ -132,10 +138,34 @@ impl Repo {
     ) -> Result<ModelInfo, Error> {
         let kind =
             model_kind(path).ok_or_else(|| Error::Refused(format!("{path} is not a 3D model")))?;
+        let origin = tree::origin(self, version)?;
+        let generation = {
+            let mut kept = self.model_infos.lock().expect("model info lock poisoned");
+            if let Some(hit) = kept.get(path, &origin) {
+                return Ok((*hit).clone());
+            }
+            kept.generation()
+        };
+        let info = self.read_model_info(git, path, version, kind)?;
+        self.model_infos
+            .lock()
+            .expect("model info lock poisoned")
+            .put(path, origin, Arc::new(info.clone()), generation);
+        Ok(info)
+    }
+
+    fn read_model_info(
+        &self,
+        git: Option<&GitCli>,
+        path: &str,
+        version: &Version,
+        kind: ModelKind,
+    ) -> Result<ModelInfo, Error> {
         let files = Files::new(self, version)?.with_git(git);
         let guids = Guids::new(&files);
         let mut info = ModelInfo {
             kind,
+            key: files.key(path),
             materials: Vec::new(),
             remaps: BTreeMap::new(),
             scale: 1.0,
@@ -194,6 +224,44 @@ mod tests {
         assert_eq!(model_kind("x.prefab"), Some(ModelKind::Prefab));
         assert_eq!(model_kind("x.png"), None);
         assert_eq!(model_mime(ModelKind::Gltf), "model/gltf+json");
+    }
+
+    #[test]
+    fn keeps_model_infos_until_the_work_tree_changes() {
+        let repo = TestRepo::init();
+        let meta = |scale: u32| {
+            format!(
+                "guid: 4444dddd000000000000000000000000\nModelImporter:\n  meshes:\n    globalScale: {scale}\n"
+            )
+        };
+        repo.write(
+            "ProjectSettings/ProjectVersion.txt",
+            "m_EditorVersion: 6000.0.1f1\n",
+        )
+        .write("Assets/boat.fbx", "one")
+        .write("Assets/boat.fbx.meta", &meta(2))
+        .commit_all("one");
+        let r = crate::repo::open(repo.path()).unwrap();
+        let info = |v: &Version| r.model_info(None, "Assets/boat.fbx", v).unwrap();
+
+        let head = info(&Version::Head);
+        assert_eq!(head.scale, 2.0);
+        let blob = repo.git(&["rev-parse", "HEAD:Assets/boat.fbx"]);
+        assert_eq!(head.key.as_deref(), Some(blob.trim()));
+        assert_eq!(info(&Version::Worktree).scale, 2.0);
+        assert!(
+            info(&Version::Worktree)
+                .key
+                .unwrap()
+                .starts_with("wt:Assets/boat.fbx:")
+        );
+
+        repo.write("Assets/boat.fbx.meta", &meta(3));
+        assert_eq!(info(&Version::Worktree).scale, 2.0, "kept until a refresh");
+        crate::unity_yaml::forget_guid_index(&r);
+        assert_eq!(info(&Version::Worktree).scale, 3.0);
+        assert_eq!(info(&Version::Head).scale, 2.0);
+        assert_eq!(r.model_infos.lock().unwrap().len(), 2);
     }
 
     #[test]

@@ -11,6 +11,7 @@ use gix::status::tree_index::TrackRenames;
 use gix::status::{Item, UntrackedFiles};
 use serde::{Serialize, Serializer};
 
+use crate::model::cache::InfoCache;
 use crate::unity_yaml::GuidIndex;
 
 /// An open repository with a work tree. Cheap to share across threads.
@@ -25,6 +26,8 @@ pub struct Repo {
     pub(crate) tree_guids: Mutex<Vec<(gix::ObjectId, TreeGuids)>>,
     /// The GUID of each `.meta` blob read so far: most are the same in every commit.
     pub(crate) meta_blob_guids: Mutex<HashMap<gix::ObjectId, Option<String>>>,
+    /// Recent 3D model infos; see `Repo::model_info`.
+    pub(crate) model_infos: Mutex<InfoCache>,
 }
 
 /// GUID -> asset path, from one tree's `.meta` files.
@@ -48,6 +51,7 @@ pub fn open(path: impl AsRef<Path>) -> Result<Repo, Error> {
         guid_index_stale: AtomicBool::new(false),
         tree_guids: Mutex::new(Vec::new()),
         meta_blob_guids: Mutex::new(HashMap::new()),
+        model_infos: Mutex::new(InfoCache::default()),
     })
 }
 

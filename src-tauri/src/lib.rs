@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use gitgud_core::ai::AiProviderStatus;
 use gitgud_core::blame::{BlameLine, FileCommit};
 use gitgud_core::branches::Branches;
+use gitgud_core::caches::CacheStats;
 use gitgud_core::clone::{CloneProgress, clone_repo as core_clone_repo};
 use gitgud_core::config::{self, IdentityConfig, ToolDiagnostics};
 use gitgud_core::diff::{CommitDetail, FileDiff};
@@ -1287,6 +1288,16 @@ async fn write_commit_graph(session: State<'_, Session>, id: u32) -> Result<(), 
 }
 
 #[tauri::command]
+async fn cache_stats(session: State<'_, Session>, id: u32) -> Result<CacheStats, Error> {
+    session.cache_stats(id)
+}
+
+#[tauri::command]
+async fn clear_unity_caches(session: State<'_, Session>, id: u32) -> Result<CacheStats, Error> {
+    session.clear_unity_caches(id)
+}
+
+#[tauri::command]
 async fn worktree_unity_diff(
     session: State<'_, Session>,
     id: u32,
@@ -1672,6 +1683,8 @@ fn app_with_library<R: Runtime>(builder: Builder<R>, library: Option<LibraryStor
             outside_reflog,
             has_commit_graph,
             write_commit_graph,
+            cache_stats,
+            clear_unity_caches,
             worktree_unity_diff,
             commit_unity_diff,
             model_info,
@@ -1832,7 +1845,19 @@ mod tests {
             assert_eq!(info["remaps"]["HullMat"], 0);
             assert_eq!(info["materials"][0]["shader"], "Standard");
             assert_eq!(info["materials"][0]["baseMap"], Value::Null);
+            assert!(info["key"].is_string());
         }
+        let stats = ipc.call("cache_stats", json!({ "id": id })).unwrap();
+        assert_eq!(stats["modelInfos"], 2);
+        assert!(
+            stats["guidIndexFile"]
+                .as_str()
+                .unwrap()
+                .ends_with("guid-index")
+        );
+        let cleared = ipc.call("clear_unity_caches", json!({ "id": id })).unwrap();
+        assert_eq!(cleared["modelInfos"], 0);
+        assert_eq!(cleared["guidIndexBytes"], 0);
         let err = ipc
             .call(
                 "model_info",

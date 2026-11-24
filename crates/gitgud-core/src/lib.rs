@@ -1,6 +1,7 @@
 pub mod ai;
 pub mod blame;
 pub mod branches;
+pub mod caches;
 pub mod cli;
 pub mod clone;
 pub mod config;

@@ -19,7 +19,10 @@ import {
   VectorKeyframeTrack,
 } from "three";
 import type { MeshRef, ModelInfo, ModelMaterial, ModelScene, SceneClip } from "$lib/api";
-import { type LoadedModel, loadModel, TrackedFiles } from "./load";
+import { clone as cloneSkinned } from "three/examples/jsm/utils/SkeletonUtils.js";
+import { modelCache } from "./cache";
+import { loadShared, materialKey } from "./shared";
+import { type LoadedModel, TrackedFiles } from "./load";
 import type { Step } from "./progress";
 import { type LoadTexture, MISSING_COLOR, materialFrom } from "./materials";
 import { meshFileKind } from "./source";
@@ -118,7 +121,7 @@ export async function assemblePrefab(scene: ModelScene, materials: ModelMaterial
       report?.({ phase: "request", name: path.slice(path.lastIndexOf("/") + 1) });
       p = kind
         ? ctx.info(path).then((info) =>
-            loadModel({
+            loadShared({
               kind,
               url: ctx.modelUrl(path),
               refUrl: ctx.refUrl(path),
@@ -140,7 +143,9 @@ export async function assemblePrefab(scene: ModelScene, materials: ModelMaterial
     let m = made.get(ix);
     if (!m) {
       const desc = materials[ix];
-      m = materialFrom(desc, ctx.imageUrl, loadTexture);
+      const key = materialKey(desc);
+      const make = () => materialFrom(desc, ctx.imageUrl, loadTexture);
+      m = key ? modelCache.material(key, make) : make();
       if (desc.approximated) {
         approximated.add(desc.shader);
       }
@@ -169,7 +174,7 @@ export async function assemblePrefab(scene: ModelScene, materials: ModelMaterial
       return missingMesh();
     }
     if (ref.name === null && ref.id === null) {
-      return loaded.root.clone();
+      return cloneSkinned(loaded.root);
     }
     const src = findMesh(loaded.root, ref.name, ref.id);
     if (!src) {

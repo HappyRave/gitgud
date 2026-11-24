@@ -48,6 +48,9 @@ pub struct Material {
     pub color: [f32; 4],
     pub base_map: Option<String>,
     pub normal_map: Option<String>,
+    /// Names for the maps' contents at this version (see `Files::key`), for reusing loaded textures.
+    pub base_map_key: Option<String>,
+    pub normal_map_key: Option<String>,
     pub tiling: [f32; 2],
     pub offset: [f32; 2],
     pub metallic: f32,
@@ -67,6 +70,8 @@ impl Material {
             color: [1.0, 0.0, 1.0, 1.0],
             base_map: None,
             normal_map: None,
+            base_map_key: None,
+            normal_map_key: None,
             tiling: [1.0, 1.0],
             offset: [0.0, 0.0],
             metallic: 0.0,
@@ -101,6 +106,8 @@ impl Material {
             color: [1.0; 4],
             base_map: None,
             normal_map: None,
+            base_map_key: None,
+            normal_map_key: None,
             tiling: [1.0, 1.0],
             offset: [0.0, 0.0],
             metallic: 0.0,
@@ -141,6 +148,8 @@ impl Material {
                 break;
             }
         }
+        m.base_map_key = m.base_map.as_deref().and_then(|p| guids.files.key(p));
+        m.normal_map_key = m.normal_map.as_deref().and_then(|p| guids.files.key(p));
         Ok(m)
     }
 }
@@ -226,6 +235,8 @@ mod tests {
         assert_eq!(m.shader, "Universal Render Pipeline/Lit");
         assert!(!m.approximated && !m.missing && !m.unlit);
         assert_eq!(m.base_map.as_deref(), Some("Assets/T/hull.png"));
+        assert_eq!(m.base_map_key, files.key("Assets/T/hull.png"));
+        assert!(m.base_map_key.is_some());
         assert_eq!(m.normal_map, None);
         assert_eq!((m.tiling, m.offset), ([2.0, 3.0], [0.5, 0.0]));
         assert_eq!((m.metallic, m.smoothness), (0.25, 0.75));
