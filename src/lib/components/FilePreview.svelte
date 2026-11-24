@@ -10,6 +10,7 @@
   import FontViewer from "./FontViewer.svelte";
   import LoadingBar from "./LoadingBar.svelte";
   import MaterialViewer from "./MaterialViewer.svelte";
+  import PdfViewer from "./PdfViewer.svelte";
   import ModelViewer from "./ModelViewer.svelte";
   import PreviewCard from "./PreviewCard.svelte";
 
@@ -96,6 +97,8 @@
     <ModelViewer {repoId} path={target} {before} {after} {bust} {meta} {onfetch} />
   {:else if shown === "material"}
     <MaterialViewer {repoId} path={target} {before} {after} {bust} {meta} {onfetch} />
+  {:else if shown === "pdf"}
+    <PdfViewer {repoId} path={target} {before} {after} {bust} {meta} {onfetch} />
   {:else if shown === "table"}
     <DataViewer {repoId} path={target} {before} {after} {bust} />
   {:else if shown === "audio"}
