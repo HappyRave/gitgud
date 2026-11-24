@@ -66,7 +66,7 @@ export class TestRepo {
     return this;
   }
 
-  write(rel: string, contents: string): this {
+  write(rel: string, contents: string | Uint8Array): this {
     const file = join(this.path, rel);
     mkdirSync(dirname(file), { recursive: true });
     writeFileSync(file, contents);

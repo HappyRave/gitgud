@@ -172,7 +172,7 @@
 <style>
   .mat {
     display: grid;
-    grid-template-rows: minmax(300px, 1fr) auto auto;
+    grid-template-rows: minmax(160px, 1fr) minmax(84px, auto) auto;
     height: 100%;
     min-height: 0;
     background: var(--panel);
@@ -181,7 +181,7 @@
     min-height: 0;
     display: flex;
   }
-  .stage > :global(*) {
+  .mat .stage > :global(*) {
     flex: 1;
     min-height: 0;
   }
