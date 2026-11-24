@@ -1,4 +1,5 @@
-use std::collections::HashMap;
+use std::cell::RefCell;
+use std::collections::{BTreeSet, HashMap};
 
 use gix::traverse::tree::Recorder;
 
@@ -19,6 +20,8 @@ pub(crate) struct Files<'a> {
     /// Each path's blob when the version is a commit, so reads skip the tree lookup.
     blobs: Vec<gix::ObjectId>,
     by_name: HashMap<String, Vec<usize>>,
+    /// Gitignored files used from disk, for the viewer's note.
+    from_disk: RefCell<BTreeSet<String>>,
 }
 
 impl<'a> Files<'a> {
@@ -39,7 +42,26 @@ impl<'a> Files<'a> {
             paths,
             blobs,
             by_name,
+            from_disk: RefCell::new(BTreeSet::new()),
         })
+    }
+
+    /// Whether `path` can be read at this version: it is in it, or it is a gitignored
+    /// file on disk, which every version reads from disk.
+    pub fn has(&self, path: &str) -> bool {
+        if self.contains(path) {
+            return true;
+        }
+        let disk = self.repo.ignored_on_disk(path);
+        if disk {
+            self.from_disk.borrow_mut().insert(path.to_owned());
+        }
+        disk
+    }
+
+    /// How many gitignored files were used from disk so far.
+    pub fn disk_reads(&self) -> usize {
+        self.from_disk.borrow().len()
     }
 
     pub fn paths(&self) -> &[String] {
@@ -105,6 +127,7 @@ impl<'a> Files<'a> {
         } else {
             match self.index_of(path).and_then(|i| self.blob(i)) {
                 Some(id) => Some(id),
+                None if self.has(path) => None,
                 None => return Ok(None),
             }
         };

@@ -117,6 +117,7 @@ impl Repo {
     }
 
     /// The raw bytes of any file `path` at `version` (LFS pointers are not resolved).
+    /// A gitignored file has no versions, so every version reads its disk copy.
     ///
     /// # Errors
     /// [`Error::Refused`] when `path` escapes the repo or isn't in that version,
@@ -130,6 +131,62 @@ impl Repo {
                 "{path} is not a path inside the repo"
             )));
         }
+        match self.versioned_file(path, version) {
+            Err(Error::Refused(m)) if self.ignored_on_disk(path) => {
+                std::fs::read(self.root().join(path)).map_err(|_| Error::Refused(m))
+            }
+            found => found,
+        }
+    }
+
+    /// Whether `path` is a gitignored file present on disk (an asset pack kept out of
+    /// git): such a file is read from disk in every version. Kept until the next refresh.
+    pub fn ignored_on_disk(&self, path: &str) -> bool {
+        let ancestors = || {
+            path.match_indices('/')
+                .map(|(i, _)| format!("{}/", &path[..i]))
+        };
+        {
+            let known = self.ignored.lock().expect("ignored lock poisoned");
+            if let Some(&k) = known.get(path) {
+                return k;
+            }
+            if ancestors().any(|dir| known.get(&dir) == Some(&true)) {
+                return self.root().join(path).is_file();
+            }
+        }
+        let mut ignored_dir = None;
+        let ignored = self.root().join(path).is_file() && {
+            let gix = self.gix();
+            gix.index_or_empty().ok().is_some_and(|index| {
+                if index.entry_by_path(BStr::new(path)).is_some() {
+                    return false;
+                }
+                let Ok(mut ex) = gix.excludes(&index, None, Default::default()) else {
+                    return false;
+                };
+                let mut excluded = |p: &str, mode| {
+                    ex.at_path(Path::new(p), Some(mode))
+                        .is_ok_and(|e| e.is_excluded())
+                };
+                if !excluded(path, gix::index::entry::Mode::FILE) {
+                    return false;
+                }
+                // Remember the outermost ignored folder, so its other files skip this check.
+                ignored_dir = ancestors()
+                    .find(|dir| excluded(dir.trim_end_matches('/'), gix::index::entry::Mode::DIR));
+                true
+            })
+        };
+        let mut known = self.ignored.lock().expect("ignored lock poisoned");
+        known.insert(path.to_owned(), ignored);
+        if let Some(dir) = ignored_dir {
+            known.insert(dir, true);
+        }
+        ignored
+    }
+
+    fn versioned_file(&self, path: &str, version: &Version) -> Result<Vec<u8>, Error> {
         let missing = || Error::Refused(format!("{path} is not in that version"));
         match version {
             Version::Worktree => match std::fs::read(self.root().join(path)) {

@@ -45,12 +45,13 @@ export async function openSide(
     if (info.scene) {
       const model = await assemblePrefab(info.scene, info.materials, {
         modelUrl: (p) => modelUrl(repoId, p, side.at, bust),
+        meshUrl: (p, id) => `${modelUrl(repoId, p, side.at, bust)}&mesh=${encodeURIComponent(id)}`,
         refUrl: (near) => (ref) => refUrl(repoId, near, ref, side.at, bust),
         imageUrl: (p) => imageUrl(repoId, p, side.at, bust),
         info: (p) => modelInfo(repoId, p, version),
         progress: (p) => progress.reporter(key(p)),
       });
-      return { model, error: null };
+      return { model: { ...model, fromDisk: info.fromDisk }, error: null };
     }
     const shared = await loadShared({
       kind,
@@ -61,7 +62,7 @@ export async function openSide(
       name: fileName(path),
       onProgress: progress.reporter(key(path)),
     });
-    return { model: { ...shared, root: cloneSkinned(shared.root) }, error: null };
+    return { model: { ...shared, root: cloneSkinned(shared.root), fromDisk: info.fromDisk }, error: null };
   } catch (e) {
     progress.report(key(path), { phase: "done" });
     progress.report(key("info"), { phase: "done" });

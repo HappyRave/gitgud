@@ -150,6 +150,15 @@ describe("ModelViewer", () => {
     expect(stages[0].dim).toBe(true);
   });
 
+  it("says when gitignored files were drawn from the disk copy", async () => {
+    opened.set("HEAD", { model: { ...boat(0, false), fromDisk: 0 }, error: null });
+    opened.set("On disk", { model: { ...boat(0, false), approximated: [], fromDisk: 1240 }, error: null });
+    render(ModelViewer, { repoId: 1, path: "Scenes/Mirror.unity", before: HEAD, after: DISK });
+    await screen.findByText("On disk");
+    await fireEvent.click(screen.getByRole("button", { name: /warnings?$/ }));
+    expect(screen.getByText("1,240 gitignored files come from your disk copy, the same in both versions")).toBeInTheDocument();
+  });
+
   it("shows an added file alone, with compare and Changes off", async () => {
     opened.set("On disk", { model: boat(0, false), error: null });
     render(ModelViewer, { repoId: 1, path: "Assets/boat.fbx", before: HEAD, after: DISK });

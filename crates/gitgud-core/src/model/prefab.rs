@@ -24,6 +24,13 @@ const MESH_FILTER: u32 = 33;
 const ANIMATOR: u32 = 95;
 const SKINNED_MESH_RENDERER: u32 = 137;
 const PREFAB_INSTANCE: u32 = 1001;
+const MESH: u32 = 43;
+
+/// The file being read and its documents, for meshes stored inside it.
+struct Local<'d> {
+    path: &'d str,
+    docs: &'d HashMap<i64, &'d Doc>,
+}
 
 /// The mesh a node draws.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -41,6 +48,9 @@ pub enum MeshRef {
     },
     /// One of Unity's built-in primitives: Cube, Sphere, Capsule, Cylinder, Plane, Quad.
     Builtin { name: String },
+    /// A Mesh stored inside the scene or prefab file itself (ProBuilder, combined
+    /// meshes), served as GLB by its `fileID`.
+    Inline { path: String, id: String },
     /// The referenced mesh isn't in this version.
     Missing,
 }
@@ -140,7 +150,7 @@ impl<'a, 'g> PrefabBuilder<'a, 'g> {
             .files
             .read_text(path)?
             .ok_or_else(|| Error::Refused(format!("{path} is not in that version")))?;
-        let tree = self.tree(&text, 0)?;
+        let tree = self.tree(path, &text, 0)?;
         let keep: Vec<usize> = (0..tree.nodes.len())
             .filter(|&i| !tree.nodes[i].removed)
             .collect();
@@ -164,9 +174,10 @@ impl<'a, 'g> PrefabBuilder<'a, 'g> {
         Ok((scene, self.materials))
     }
 
-    fn tree(&mut self, text: &str, depth: usize) -> Result<Tree, Error> {
+    fn tree(&mut self, path: &str, text: &str, depth: usize) -> Result<Tree, Error> {
         let docs = docs(text);
         let by_id: HashMap<i64, &Doc> = docs.iter().map(|d| (id(&d.file_id), d)).collect();
+        let local = Local { path, docs: &by_id };
         let mut tree = Tree { nodes: Vec::new() };
 
         for d in docs
@@ -288,8 +299,12 @@ impl<'a, 'g> PrefabBuilder<'a, 'g> {
             match d.class_id {
                 MESH_FILTER => {
                     tree.nodes[ix].filter = Some(me);
-                    tree.nodes[ix].out.mesh =
-                        self.mesh(obj_ref(&d.body["m_Mesh"]), &owner, "MeshFilter.m_Mesh")?;
+                    tree.nodes[ix].out.mesh = self.mesh(
+                        obj_ref(&d.body["m_Mesh"]),
+                        &owner,
+                        "MeshFilter.m_Mesh",
+                        Some(&local),
+                    )?;
                 }
                 MESH_RENDERER | SKINNED_MESH_RENDERER => {
                     let skinned = d.class_id == SKINNED_MESH_RENDERER;
@@ -300,6 +315,7 @@ impl<'a, 'g> PrefabBuilder<'a, 'g> {
                             obj_ref(&d.body["m_Mesh"]),
                             &owner,
                             "SkinnedMeshRenderer.m_Mesh",
+                            Some(&local),
                         )?;
                     }
                     let refs: Vec<Option<ObjRef>> = d.body["m_Materials"]
@@ -348,7 +364,7 @@ impl<'a, 'g> PrefabBuilder<'a, 'g> {
                     let Some(text) = self.guids.files.read_text(&src)? else {
                         return Ok(None);
                     };
-                    let tree = self.tree(&text, depth + 1)?;
+                    let tree = self.tree(&src, &text, depth + 1)?;
                     self.nested.insert(key, tree.clone());
                     tree
                 }
@@ -469,7 +485,8 @@ impl<'a, 'g> PrefabBuilder<'a, 'g> {
                 tree.find(|n| n.filter == Some(md.target) || n.renderer == Some(md.target))
             {
                 let owner = tree.nodes[ix].out.name.clone();
-                tree.nodes[ix].out.mesh = self.mesh(md.reference.clone(), &owner, "m_Mesh")?;
+                tree.nodes[ix].out.mesh =
+                    self.mesh(md.reference.clone(), &owner, "m_Mesh", None)?;
             }
         } else if let Some(rest) = p.strip_prefix("m_Materials.Array.data[") {
             let slot: Option<usize> = rest.trim_end_matches(']').parse().ok();
@@ -497,10 +514,23 @@ impl<'a, 'g> PrefabBuilder<'a, 'g> {
         r: Option<ObjRef>,
         owner: &str,
         prop: &str,
+        local: Option<&Local<'_>>,
     ) -> Result<Option<MeshRef>, Error> {
         let Some(r) = r else {
             return Ok(None);
         };
+        if r.guid.is_none()
+            && let Some(local) = local
+            && local
+                .docs
+                .get(&id(&r.file_id))
+                .is_some_and(|d| d.class_id == MESH)
+        {
+            return Ok(Some(MeshRef::Inline {
+                path: local.path.to_owned(),
+                id: r.file_id,
+            }));
+        }
         let guid = r.guid.clone().unwrap_or_default().to_ascii_lowercase();
         if guid == BUILTIN_RESOURCES {
             let name = match r.file_id.as_str() {

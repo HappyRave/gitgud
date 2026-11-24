@@ -10,7 +10,8 @@ use tauri::http::{Response, StatusCode, header};
 /// `http://gitgud.localhost/image?...`) with the image bytes, so the webview can
 /// show a version of an image without base64 over IPC. `at` is `head`,
 /// `index`, `worktree`, `yours`, `theirs`, or `commit` / `parent` with `commit=<id>`.
-/// `/model` serves a 3D model the same way; `/ref?path=<model>&ref=<name>`
+/// `/model` serves a 3D model the same way (with `mesh=<fileID>`, a Mesh stored inside
+/// a scene or prefab, as GLB); `/ref?path=<model>&ref=<name>`
 /// serves the file that model refers to as `ref` (a texture, a glTF buffer);
 /// `/file` serves any file as stored (audio, video, PDF, fonts, data); `/audio`
 /// a sound file decoded to WAV, for formats the webview can't play (AIFF).
@@ -56,6 +57,13 @@ fn read(session: &Session, uri: &str) -> Result<(Vec<u8>, &'static str), (Status
         _ => return Err(bad("unknown version")),
     };
     match url.path() {
+        "/model" if param("mesh").is_some() => {
+            let mesh = param("mesh").unwrap_or_default();
+            let bytes = session
+                .inline_mesh(repo, &path, &version, &mesh)
+                .map_err(fail)?;
+            Ok((bytes, "model/gltf-binary"))
+        }
         "/model" => {
             let kind = model_kind(&path).ok_or_else(|| bad("not a 3D model"))?;
             let bytes = session.model_bytes(repo, &path, &version).map_err(fail)?;

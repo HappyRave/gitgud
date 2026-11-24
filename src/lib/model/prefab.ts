@@ -22,7 +22,7 @@ import type { MeshRef, ModelInfo, ModelMaterial, ModelScene, SceneClip } from "$
 import { clone as cloneSkinned } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { modelCache } from "./cache";
 import { loadShared, materialKey } from "./shared";
-import { type LoadedModel, TrackedFiles } from "./load";
+import { type LoadedModel, loadModel, TrackedFiles } from "./load";
 import type { Step } from "./progress";
 import { type LoadTexture, MISSING_COLOR, materialFrom } from "./materials";
 import { meshFileKind } from "./source";
@@ -30,6 +30,8 @@ import { unityFileId } from "./unityId";
 
 export interface PrefabContext {
   modelUrl: (path: string) => string;
+  /** A Mesh stored inside the scene or prefab `path`, as GLB. */
+  meshUrl: (path: string, id: string) => string;
   refUrl: (near: string) => (ref: string) => string;
   imageUrl: (path: string) => string;
   info: (path: string) => Promise<ModelInfo>;
@@ -86,6 +88,14 @@ export function pivotOffset(t: FbxTransform | undefined): Vector3 {
 }
 
 /** The mesh a Unity reference means: by name from the importer table, else by hashed fileID. */
+function firstMesh(root: Object3D): Mesh | null {
+  let found: Mesh | null = null;
+  root.traverse((o) => {
+    found ??= (o as Mesh).isMesh ? (o as Mesh) : null;
+  });
+  return found;
+}
+
 function findMesh(root: Object3D, name: string | null, id: string | null): Mesh | null {
   let found: Mesh | null = null;
   const seen = new Map<string, number>();
@@ -112,6 +122,16 @@ export async function assemblePrefab(scene: ModelScene, materials: ModelMaterial
   const missing = [...scene.missing];
   const textures = new TrackedFiles(null, ctx.progress?.("textures"));
   const loadTexture = ctx.loadTexture ?? textures.loadTexture;
+
+  const inline = (path: string, id: string) => {
+    const key = `${path}#${id}`;
+    let p = models.get(key);
+    if (!p) {
+      p = loadModel({ kind: "asset", url: ctx.meshUrl(path, id), refUrl: () => "", imageUrl: ctx.imageUrl, info: null, loadTexture });
+      models.set(key, p);
+    }
+    return p;
+  };
 
   const model = (path: string) => {
     let p = models.get(path);
@@ -165,6 +185,18 @@ export async function assemblePrefab(scene: ModelScene, materials: ModelMaterial
     }
     if (ref.type === "builtin") {
       return new Mesh(builtinGeometry(ref.name), pick(1));
+    }
+    if (ref.type === "inline") {
+      try {
+        const src = firstMesh((await inline(ref.path, ref.id)).root);
+        if (!src) {
+          throw new Error("no mesh in it");
+        }
+        return new Mesh(src.geometry, pick(src.geometry.groups.length));
+      } catch (e) {
+        missing.push(`${ref.path} › Mesh &${ref.id}: ${e instanceof Error ? e.message : String(e)}`);
+        return missingMesh();
+      }
     }
     let loaded: LoadedModel;
     try {

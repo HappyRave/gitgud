@@ -271,37 +271,34 @@ fn glb(json: &serde_json::Value, mut bin: Vec<u8>) -> Vec<u8> {
     out
 }
 
+/// A one-triangle Unity `Mesh` document `&id` named "Tri", for tests.
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn f32s(v: &[f32]) -> String {
+pub(crate) fn tri_mesh(id: &str) -> String {
+    let f32s = |v: &[f32]| -> String {
         v.iter()
             .flat_map(|f| f.to_le_bytes())
             .map(|b| format!("{b:02x}"))
             .collect()
-    }
-
-    #[test]
-    fn converts_a_unity_mesh_asset_to_glb() {
-        // One stream: position (3 × f32) + uv0 (2 × f16), stride 16.
-        let mut data = String::new();
-        for (p, uv) in [
-            ([1.0f32, 0.0, 0.0], [0x3c00u16, 0x0000]),
-            ([0.0, 1.0, 0.0], [0, 0x3c00]),
-            ([0.0, 0.0, 1.0], [0x3800, 0x3800]),
-        ] {
-            data.push_str(&f32s(&p));
-            for h in uv {
-                data.push_str(
-                    &h.to_le_bytes()
-                        .iter()
-                        .map(|b| format!("{b:02x}"))
-                        .collect::<String>(),
-                );
-            }
+    };
+    // One stream: position (3 × f32) + uv0 (2 × f16), stride 16.
+    let mut data = String::new();
+    for (p, uv) in [
+        ([1.0f32, 0.0, 0.0], [0x3c00u16, 0x0000]),
+        ([0.0, 1.0, 0.0], [0, 0x3c00]),
+        ([0.0, 0.0, 1.0], [0x3800, 0x3800]),
+    ] {
+        data.push_str(&f32s(&p));
+        for h in uv {
+            data.push_str(
+                &h.to_le_bytes()
+                    .iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect::<String>(),
+            );
         }
-        let channels: String = (0..14)
+    }
+    let channels: String =
+        (0..14)
             .map(|i| match i {
                 0 => "    - stream: 0\n      offset: 0\n      format: 0\n      dimension: 3\n"
                     .to_owned(),
@@ -311,9 +308,18 @@ mod tests {
                     .to_owned(),
             })
             .collect();
-        let text = format!(
-            "%YAML 1.1\n--- !u!43 &4300000\nMesh:\n  m_Name: Tri\n  m_SubMeshes:\n  - serializedVersion: 2\n    firstByte: 0\n    indexCount: 3\n    topology: 0\n    baseVertex: 0\n  m_IndexFormat: 0\n  m_IndexBuffer: 000001000200\n  m_VertexData:\n    serializedVersion: 3\n    m_VertexCount: 3\n    m_Channels:\n{channels}    m_DataSize: 48\n    _typelessdata: {data}\n"
-        );
+    format!(
+        "--- !u!43 &{id}\nMesh:\n  m_Name: Tri\n  m_SubMeshes:\n  - serializedVersion: 2\n    firstByte: 0\n    indexCount: 3\n    topology: 0\n    baseVertex: 0\n  m_IndexFormat: 0\n  m_IndexBuffer: 000001000200\n  m_VertexData:\n    serializedVersion: 3\n    m_VertexCount: 3\n    m_Channels:\n{channels}    m_DataSize: 48\n    _typelessdata: {data}\n"
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn converts_a_unity_mesh_asset_to_glb() {
+        let text = format!("%YAML 1.1\n{}", tri_mesh("4300000"));
         let glb = mesh_asset_to_glb(&text).unwrap();
         assert_eq!(&glb[0..4], b"glTF");
         let json_len = u32::from_le_bytes(glb[12..16].try_into().unwrap()) as usize;

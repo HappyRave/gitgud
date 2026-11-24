@@ -25,6 +25,7 @@
   } from "$lib/api";
   import {
     prefs,
+    setAuto3dLimit,
     setDensity,
     setDiffLayout,
     setTheme,
@@ -295,6 +296,12 @@
         <button
           type="button"
           class="bare rail-btn"
+          class:on={activeSection === "sec-previews"}
+          onclick={() => jumpTo("sec-previews")}>Previews</button
+        >
+        <button
+          type="button"
+          class="bare rail-btn"
           class:on={activeSection === "sec-tools"}
           onclick={() => jumpTo("sec-tools")}>Tools &amp; Diagnostics</button
         >
@@ -396,6 +403,27 @@
               <input type="checkbox" checked={prefs.ignoreWhitespace} onchange={toggleIgnoreWhitespace} />
               <span>Ignore whitespace changes in diffs</span>
             </label>
+          </div>
+        </section>
+
+        <section id="sec-previews" class="sec">
+          <h3>Previews</h3>
+          <div class="prefs">
+            <label>
+              <span>Open 3D automatically up to</span>
+              <input
+                type="number"
+                min="0"
+                step="500"
+                value={prefs.auto3dLimit}
+                aria-label="Open 3D automatically up to this many objects"
+                onchange={(e) => setAuto3dLimit(+e.currentTarget.value)}
+              />
+            </label>
+            <p class="hint">
+              Objects in the scene or prefab file itself (nested prefabs not counted). Bigger ones open on a card with
+              “Open in 3D”; 0 asks every time.
+            </p>
           </div>
         </section>
 
@@ -756,6 +784,11 @@
   .prefs {
     display: grid;
     gap: 8px;
+  }
+  .prefs .hint {
+    margin: 0;
+    font-size: 11px;
+    color: var(--muted);
   }
   .idform label,
   .prefs label:not(.chk) {

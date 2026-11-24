@@ -368,7 +368,9 @@ export interface TextureSlot {
 export type MeshRef =
   | { type: "asset"; path: string; name: string | null; id: string | null; scale: number }
   | { type: "builtin"; name: "Cube" | "Sphere" | "Capsule" | "Cylinder" | "Plane" | "Quad" }
-  | { type: "missing" };
+  | { type: "missing" }
+  /** A Mesh stored inside the scene or prefab file itself, served as GLB by its fileID. */
+  | { type: "inline"; path: string; id: string };
 
 /** One GameObject of an assembled prefab, already in three.js's right-handed space. */
 export interface ModelNode {
@@ -399,6 +401,8 @@ export interface ModelInfo {
   remaps: Record<string, number>;
   scale: number;
   scene: ModelScene | null;
+  /** Gitignored files used from disk (asset packs kept out of git): the same in every version. */
+  fromDisk: number;
 }
 
 export interface UnityYamlDiff {

@@ -79,7 +79,7 @@ describe("loadModel", () => {
   it("loads glTF with its clips and swaps remapped Unity materials", async () => {
     serve({ "m://boat.gltf": gltf });
     const urls: string[] = [];
-    const info: ModelInfo = { kind: "gltf", key: null, materials: [desc()], remaps: { HullMat: 0 }, scale: 1, scene: null };
+    const info: ModelInfo = { kind: "gltf", key: null, materials: [desc()], remaps: { HullMat: 0 }, scale: 1, scene: null, fromDisk: 0 };
     const model = await loadModel({
       kind: "gltf",
       url: "m://boat.gltf",

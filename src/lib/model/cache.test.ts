@@ -84,7 +84,7 @@ describe("ModelCache", () => {
 });
 
 describe("loadShared", () => {
-  const info = (key: string | null): ModelInfo => ({ kind: "fbx", key, materials: [], remaps: {}, scale: 1, scene: null });
+  const info = (key: string | null): ModelInfo => ({ kind: "fbx", key, materials: [], remaps: {}, scale: 1, scene: null, fromDisk: 0 });
   const src = (key: string | null, onProgress = vi.fn()) => ({
     kind: "fbx" as const,
     url: "m://a.fbx",

@@ -45,7 +45,7 @@ impl<'a> Guids<'a> {
         let guid = guid.to_ascii_lowercase();
         if let Some(p) = self.index.resolve_guid(&guid) {
             let p = format!("{}{p}", self.prefix);
-            if self.files.contains(&p) {
+            if self.files.has(&p) {
                 return Ok(Some(p));
             }
         }

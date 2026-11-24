@@ -3,7 +3,7 @@
   import type { ModelSide } from "$lib/model/open";
   import { toVersion } from "$lib/model/source";
   import { formatSize } from "$lib/merge/resolve";
-  import { setViewMode } from "$lib/prefs.svelte";
+  import { prefs, setViewMode } from "$lib/prefs.svelte";
   import { metaTarget, type ViewerKind, viewerFor } from "$lib/viewers/route";
   import AudioViewer from "./AudioViewer.svelte";
   import CurveViewer from "./CurveViewer.svelte";
@@ -42,7 +42,8 @@
   const target = $derived(metaTarget(path) ?? path);
   const kind = $derived(viewerFor(path));
   /** Unity text formats whose contents decide the view, or that may be stored binary. */
-  const probes = $derived(kind === "asset" || kind === "material" || kind === "curves" || kind === "scene");
+  const isPrefab = $derived(/\.prefab$/i.test(target));
+  const probes = $derived(kind === "asset" || kind === "material" || kind === "curves" || kind === "scene" || isPrefab);
 
   let info = $state<{ before: UnityAssetInfo | null; after: UnityAssetInfo | null } | null>(null);
   let probeError = $state<string | null>(null);
@@ -67,13 +68,13 @@
   });
 
   const binary = $derived(!!info && (info.before?.binary || info.after?.binary));
-  /** Scenes above this many objects open on a card first (R7 decision 10: a guess, to measure). */
-  const SCENE_3D_LIMIT = 20_000;
-  let sceneAnyway = $state(false);
-  const sceneObjects = $derived(Math.max(info?.before?.objects ?? 0, info?.after?.objects ?? 0));
+  /** Scenes and prefabs above Settings › Previews' object limit open on a card first. */
+  let openAnyway = $state(false);
+  const objects = $derived(Math.max(info?.before?.objects ?? 0, info?.after?.objects ?? 0));
+  const heavy = $derived((kind === "scene" || isPrefab) && objects > prefs.auto3dLimit && !openAnyway);
   $effect(() => {
     void target;
-    sceneAnyway = false;
+    openAnyway = false;
   });
   const shown = $derived(kind === "asset" ? (info ? ASSET_VIEWS[info.after?.classId ?? info.before?.classId ?? 0] ?? null : "probing") : kind);
   const sizes = $derived(
@@ -104,14 +105,14 @@
       ]}
       sides={openSides}
     />
-  {:else if shown === "scene" && sceneObjects > SCENE_3D_LIMIT && !sceneAnyway}
+  {:else if heavy}
     <div class="none">
       <p>
-        <b>Large scene: {sceneObjects.toLocaleString("en-US")} objects.</b> Above {SCENE_3D_LIMIT.toLocaleString("en-US")} the 3D
-        view may take a while to build, so it opens on request.
+        <b>{objects.toLocaleString("en-US")} objects.</b> 3D opens by itself up to {prefs.auto3dLimit.toLocaleString("en-US")}
+        (Settings › Previews), so this one opens on request.
       </p>
       <span class="actions">
-        <button type="button" onclick={() => (sceneAnyway = true)}>Open in 3D</button>
+        <button type="button" onclick={() => (openAnyway = true)}>Open in 3D</button>
         <button type="button" onclick={() => setViewMode(path, "structure")}>Show Structure</button>
       </span>
     </div>

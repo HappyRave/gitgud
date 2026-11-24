@@ -207,8 +207,15 @@ replaying at most 255 rows (spike 4.3).
   Scenes (`.unity`): assembled by the prefab builder (`model_kind` → Prefab) and shown in
   `ModelViewer` with `merged` (the stage's "merged" mode: the working copy, plus the older version's
   changed / removed meshes as amber wire ghosts); the change list gets a filter past 8 entries and
-  "Changed only" fades the unchanged clay. `unity_asset_info.objects` counts GameObjects: above
-  20,000 a scene opens on a card ("Open in 3D" / "Show Structure"), a guess to measure.
+  "Changed only" fades the unchanged clay. `unity_asset_info.objects` counts GameObjects: scenes and
+  prefabs above Settings › Previews' limit (`prefs.auto3dLimit`, default 2,000) open on a card
+  ("Open in 3D" / "Show Structure"). Meshes stored inside a scene or prefab (`MeshRef::Inline`) are
+  served as GLB by `fileID` through the protocol's `/model?…&mesh=` (`Repo::inline_mesh`, the source
+  file cached for the burst of requests).
+  Gitignored assets (asset packs kept out of git): `Repo::file_at` reads them from disk in every
+  version when a version lacks them (`Repo::ignored_on_disk`, cached per path and per ignored folder,
+  cleared on refresh); `Files::has` lets GUIDs resolve to them, and `ModelInfo.from_disk` counts them
+  for the viewer's note.
 - **Caches** (`caches.rs`, Settings › Caches): the GUID index is updated from changed `.meta` files
   (size + mtime), saved to `.git/gitgud/guid-index`, built in the background when a Unity repo opens,
   and marked stale (not dropped) on refresh; `.meta` GUIDs are kept per blob and per commit tree;

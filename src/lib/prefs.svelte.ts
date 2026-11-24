@@ -12,6 +12,7 @@ const MODEL_VIEW_KEY = "gitgud.model.view";
 const VIEWS_KEY = "gitgud.views";
 const VIEWER_KEY = "gitgud.viewer";
 const VOLUME_KEY = "gitgud.media.volume";
+const AUTO_3D_KEY = "gitgud.preview.auto3d";
 
 export type DiffLayout = "auto" | "unified" | "split";
 export type Density = "standard" | "compact";
@@ -96,6 +97,14 @@ function readViewer(): Record<string, string> {
   }
 }
 
+/** The default for opening 3D automatically: Max's pick, 2026-11-24. */
+export const AUTO_3D_DEFAULT = 2000;
+
+function readAuto3d(): number {
+  const v = Number(readStorage(AUTO_3D_KEY) ?? AUTO_3D_DEFAULT);
+  return Number.isFinite(v) && v >= 0 ? Math.round(v) : AUTO_3D_DEFAULT;
+}
+
 function readVolume(): number {
   const v = Number(readStorage(VOLUME_KEY) ?? "0.8");
   return Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0.8;
@@ -131,6 +140,8 @@ export const prefs = $state({
   viewer: readViewer(),
   /** One volume for every sound and video, 0–1 (R7). */
   volume: readVolume(),
+  /** Scenes and prefabs open in 3D by themselves up to this many objects; above it, on request. */
+  auto3dLimit: readAuto3d(),
 });
 
 export type ModelShading = "textured" | "changes";
@@ -166,6 +177,11 @@ export function shaderBase(shader: string): string | null {
 export function setShaderBase(shader: string, property: string) {
   prefs.viewer[`shader:${shader}.base`] = property;
   writeStorage(VIEWER_KEY, JSON.stringify(prefs.viewer));
+}
+
+export function setAuto3dLimit(limit: number) {
+  prefs.auto3dLimit = Number.isFinite(limit) && limit >= 0 ? Math.round(limit) : AUTO_3D_DEFAULT;
+  writeStorage(AUTO_3D_KEY, String(prefs.auto3dLimit));
 }
 
 export function setVolume(volume: number) {

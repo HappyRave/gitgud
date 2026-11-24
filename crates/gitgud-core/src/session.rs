@@ -1991,6 +1991,21 @@ impl Session {
             .map_err(|e| Error::Refused(format!("{path}: {e}")))
     }
 
+    /// See [`Repo::inline_mesh`].
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`], or as [`Repo::inline_mesh`].
+    pub fn inline_mesh(
+        &self,
+        id: u32,
+        path: &str,
+        version: &crate::image::Version,
+        mesh: &str,
+    ) -> Result<Vec<u8>, Error> {
+        let repo = self.get(id)?.repo.clone();
+        repo.inline_mesh(self.git().ok(), path, version, mesh)
+    }
+
     /// See [`Repo::clip_curves`].
     ///
     /// # Errors

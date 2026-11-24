@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/svelte";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ModelSide } from "$lib/model/open";
-import { prefs, viewModeFor } from "$lib/prefs.svelte";
+import { AUTO_3D_DEFAULT, prefs, setAuto3dLimit, viewModeFor } from "$lib/prefs.svelte";
 import { mockCommands } from "$lib/test/ipc";
 import FilePreview from "./FilePreview.svelte";
 
@@ -30,19 +30,26 @@ describe("FilePreview", () => {
     expect(await screen.findByText("No table in this file.")).toBeInTheDocument();
   });
 
-  it("opens a scene in 3D with the Merged mode, and a huge one on request", async () => {
+  it("opens scenes and prefabs in 3D up to the Settings limit, bigger ones on request", async () => {
     let objects = 1840;
     mockCommands({ unity_asset_info: () => ({ binary: false, classId: 29, size: 900, objects }) });
     const { unmount } = render(FilePreview, { repoId: 1, path: "Scenes/Harbour.unity", before: HEAD, after: DISK });
     expect(await screen.findByTestId("stub")).toHaveAttribute("data-path", "Scenes/Harbour.unity");
     unmount();
 
-    objects = 34_210;
-    render(FilePreview, { repoId: 1, path: "Scenes/Harbour.unity", before: HEAD, after: DISK });
-    expect(await screen.findByText("Large scene: 34,210 objects.")).toBeInTheDocument();
+    objects = 2_500;
+    const big = render(FilePreview, { repoId: 1, path: "Scenes/Harbour.unity", before: HEAD, after: DISK });
+    expect(await screen.findByText("2,500 objects.")).toBeInTheDocument();
     expect(screen.queryByTestId("stub")).toBeNull();
     await fireEvent.click(screen.getByRole("button", { name: "Open in 3D" }));
     expect(screen.getByTestId("stub")).toBeInTheDocument();
+    big.unmount();
+
+    render(FilePreview, { repoId: 1, path: "Prefabs/Fleet.prefab", before: HEAD, after: DISK });
+    expect(await screen.findByText("2,500 objects.")).toBeInTheDocument();
+    setAuto3dLimit(5000);
+    expect(await screen.findByTestId("stub")).toHaveAttribute("data-path", "Prefabs/Fleet.prefab");
+    setAuto3dLimit(AUTO_3D_DEFAULT);
   });
 
   it("offers Structure for an .asset with no visual view", async () => {

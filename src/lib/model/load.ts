@@ -10,6 +10,8 @@ export interface LoadedModel {
   approximated: string[];
   /** References that couldn't be found ("Cargo › mesh → guid …"). */
   missing: string[];
+  /** Gitignored files drawn from the disk copy, the same in every version. */
+  fromDisk?: number;
 }
 
 export interface LoadSource {

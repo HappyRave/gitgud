@@ -100,6 +100,8 @@ pub struct ModelInfo {
     pub scale: f32,
     /// A prefab's GameObjects, nested prefabs and variants applied.
     pub scene: Option<ModelScene>,
+    /// Gitignored files used from disk (asset packs kept out of git): the same in every version.
+    pub from_disk: usize,
 }
 
 impl Repo {
@@ -126,6 +128,61 @@ impl Repo {
                 .map_err(|e| Error::Read(format!("{path}: {e}")));
         }
         Ok(bytes)
+    }
+
+    /// The Mesh document `id` stored inside the scene or prefab `path` at `version`,
+    /// as GLB.
+    ///
+    /// # Errors
+    /// [`Error::Refused`] when the file isn't in that version or has no such Mesh;
+    /// [`Error::Read`] when the mesh can't be converted.
+    pub fn inline_mesh(
+        &self,
+        git: Option<&GitCli>,
+        path: &str,
+        version: &Version,
+        id: &str,
+    ) -> Result<Vec<u8>, Error> {
+        let key = format!("{path}@{version:?}");
+        let bytes = {
+            // Held while loading: a scene's meshes are requested all at once.
+            let mut cached = self
+                .inline_source
+                .lock()
+                .expect("inline source lock poisoned");
+            match cached.as_ref().filter(|(k, _)| *k == key) {
+                Some((_, b)) => b.clone(),
+                None => {
+                    let raw = self.file_at(path, version)?;
+                    let b = Arc::new(self.lfs_resolve_with_fetch(
+                        git,
+                        path,
+                        raw,
+                        crate::lfs::AUTO_FETCH_MAX_BYTES,
+                    )?);
+                    *cached = Some((key, b.clone()));
+                    b
+                }
+            }
+        };
+        let header = format!("--- !u!43 &{id}");
+        let text = String::from_utf8_lossy(&bytes);
+        let start = text
+            .match_indices(&header)
+            .map(|(i, _)| i)
+            .find(|&i| {
+                (i == 0 || text.as_bytes()[i - 1] == b'\n')
+                    && text[i + header.len()..]
+                        .chars()
+                        .next()
+                        .is_none_or(|c| c == '\n' || c == '\r' || c == ' ')
+            })
+            .ok_or_else(|| Error::Refused(format!("{path} has no Mesh &{id}")))?;
+        let end = text[start + header.len()..]
+            .find("\n--- !u!")
+            .map_or(text.len(), |e| start + header.len() + e + 1);
+        mesh_asset::mesh_asset_to_glb(&text[start..end])
+            .map_err(|e| Error::Read(format!("{path} › Mesh &{id}: {e}")))
     }
 
     /// The repo path of the file model `near` refers to as `reference` at `version`.
@@ -412,6 +469,7 @@ impl Repo {
             remaps: BTreeMap::new(),
             scale: 1.0,
             scene: None,
+            from_disk: 0,
         };
         if kind == ModelKind::Prefab {
             let (mut scene, materials) = prefab::PrefabBuilder::new(&guids).build(path)?;
@@ -428,6 +486,7 @@ impl Repo {
             }
             info.scene = Some(scene);
             info.materials = materials;
+            info.from_disk = files.disk_reads();
             return Ok(info);
         }
         if let Some(text) = files.read_text(&format!("{path}.meta"))? {
@@ -450,6 +509,7 @@ impl Repo {
                 info.materials.push(m);
             }
         }
+        info.from_disk = files.disk_reads();
         Ok(info)
     }
 }
@@ -466,6 +526,96 @@ mod tests {
         assert_eq!(model_kind("x.prefab"), Some(ModelKind::Prefab));
         assert_eq!(model_kind("x.png"), None);
         assert_eq!(model_mime(ModelKind::Gltf), "model/gltf+json");
+    }
+
+    #[test]
+    fn reads_gitignored_assets_from_disk_in_every_version() {
+        let (mesh, pack) = (
+            "0e5e0000000000000000000000000001",
+            "9ac00000000000000000000000000002",
+        );
+        let prefab = |nested: &str| {
+            format!(
+                "%YAML 1.1\n--- !u!1001 &7000\nPrefabInstance:\n  m_Modification:\n    m_TransformParent: {{fileID: 0}}\n    m_Modifications: []\n  m_SourcePrefab: {{fileID: 100100000, guid: {nested}, type: 3}}\n"
+            )
+        };
+        let crate_prefab = format!(
+            "%YAML 1.1\n--- !u!1 &1\nGameObject:\n  m_Name: Crate\n  m_IsActive: 1\n  m_Component:\n  - component: {{fileID: 4}}\n  - component: {{fileID: 33}}\n--- !u!4 &4\nTransform:\n  m_GameObject: {{fileID: 1}}\n  m_LocalRotation: {{x: 0, y: 0, z: 0, w: 1}}\n  m_LocalPosition: {{x: 0, y: 0, z: 0}}\n  m_LocalScale: {{x: 1, y: 1, z: 1}}\n  m_Father: {{fileID: 0}}\n--- !u!33 &33\nMeshFilter:\n  m_GameObject: {{fileID: 1}}\n  m_Mesh: {{fileID: 4300000, guid: {mesh}, type: 3}}\n"
+        );
+        let repo = TestRepo::init();
+        repo.write(
+            "ProjectSettings/ProjectVersion.txt",
+            "m_EditorVersion: 6000.0.1f1\n",
+        )
+        .write(".gitignore", "Assets/Packs\n")
+        .write("Assets/Packs/Crate.prefab", &crate_prefab)
+        .write("Assets/Packs/Crate.prefab.meta", &format!("guid: {pack}\n"))
+        .write("Assets/Packs/crate.fbx", "fbx")
+        .write("Assets/Packs/crate.fbx.meta", &format!("guid: {mesh}\n"))
+        .write("Assets/Level.prefab", &prefab(pack))
+        .commit_all("one");
+        let r = crate::repo::open(repo.path()).unwrap();
+        let head = repo.git(&["rev-parse", "HEAD"]).trim().to_owned();
+        for v in [Version::Head, Version::Commit(head), Version::Worktree] {
+            let info = r.model_info(None, "Assets/Level.prefab", &v).unwrap();
+            let scene = info.scene.unwrap();
+            assert!(scene.missing.is_empty(), "{v:?}: {:?}", scene.missing);
+            let crate_node = scene.nodes.iter().find(|n| n.name == "Crate").unwrap();
+            assert!(
+                matches!(&crate_node.mesh, Some(MeshRef::Asset { path, .. }) if path == "Assets/Packs/crate.fbx")
+            );
+            assert!(info.from_disk >= 2, "{v:?}: {}", info.from_disk);
+        }
+        assert_eq!(
+            r.file_at("Assets/Packs/crate.fbx", &Version::Head).unwrap(),
+            b"fbx"
+        );
+        assert_eq!(
+            r.ignored.lock().unwrap().get("Assets/Packs/"),
+            Some(&true),
+            "the ignored folder answers for its other files"
+        );
+        assert!(r.file_at("Assets/nothing.fbx", &Version::Head).is_err());
+        repo.write("Assets/untracked.fbx", "x");
+        assert!(
+            !r.ignored_on_disk("Assets/untracked.fbx"),
+            "untracked isn't ignored"
+        );
+        assert!(r.file_at("Assets/untracked.fbx", &Version::Head).is_err());
+    }
+
+    #[test]
+    fn draws_meshes_stored_inside_the_scene() {
+        let go = "--- !u!1 &10\nGameObject:\n  m_Name: Wall\n  m_IsActive: 1\n  m_Component:\n  - component: {fileID: 11}\n  - component: {fileID: 12}\n--- !u!4 &11\nTransform:\n  m_GameObject: {fileID: 10}\n  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}\n  m_LocalPosition: {x: 0, y: 0, z: 0}\n  m_LocalScale: {x: 1, y: 1, z: 1}\n  m_Father: {fileID: 0}\n--- !u!33 &12\nMeshFilter:\n  m_GameObject: {fileID: 10}\n  m_Mesh: {fileID: 1234}\n";
+        let scene = format!(
+            "%YAML 1.1\n{go}{}--- !u!104 &2\nRenderSettings:\n  m_Fog: 0\n",
+            mesh_asset::tri_mesh("1234")
+        );
+        let repo = TestRepo::init();
+        repo.write("Assets/Room.unity", &scene).commit_all("one");
+        let r = crate::repo::open(repo.path()).unwrap();
+        let info = r
+            .model_info(None, "Assets/Room.unity", &Version::Head)
+            .unwrap();
+        let scene = info.scene.unwrap();
+        assert!(scene.missing.is_empty(), "{:?}", scene.missing);
+        assert_eq!(
+            scene.nodes[0].mesh,
+            Some(MeshRef::Inline {
+                path: "Assets/Room.unity".into(),
+                id: "1234".into()
+            })
+        );
+        let glb = r
+            .inline_mesh(None, "Assets/Room.unity", &Version::Head, "1234")
+            .unwrap();
+        assert_eq!(&glb[0..4], b"glTF");
+        assert_eq!(
+            r.inline_mesh(None, "Assets/Room.unity", &Version::Head, "123")
+                .unwrap_err()
+                .to_string(),
+            "Assets/Room.unity has no Mesh &123"
+        );
     }
 
     #[test]

@@ -71,13 +71,35 @@ const node = (name: string, over: Partial<ModelNode> = {}): ModelNode => ({
 
 const ctx = {
   modelUrl: (p: string) => `m://${p}`,
+  meshUrl: (p: string, id: string) => `m://${p}?mesh=${id}`,
   refUrl: () => (r: string) => r,
   imageUrl: (p: string) => p,
-  info: async (): Promise<ModelInfo> => ({ kind: "fbx", key: null, materials: [], remaps: {}, scale: 1, scene: null }),
+  info: async (): Promise<ModelInfo> => ({ kind: "fbx", key: null, materials: [], remaps: {}, scale: 1, scene: null, fromDisk: 0 }),
   loadTexture: () => new Texture(),
 };
 
 describe("assemblePrefab", () => {
+  it("draws meshes stored inside the scene, loading each one once", async () => {
+    const { loadModel } = await import("./load");
+    const calls = () => vi.mocked(loadModel).mock.calls.filter(([s]) => s.url.includes("mesh=")).map(([s]) => s.url);
+    const before = calls().length;
+    const scene: ModelScene = {
+      nodes: [
+        node("Wall_A", { mesh: { type: "inline", path: "Assets/Room.unity", id: "1234" }, materials: [0] }),
+        node("Wall_B", { mesh: { type: "inline", path: "Assets/Room.unity", id: "1234" }, materials: [0] }),
+        node("Floor", { mesh: { type: "inline", path: "Assets/gone.unity", id: "9" } }),
+      ],
+      missing: [],
+      clips: [],
+    };
+    const model = await assemblePrefab(scene, [mat("Wall")], ctx);
+    const wall = model.root.getObjectByName("Wall_A")!.children[0] as Mesh;
+    expect(wall.isMesh).toBe(true);
+    expect((wall.material as MeshStandardMaterial).name).toBe("Wall");
+    expect(calls().slice(before)).toEqual(["m://Assets/Room.unity?mesh=1234", "m://Assets/gone.unity?mesh=9"]);
+    expect(model.missing).toEqual(["Assets/gone.unity › Mesh &9: Assets/gone.fbx is not in that version"]);
+  });
+
   it("builds the hierarchy with FBX meshes, primitives and Unity materials", async () => {
     const scene: ModelScene = {
       nodes: [

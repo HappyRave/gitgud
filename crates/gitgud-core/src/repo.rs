@@ -28,6 +28,11 @@ pub struct Repo {
     pub(crate) meta_blob_guids: Mutex<HashMap<gix::ObjectId, Option<String>>>,
     /// Recent 3D model infos; see `Repo::model_info`.
     pub(crate) model_infos: Mutex<InfoCache>,
+    /// Paths found gitignored on disk (or not); see `Repo::ignored_on_disk`.
+    pub(crate) ignored: Mutex<HashMap<String, bool>>,
+    /// The scene or prefab last read for its inline meshes, so a scene's hundreds of
+    /// meshes don't each re-read it; see `Repo::inline_mesh`.
+    pub(crate) inline_source: Mutex<Option<(String, Arc<Vec<u8>>)>>,
 }
 
 /// GUID -> asset path, from one tree's `.meta` files.
@@ -52,6 +57,8 @@ pub fn open(path: impl AsRef<Path>) -> Result<Repo, Error> {
         tree_guids: Mutex::new(Vec::new()),
         meta_blob_guids: Mutex::new(HashMap::new()),
         model_infos: Mutex::new(InfoCache::default()),
+        ignored: Mutex::new(HashMap::new()),
+        inline_source: Mutex::new(None),
     })
 }
 

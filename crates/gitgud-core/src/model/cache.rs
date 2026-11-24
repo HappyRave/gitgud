@@ -79,6 +79,7 @@ mod tests {
             remaps: BTreeMap::new(),
             scale,
             scene: None,
+            from_disk: 0,
         })
     }
 

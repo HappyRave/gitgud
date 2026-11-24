@@ -115,6 +115,10 @@
     counts = { before: b?.model ? stats(b.model.root) : null, after: stats(a.model.root) };
     const shaders = new Set([...(b?.model?.approximated ?? []), ...a.model.approximated]);
     const found = [...shaders].map((s) => `${s} is shown as a standard lit material`).concat(a.model.missing);
+    const disk = Math.max(a.model.fromDisk ?? 0, b?.model?.fromDisk ?? 0);
+    if (disk > 0) {
+      found.push(`${fmt(disk)} gitignored ${disk === 1 ? "file comes" : "files come"} from your disk copy, the same in both versions`);
+    }
     if (counts.after && counts.after.triangles > BIG_MESH) {
       found.push(`Large model: ${fmt(counts.after.triangles)} triangles, so orbiting may be slow. Wire is off-limits above this size.`);
     }
