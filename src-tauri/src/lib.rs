@@ -1328,6 +1328,17 @@ async fn model_info(
 }
 
 #[tauri::command]
+async fn data_tables(
+    session: State<'_, Session>,
+    id: u32,
+    path: String,
+    before: Option<gitgud_core::image::Version>,
+    after: gitgud_core::image::Version,
+) -> Result<gitgud_core::model::DataTables, Error> {
+    session.data_tables(id, &path, before.as_ref(), &after)
+}
+
+#[tauri::command]
 async fn audio_info(
     session: State<'_, Session>,
     id: u32,
@@ -1772,6 +1783,7 @@ fn app_with_library<R: Runtime>(builder: Builder<R>, library: Option<LibraryStor
             material_view,
             material_users,
             audio_info,
+            data_tables,
             unity_conflict_table,
             resolve_unity_conflict,
             unity_post_merge_check,
@@ -1978,6 +1990,35 @@ mod tests {
             )
             .unwrap();
         assert_eq!(users, json!(["Assets/boat.fbx"]));
+    }
+
+    #[test]
+    fn data_tables_compares_rows_by_key() {
+        let repo = TestRepo::init();
+        repo.write("stats.csv", "id,speed\nskiff,12\ntug,7\n")
+            .commit_all("one");
+        repo.write("stats.csv", "id,speed\ntug,7\nskiff,13\n");
+        let ipc = Ipc::new();
+        let id = open(&ipc, &repo)["id"].clone();
+        let d = ipc
+            .call(
+                "data_tables",
+                json!({ "id": id, "path": "stats.csv", "before": "head", "after": "worktree" }),
+            )
+            .unwrap();
+        assert_eq!(d["kind"], "CSV");
+        let t = &d["tables"][0];
+        assert_eq!(t["key"], "id");
+        assert_eq!(t["changed"], 1);
+        assert_eq!(t["rows"][1]["state"], "changed");
+        assert_eq!(t["rows"][1]["cells"][1], json!(["12", "13"]));
+        let alone = ipc
+            .call(
+                "data_tables",
+                json!({ "id": id, "path": "stats.csv", "after": "head" }),
+            )
+            .unwrap();
+        assert_eq!(alone["tables"][0]["rows"][0]["state"], "same");
     }
 
     #[test]

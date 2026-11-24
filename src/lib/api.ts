@@ -836,6 +836,37 @@ export interface UnityAssetInfo {
   size: number;
 }
 
+/** The tables of a CSV / TSV / JSON file or ScriptableObject, compared across two versions. */
+export interface DataTables {
+  /** "CSV", "JSON", "ScriptableObject · BoatDatabase"… */
+  kind: string;
+  /** The earlier version had the file, so rows carry changes. */
+  compared: boolean;
+  tables: TableDiff[];
+}
+
+export interface TableDiff {
+  name: string;
+  columns: string[];
+  addedColumns: string[];
+  removedColumns: string[];
+  /** The column rows were matched by; null when matched by position. */
+  key: string | null;
+  rows: RowDiff[];
+  rowCount: number;
+  changed: number;
+  changedCells: number;
+  added: number;
+  removed: number;
+  truncated: boolean;
+}
+
+export interface RowDiff {
+  state: "same" | "changed" | "added" | "removed";
+  /** Per column `[old, new]`; null where that version has no such cell. */
+  cells: [string | null, string | null][];
+}
+
 /** One version of a sound file, decoded in Rust. */
 export interface AudioInfo {
   format: string;
@@ -1030,6 +1061,7 @@ export interface Commands {
   model_info: { args: { id: number; path: string; version: FileVersion }; result: ModelInfo };
   unity_asset_info: { args: { id: number; path: string; version: FileVersion }; result: UnityAssetInfo };
   open_version: { args: { id: number; path: string; version: FileVersion; label: string }; result: string };
+  data_tables: { args: { id: number; path: string; before?: FileVersion | null; after: FileVersion }; result: DataTables };
   audio_info: { args: { id: number; path: string; version: FileVersion }; result: AudioInfo };
   material_view: { args: { id: number; path: string; version: FileVersion }; result: MaterialView };
   material_users: { args: { id: number; path: string; version: FileVersion }; result: string[] };
@@ -1331,7 +1363,9 @@ export const unityAssetInfo = (id: number, path: string, version: FileVersion) =
 /** Writes `path` at `version` to a temp copy, opens it in its default app, and returns where. */
 export const openVersion = (id: number, path: string, version: FileVersion, label: string) =>
   call("open_version", { id, path, version, label });
-export const audioInfo = (id: number, path: string, version: FileVersion) => call("audio_info", { id, path, version });
+export const dataTables = (id: number, path: string, before: FileVersion | null, after: FileVersion) =>
+  call("data_tables", { id, path, before, after });
+export const audioInfo =(id: number, path: string, version: FileVersion) => call("audio_info", { id, path, version });
 export const materialView =(id: number, path: string, version: FileVersion) => call("material_view", { id, path, version });
 export const materialUsers = (id: number, path: string, version: FileVersion) => call("material_users", { id, path, version });
 export const fontInfo =(id: number, path: string, version: FileVersion) => call("font_info", { id, path, version });

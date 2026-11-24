@@ -1976,6 +1976,21 @@ impl Session {
             .map_err(|e| Error::Refused(format!("{path}: {e}")))
     }
 
+    /// See [`Repo::data_tables`].
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`], or as [`Repo::data_tables`].
+    pub fn data_tables(
+        &self,
+        id: u32,
+        path: &str,
+        before: Option<&crate::image::Version>,
+        after: &crate::image::Version,
+    ) -> Result<crate::model::DataTables, Error> {
+        let repo = self.get(id)?.repo.clone();
+        repo.data_tables(self.git().ok(), path, before, after)
+    }
+
     /// See [`Repo::material_view`].
     ///
     /// # Errors

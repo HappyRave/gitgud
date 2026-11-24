@@ -21,6 +21,15 @@ describe("FilePreview", () => {
     expect(await screen.findByTestId("stub")).toHaveAttribute("data-path", "Meshes/Hull.asset");
   });
 
+  it("opens a ScriptableObject .asset as a data grid", async () => {
+    mockCommands({
+      unity_asset_info: () => ({ binary: false, classId: 114, size: 900 }),
+      data_tables: () => ({ kind: "ScriptableObject · BoatDatabase", compared: false, tables: [] }),
+    });
+    render(FilePreview, { repoId: 1, path: "Data/Boats.asset", before: HEAD, after: DISK });
+    expect(await screen.findByText("No table in this file.")).toBeInTheDocument();
+  });
+
   it("offers Structure for an .asset with no visual view", async () => {
     mockCommands({ unity_asset_info: () => ({ binary: false, classId: 156, size: 900 }) });
     render(FilePreview, { repoId: 1, path: "Terrain/Island.asset", before: HEAD, after: DISK });

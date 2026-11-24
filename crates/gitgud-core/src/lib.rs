@@ -30,6 +30,7 @@ pub mod session;
 pub mod snapshot;
 pub mod stacks;
 pub mod stash;
+pub mod table;
 pub mod tags;
 pub mod task;
 #[cfg(any(test, feature = "test-util"))]

@@ -4,8 +4,9 @@
   import { toVersion } from "$lib/model/source";
   import { formatSize } from "$lib/merge/resolve";
   import { setViewMode } from "$lib/prefs.svelte";
-  import { metaTarget, viewerFor } from "$lib/viewers/route";
+  import { metaTarget, type ViewerKind, viewerFor } from "$lib/viewers/route";
   import AudioViewer from "./AudioViewer.svelte";
+  import DataViewer from "./DataViewer.svelte";
   import FontViewer from "./FontViewer.svelte";
   import LoadingBar from "./LoadingBar.svelte";
   import MaterialViewer from "./MaterialViewer.svelte";
@@ -31,8 +32,8 @@
     onfetch?: (side: "before" | "after", meta: BinarySide) => Promise<void>;
   } = $props();
 
-  /** Unity class ids with a visual view: 43 Mesh opens in 3D. */
-  const MESH = 43;
+  /** Unity class ids with a visual view: 43 Mesh opens in 3D, 114 ScriptableObject as a grid. */
+  const ASSET_VIEWS: Record<number, ViewerKind> = { 43: "model", 114: "table" };
 
   const target = $derived(metaTarget(path) ?? path);
   const kind = $derived(viewerFor(path));
@@ -62,9 +63,7 @@
   });
 
   const binary = $derived(!!info && (info.before?.binary || info.after?.binary));
-  const shown = $derived(
-    kind === "asset" ? (info ? (info.after?.classId ?? info.before?.classId) === MESH ? "model" : null : "probing") : kind,
-  );
+  const shown = $derived(kind === "asset" ? (info ? ASSET_VIEWS[info.after?.classId ?? info.before?.classId ?? 0] ?? null : "probing") : kind);
   const sizes = $derived(
     info ? [info.before?.size, info.after?.size].filter((s): s is number => s != null).map(formatSize).join(" → ") : "",
   );
@@ -97,6 +96,8 @@
     <ModelViewer {repoId} path={target} {before} {after} {bust} {meta} {onfetch} />
   {:else if shown === "material"}
     <MaterialViewer {repoId} path={target} {before} {after} {bust} {meta} {onfetch} />
+  {:else if shown === "table"}
+    <DataViewer {repoId} path={target} {before} {after} {bust} />
   {:else if shown === "audio"}
     <AudioViewer {repoId} path={target} {before} {after} {bust} {meta} {onfetch} />
   {:else if shown === "font"}

@@ -5,6 +5,7 @@ mod material;
 mod mesh_asset;
 mod meta;
 mod prefab;
+mod scriptable;
 mod tree;
 mod yaml;
 
@@ -21,9 +22,20 @@ pub use prefab::{MeshRef, ModelNode, ModelScene};
 use crate::cli::GitCli;
 use crate::image::Version;
 use crate::repo::{Error, Repo};
+use crate::table::{Table, TableDiff};
 use guids::Guids;
 use meta::Meta;
 use tree::Files;
+
+/// The tables of a data file, compared across two versions.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DataTables {
+    /// "CSV", "JSON", "ScriptableObject · BoatDatabase"...
+    pub kind: String,
+    /// The earlier version had the file, so rows carry changes.
+    pub compared: bool,
+    pub tables: Vec<TableDiff>,
+}
 
 /// How many users of a material the "Your mesh" list offers.
 pub const MAX_USERS: usize = 50;
@@ -155,6 +167,50 @@ impl Repo {
             .expect("model info lock poisoned")
             .put(path, origin, Arc::new(info.clone()), generation);
         Ok(info)
+    }
+
+    /// The tables in a CSV / TSV / JSON file or a ScriptableObject `.asset`, compared
+    /// between `before` (when the file is there) and `after`.
+    ///
+    /// # Errors
+    /// [`Error::Refused`] when `after` has no such file or it can't be read as tables.
+    pub fn data_tables(
+        &self,
+        git: Option<&GitCli>,
+        path: &str,
+        before: Option<&Version>,
+        after: &Version,
+    ) -> Result<DataTables, Error> {
+        let read = |version: &Version| -> Result<(String, Vec<Table>), Error> {
+            if path.to_ascii_lowercase().ends_with(".asset") {
+                let files = Files::new(self, version)?.with_git(git);
+                let text = files
+                    .read_text(path)?
+                    .ok_or_else(|| Error::Refused(format!("{path} isn't in that version")))?;
+                let (script, tables) =
+                    scriptable::scriptable_tables(&text, path, &Guids::new(&files))?;
+                let kind = script.map_or_else(
+                    || "ScriptableObject".to_owned(),
+                    |s| format!("ScriptableObject · {s}"),
+                );
+                return Ok((kind, tables));
+            }
+            let bytes = self.file_bytes(git, path, version, crate::lfs::AUTO_FETCH_MAX_BYTES)?;
+            let tables = crate::table::read_tables(&bytes, path)
+                .map_err(|e| Error::Refused(format!("{path}: {e}")))?;
+            let ext = path.rsplit_once('.').map_or("", |(_, e)| e);
+            Ok((ext.to_ascii_uppercase(), tables))
+        };
+        let (kind, after_tables) = read(after)?;
+        let before_tables = match before {
+            Some(v) if Files::new(self, v).is_ok_and(|f| f.contains(path)) => Some(read(v)?.1),
+            _ => None,
+        };
+        Ok(DataTables {
+            kind,
+            compared: before_tables.is_some(),
+            tables: crate::table::diff_tables(before_tables.as_deref(), &after_tables),
+        })
     }
 
     /// Every property, keyword and the render queue of the `.mat` at `path`.
@@ -337,6 +393,84 @@ mod tests {
         assert_eq!(info(&Version::Worktree).scale, 3.0);
         assert_eq!(info(&Version::Head).scale, 2.0);
         assert_eq!(r.model_infos.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn compares_scriptable_object_lists_and_csv_files() {
+        let script = "5555eeee000000000000000000000000";
+        let prefab = "6666ffff000000000000000000000000";
+        let asset = |speed: &str, extra: &str| {
+            format!(
+                "%YAML 1.1\n--- !u!114 &11400000\nMonoBehaviour:\n  m_ObjectHideFlags: 0\n  m_Script: {{fileID: 11500000, guid: {script}, type: 3}}\n  m_Name: Boats\n  version: 2\n  boats:\n  - id: skiff\n    speed: {speed}\n    prefab: {{fileID: 100100000, guid: {prefab}, type: 3}}\n    upgrades:\n    - cost: 150\n{extra}"
+            )
+        };
+        let repo = TestRepo::init();
+        repo.write("Assets/BoatDatabase.cs", "class BoatDatabase {}")
+            .write("Assets/BoatDatabase.cs.meta", &format!("guid: {script}\n"))
+            .write("Assets/Skiff.prefab", "")
+            .write("Assets/Skiff.prefab.meta", &format!("guid: {prefab}\n"))
+            .write("Assets/Boats.asset", &asset("12", ""))
+            .write("Data/stats.csv", "id,speed\nskiff,12\n")
+            .commit_all("one");
+        repo.write(
+            "Assets/Boats.asset",
+            &asset(
+                "13.5",
+                "  - id: tug\n    speed: 7\n    prefab: {fileID: 0}\n",
+            ),
+        )
+        .write("Data/stats.csv", "id,speed\nskiff,14\n")
+        .write("Data/new.csv", "a\n1\n");
+        let r = crate::repo::open(repo.path()).unwrap();
+        let d = r
+            .data_tables(
+                None,
+                "Assets/Boats.asset",
+                Some(&Version::Head),
+                &Version::Worktree,
+            )
+            .unwrap();
+        assert_eq!(d.kind, "ScriptableObject · BoatDatabase");
+        assert_eq!(d.tables[0].name, "fields");
+        assert_eq!(d.tables[0].rows.len(), 2, "m_Name and version");
+        let boats = &d.tables[1];
+        assert_eq!(boats.columns, ["id", "speed", "prefab", "upgrades[0].cost"]);
+        assert_eq!(boats.key.as_deref(), Some("id"));
+        assert_eq!(
+            boats.rows[0].cells[1],
+            [Some("12".into()), Some("13.5".into())]
+        );
+        assert_eq!(boats.rows[0].cells[2][1].as_deref(), Some("Skiff.prefab"));
+        assert_eq!(boats.rows[1].cells[2][1].as_deref(), Some("none"));
+        assert_eq!((boats.changed, boats.added), (1, 1));
+
+        let csv = r
+            .data_tables(
+                None,
+                "Data/stats.csv",
+                Some(&Version::Head),
+                &Version::Worktree,
+            )
+            .unwrap();
+        assert_eq!(csv.kind, "CSV");
+        assert_eq!(csv.tables[0].changed_cells, 1);
+        let added = r
+            .data_tables(
+                None,
+                "Data/new.csv",
+                Some(&Version::Head),
+                &Version::Worktree,
+            )
+            .unwrap();
+        assert_eq!(added.tables[0].added, 0, "a new file compares as itself");
+        repo.write(
+            "Assets/Hull.asset",
+            "--- !u!43 &4300000\nMesh:\n  m_Name: Hull\n",
+        );
+        let err = r
+            .data_tables(None, "Assets/Hull.asset", None, &Version::Worktree)
+            .unwrap_err();
+        assert!(err.to_string().contains("isn't a ScriptableObject"));
     }
 
     #[test]
