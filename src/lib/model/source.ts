@@ -15,9 +15,6 @@ export function meshFileKind(path: string): ModelKind | null {
   return /\.asset$/i.test(path) ? "asset" : modelKind(path);
 }
 
-/** Formats whose file is text, so a source / structure view exists beside 3D. */
-export const hasSourceView = (path: string) => /\.(obj|gltf|prefab)$/i.test(path);
-
 export function toVersion(at: ImageAt): FileVersion {
   if ("commit" in at) {
     return at.at === "commit" ? { commit: at.commit } : { parent: at.commit };

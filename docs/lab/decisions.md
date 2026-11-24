@@ -3,6 +3,53 @@
 Verdicts from the lab rounds (`docs/lab/index.html`), newest first. Each entry: date, Max's words in
 quotes, what came with it, and what isn't applied yet. Feeds the decision log in `docs/spec.md`.
 
+## R7 · Previews for more file types (2026-11-24)
+
+Brief (Max, 2026-11-24): "Would be awesome if we can preview/compare: images pdfs sounds textures
+mats and many more game dev or dev file formats". Images and textures already exist (image diff,
+texture viewer); `.svg` already opens in the image diff.
+
+- **Decided:** one batch with every format offered. Max picked "Unity .mat, Audio, PDF, Fonts + SVG
+  + video" and "Sprite atlases/slices, Animation curves, Data tables, Unity scenes 3D".
+- An adversarial review ran before the round was shown; its fixes are in the page (SVG marked as
+  existing, `.spriteatlas` split from sprite sheets, no spinning ball or drifting scene camera per
+  R6's "Never", `.mat` / `.anim` / ScriptableObject storage costs, AIFF and codec limits, counts
+  corrected, new states: `.meta`-only change, binary Unity asset, conflict side picker).
+- **Decided:** every Claude's pick on `docs/lab/viewers.html`. Max: "Go with your picks". That is:
+  1. **Shared frame as a rule:** the header holds only how the two versions are arranged (Side by
+     side / Swipe / Onion; Stacked / Overlay for sound); every other view switch lives in the pill
+     over the view; Expand on the right. Frames that broke this get redrawn when built.
+  2. **Defaults:** M1 Ball + changes, A1 Stacked lanes + A/B, P1 Pages + changed-page rail, T1
+     Specimen + glyph grid, S1 as today (plus an attribute caption and Source), V1 Synced players,
+     SP1 Slices over the texture, AC1 Curve editor, D1 Grid with cell diff, U1 R6 Studio +
+     hierarchy. The other variants come later as modes, one at a time (A2 → Overlay, P2 → Text,
+     T2 → Onion, AC2 → Dope sheet, D2 → nested cells, V2 → scrub preview, U2 → Map).
+  3. **Unity text files** (.mat, .anim, .asset, .unity): R6's "Structure | 3D" grows to
+     **Visual | Structure | Source**, opening in Visual, remembered per format.
+  4. **Audio and video:** never autoplay, video starts muted, one app-wide volume.
+  5. **Remembered choices** (A/B, Stacked/Overlay, PDF Text, Changed rows, Curves/Dope sheet…):
+     per format.
+  6. **New dependencies:** pdf.js (frontend); a Rust font parser (`ttf-parser` or `skrifa`, plus
+     WOFF2 decompression); `symphonia` (Rust audio decoding: AIFF, true rate, loudness,
+     spectrogram); a Rust MP4/MOV container parser for fps and codec. No ffmpeg / ffprobe.
+  7. **A `.meta`-only change** opens the asset's viewer with an "import settings changed" note.
+  8. **"Your mesh" (.mat) and "3D" (.anim):** a reverse lookup offers a list of users, first one
+     preselected.
+  9. **TextMeshPro font assets:** later; the .otf / .ttf viewer first.
+  10. **Scenes:** a merged Changes view as an extra mode next to side by side; a scene opens in
+      Structure first above 20k objects (a guess, to measure).
+  11. **Auto-download:** the 25 MiB LFS rule holds for audio and video; "Open in default app"
+      writes the old version to the OS temp folder, deleted when gitgud closes.
+  12. **Build order:** fonts, .mat, audio, data tables, PDF, video, sprite sheets, curves, scenes.
+      SVG already works.
+- **Came with the picks, not discussed separately:** `.spriteatlas` changes show as a packables
+  table (the packed page lives in `Library/`); a `.asset` picks its viewer by its first object
+  (ScriptableObject → grid, Mesh → 3D, TMP font → later, else Structure); binary Unity assets get a
+  "binary format" card pointing to the Force Text check; all viewers work in the conflict side
+  picker with sides named Yours / Theirs (Parent / Commit in a commit).
+- **Not applied yet:** nothing is built. The frames on the page that break rule 1 (A1, AC1, D1, P1,
+  M1 / SP1 pill position, U1) aren't redrawn.
+
 ## R6 · 3D preview (2026-11-23)
 
 Brief (Max, 2026-11-23): "a 3D preview of prefabs, fbx, meshes, with texture et al if applicable".

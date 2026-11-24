@@ -1328,6 +1328,43 @@ async fn model_info(
 }
 
 #[tauri::command]
+async fn unity_asset_info(
+    session: State<'_, Session>,
+    id: u32,
+    path: String,
+    version: gitgud_core::image::Version,
+) -> Result<gitgud_core::preview::UnityAssetInfo, Error> {
+    session.unity_asset_info(id, &path, &version)
+}
+
+/// Writes `path` at `version` to a temp copy and opens it in its default app.
+#[tauri::command]
+async fn open_version(
+    session: State<'_, Session>,
+    id: u32,
+    path: String,
+    version: gitgud_core::image::Version,
+    label: String,
+) -> Result<String, Error> {
+    let copy = session.open_copy(id, &path, &version, &label)?;
+    open_in_default_app(&copy)?;
+    Ok(copy.to_string_lossy().into_owned())
+}
+
+fn open_in_default_app(file: &std::path::Path) -> Result<(), Error> {
+    #[cfg(windows)]
+    let mut cmd = std::process::Command::new("explorer");
+    #[cfg(target_os = "macos")]
+    let mut cmd = std::process::Command::new("open");
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut cmd = std::process::Command::new("xdg-open");
+    cmd.arg(file)
+        .spawn()
+        .map(drop)
+        .map_err(|e| Error::Refused(format!("cannot open {}: {e}", file.display())))
+}
+
+#[tauri::command]
 async fn unity_conflict_table(
     session: State<'_, Session>,
     id: u32,
@@ -1688,6 +1725,8 @@ fn app_with_library<R: Runtime>(builder: Builder<R>, library: Option<LibraryStor
             worktree_unity_diff,
             commit_unity_diff,
             model_info,
+            unity_asset_info,
+            open_version,
             unity_conflict_table,
             resolve_unity_conflict,
             unity_post_merge_check,
@@ -1731,6 +1770,7 @@ pub fn run() {
             let store = LibraryStore::load(library_path)
                 .map_err(|e| std::io::Error::other(e.to_string()))?;
             app.manage(store);
+            std::thread::spawn(gitgud_core::preview::clean_stale_open_copies);
 
             #[cfg(windows)]
             if let Some(window) = app.get_webview_window("main")
@@ -1750,8 +1790,13 @@ pub fn run() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|_, event| {
+            if let tauri::RunEvent::Exit = event {
+                gitgud_core::preview::clean_open_copies();
+            }
+        });
 }
 
 #[cfg(test)]
@@ -1847,6 +1892,14 @@ mod tests {
             assert_eq!(info["materials"][0]["baseMap"], Value::Null);
             assert!(info["key"].is_string());
         }
+        let asset = ipc
+            .call(
+                "unity_asset_info",
+                json!({ "id": id, "path": "Assets/hull.mat", "version": "head" }),
+            )
+            .unwrap();
+        assert_eq!(asset["binary"], false);
+        assert_eq!(asset["classId"], 21);
         let stats = ipc.call("cache_stats", json!({ "id": id })).unwrap();
         assert_eq!(stats["modelInfos"], 2);
         assert!(

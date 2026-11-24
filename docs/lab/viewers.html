@@ -1,0 +1,851 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gitgud Lab · R7 file previews</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;600&family=Fraunces:opsz,wght@9..144,400;9..144,600&display=swap">
+<style>
+:root {
+  --bg: #f4f5f8; --panel: #ffffff; --line: #dde1e8; --fg: #18202c; --muted: #5a6577;
+  --accent: #e0561f; --pick: #efe6ff; --pick-ink: #5b2fa6; --open: #fff1d6; --open-ink: #8a5a00;
+  --a-bg: #f7f8fa; --a-panel: #ffffff; --a-line: #e3e6ec; --a-fg: #1b2330; --a-muted: #687386; --a-sel: #e4edfb; --a-hover: #f0f2f6;
+  --a-warn: #fff0d9; --a-warn-ink: #8a5300;
+  --l0: #0072b2; --l1: #d55e00;
+  --c-add: #1f9e6e; --c-del: #d8452f; --c-mod: #c98a00;
+  --c-add-bg: #dcf5ea; --c-del-bg: #fde4df; --c-mod-bg: #fff2cf;
+  --stu-1: #f3f4f7; --stu-2: #dfe2e7; --stu-3: #c7ccd4;
+  --display: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
+  --body: "Inter", "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", Consolas, "Courier New", monospace;
+}
+@media (prefers-color-scheme: dark) { :root {
+  --bg: #10141b; --panel: #171d26; --line: #29313d; --fg: #e4e8ef; --muted: #96a0b0;
+  --accent: #ff7a45; --pick: #2c2141; --pick-ink: #cdb4ff; --open: #3a2d12; --open-ink: #f5c86a;
+  --a-bg: #14181f; --a-panel: #1a1f28; --a-line: #2a313c; --a-fg: #dde2ea; --a-muted: #8b95a5; --a-sel: #22324b; --a-hover: #20262f;
+  --a-warn: #3a2b12; --a-warn-ink: #f2c46a;
+  --l0: #56b4e9; --l1: #ff8c42;
+  --c-add: #2fd3a0; --c-del: #ff6b5a; --c-mod: #f0c040;
+  --c-add-bg: #123a2e; --c-del-bg: #3d1f18; --c-mod-bg: #3a2f10;
+  --stu-1: #4a505a; --stu-2: #2c3038; --stu-3: #1b1e23;
+  color-scheme: dark; } }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.55 var(--body); }
+.wrap { max-width: 1240px; margin: 0 auto; padding: 28px 16px 72px; }
+h1, h2, h3 { font-family: var(--display); letter-spacing: -.01em; text-wrap: balance; }
+h1 { font-size: clamp(28px, 4vw, 40px); line-height: 1.1; margin: 4px 0 10px; }
+h2 { font-size: 24px; margin: 0; } h3 { font-size: 17px; margin: 0; }
+p { margin: 0; max-width: 78ch; }
+a { color: var(--l0); }
+.eyebrow { font: 600 11.5px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.tag { display: inline-block; font: 600 11px var(--mono); padding: 2px 7px; border-radius: 4px; white-space: nowrap; vertical-align: 1px; }
+.t-pick { background: var(--pick); color: var(--pick-ink); }
+.t-prop { background: var(--open); color: var(--open-ink); }
+.t-dec { background: var(--panel); color: var(--muted); border: 1px solid var(--line); }
+header.top { display: grid; gap: 12px; padding-bottom: 22px; border-bottom: 1px solid var(--line); }
+header.top p { color: var(--muted); }
+.brief { display: grid; gap: 6px; font-size: 14px; padding: 12px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+.brief div { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.toc { display: flex; flex-wrap: wrap; gap: 8px; }
+.toc a { font: 500 13px var(--body); color: var(--fg); text-decoration: none; border: 1px solid var(--line); background: var(--panel); border-radius: 999px; padding: 3px 11px; }
+.toc a.pick { border-color: var(--pick-ink); color: var(--pick-ink); }
+.fmt { padding-top: 46px; display: grid; gap: 14px; }
+.fmt > .fh { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; border-bottom: 2px solid var(--line); padding-bottom: 8px; }
+.fmt > .fh .n { font: 700 13px var(--mono); color: var(--muted); }
+.fmt > .fh .ext { font: 11.5px var(--mono); color: var(--muted); }
+.pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px; }
+.var { display: grid; gap: 9px; align-content: start; min-width: 0; }
+.vhead { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
+.vhead .lab { font: 700 14px var(--mono); color: var(--accent); }
+.vhead h3 { font-size: 16px; }
+.idea { color: var(--muted); font-size: 13.5px; }
+.gc { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 16px; font-size: 13px; }
+.gc h4 { margin: 0 0 2px; font: 600 10.5px var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.gc ul { margin: 0; padding-left: 16px; display: grid; gap: 2px; }
+.pickline { background: var(--pick); color: var(--pick-ink); border-radius: 8px; padding: 9px 13px; font-size: 13.5px; }
+ol.q { margin: 0; padding-left: 22px; display: grid; gap: 9px; max-width: 90ch; }
+ol.q li::marker { font: 600 13px var(--mono); color: var(--accent); }
+code { font: 12.5px var(--mono); background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+kbd { font: 11px var(--mono); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; background: var(--panel); }
+@media (max-width: 980px) { .pair { grid-template-columns: 1fr; } }
+
+/* ---------- the shared frame (R6 language) ---------- */
+.frame { border: 1px solid var(--a-line); border-radius: 10px; overflow: hidden; background: var(--a-panel); color: var(--a-fg);
+  box-shadow: 0 1px 2px rgb(0 0 0 / .06), 0 10px 28px rgb(0 0 0 / .07); font: 12px var(--body); min-width: 0; }
+.vh { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--a-line); min-height: 34px; flex-wrap: wrap; }
+.fp { font: 11.5px var(--mono); color: var(--a-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1 1 120px; }
+.fp b { color: var(--a-fg); font-weight: 600; }
+.pill { font: 10.5px var(--mono); padding: 1px 6px; border-radius: 4px; background: var(--a-sel); color: var(--a-fg); white-space: nowrap; }
+.seg { display: inline-flex; border: 1px solid var(--a-line); border-radius: 5px; overflow: hidden; background: var(--a-panel); flex: none; }
+.seg button, .tog, .btn { all: unset; font: 10.5px var(--body); padding: 2px 8px; color: var(--a-muted); cursor: pointer; white-space: nowrap; }
+.seg button { border-right: 1px solid var(--a-line); }
+.seg button:last-child { border-right: 0; }
+.seg button:hover, .tog:hover, .btn:hover { background: var(--a-hover); color: var(--a-fg); }
+.seg button.on, .tog.on { background: var(--a-sel); color: var(--a-fg); font-weight: 600; }
+.tog, .btn { border: 1px solid var(--a-line); border-radius: 5px; }
+.btn.prim { background: var(--l0); color: #fff; border-color: transparent; font-weight: 600; }
+.body { position: relative; height: 340px; overflow: hidden; background: var(--a-bg); }
+.studio { background: radial-gradient(120% 95% at 50% 30%, var(--stu-1), var(--stu-2) 55%, var(--stu-3)); }
+.lbl { position: absolute; top: 8px; font: 10.5px var(--mono); padding: 2px 7px; border-radius: 4px; background: rgb(10 14 20 / .55); color: #f2f4f7; pointer-events: none; white-space: nowrap; z-index: 2; }
+.chrome { position: absolute; top: 8px; right: 8px; display: flex; gap: 6px; padding: 4px; border-radius: 8px; background: rgb(16 19 24 / .55); backdrop-filter: blur(6px); z-index: 3; }
+.chrome .seg, .chrome .tog { background: transparent; border-color: rgb(255 255 255 / .16); }
+.chrome .seg button { border-color: rgb(255 255 255 / .16); color: #c9d0da; }
+.chrome .tog { color: #c9d0da; }
+.chrome .seg button.on, .chrome .tog.on { background: rgb(255 255 255 / .2); color: #fff; }
+.chrome .seg button:hover, .chrome .tog:hover { background: rgb(255 255 255 / .1); color: #fff; }
+.cap { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 12px; padding: 7px 10px; border-top: 1px solid var(--a-line); font: 11px var(--mono); color: var(--a-muted); }
+.cap b { color: var(--a-fg); font-weight: 600; }
+.d-add { color: var(--c-add); } .d-del { color: var(--c-del); } .d-mod { color: var(--c-mod); }
+.split { position: absolute; inset: 0; display: grid; grid-template-columns: 1fr 1fr; }
+.split > * { position: relative; min-width: 0; overflow: hidden; }
+.split > * + * { border-left: 1px solid rgb(127 135 150 / .45); }
+.split > .pages, .split > .spec { position: relative; inset: auto; }
+.warn { position: absolute; left: 10px; bottom: 10px; max-width: calc(100% - 20px); padding: 6px 10px; border-radius: 6px; background: var(--a-warn); color: var(--a-warn-ink); font: 11px var(--body); z-index: 3; }
+.transport { position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: center; gap: 9px; padding: 16px 12px 8px; color: #e8ecf2;
+  font: 10.5px var(--mono); background: linear-gradient(transparent, rgb(8 10 14 / .72)); z-index: 3; }
+.transport .play { all: unset; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; cursor: pointer; font-size: 9px; background: #fff; color: #1b1f25; flex: none; }
+.transport input[type=range] { flex: 1; min-width: 60px; accent-color: #fff; }
+.transport .time { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.transport .ab { all: unset; cursor: pointer; font: 600 10.5px var(--mono); padding: 1px 7px; border-radius: 4px; border: 1px solid rgb(255 255 255 / .3); }
+.transport .ab.on { background: rgb(255 255 255 / .22); }
+canvas { display: block; }
+
+/* table bits used by several viewers */
+table.dt { border-collapse: collapse; width: 100%; font: 11px var(--mono); }
+table.dt th, table.dt td { padding: 3px 8px; border-bottom: 1px solid var(--a-line); text-align: left; white-space: nowrap; }
+table.dt th { font: 600 10px var(--mono); letter-spacing: .05em; text-transform: uppercase; color: var(--a-muted); position: sticky; top: 0; background: var(--a-panel); z-index: 1; }
+tr.add td { background: var(--c-add-bg); } tr.del td { background: var(--c-del-bg); color: var(--a-muted); text-decoration: line-through; }
+td.mod { background: var(--c-mod-bg); }
+.sw { display: inline-block; width: 11px; height: 11px; border-radius: 2px; vertical-align: -1px; border: 1px solid rgb(0 0 0 / .2); margin-right: 5px; }
+.arrow { color: var(--a-muted); padding: 0 4px; }
+.mono { font-family: var(--mono); }
+
+/* audio */
+.lane { position: relative; height: 50%; }
+.lane + .lane { border-top: 1px solid var(--a-line); }
+.lane .ln { position: absolute; left: 8px; top: 6px; font: 10px var(--mono); color: var(--a-muted); z-index: 2; }
+.playhead { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--l1); left: 0; pointer-events: none; z-index: 2; }
+/* pdf */
+.pages { position: absolute; inset: 0; overflow: auto; padding: 14px; display: grid; gap: 12px; justify-items: center; }
+.page { width: 100%; max-width: 230px; aspect-ratio: 1 / 1.414; background: #fff; color: #222; box-shadow: 0 1px 4px rgb(0 0 0 / .25); padding: 14px 16px; font: 6.4px/1.5 Georgia, serif; position: relative; overflow: hidden; }
+.page h5 { font: 700 10px var(--display); margin: 0 0 6px; color: #111; }
+.page .ph { background: #d9dde3; height: 40px; margin: 6px 0; border-radius: 2px; }
+.page .hl-mod { background: rgb(240 192 64 / .45); }
+.page .hl-add { background: rgb(47 211 160 / .35); }
+.page .hl-del { background: rgb(255 107 90 / .35); text-decoration: line-through; }
+.thumbs { position: absolute; left: 0; top: 0; bottom: 0; width: 64px; border-right: 1px solid var(--a-line); background: var(--a-panel); overflow: auto; padding: 8px 6px; display: grid; gap: 8px; align-content: start; z-index: 2; }
+.thumb { aspect-ratio: 1 / 1.414; background: #fff; border: 1px solid var(--a-line); border-radius: 2px; position: relative; font: 9px var(--mono); color: #667; display: grid; place-items: end center; padding-bottom: 2px; }
+.thumb.mod { box-shadow: 0 0 0 2px var(--c-mod); } .thumb.add { box-shadow: 0 0 0 2px var(--c-add); }
+.thumb.on { outline: 2px solid var(--l0); outline-offset: 2px; }
+/* text diff */
+.tdiff { position: absolute; inset: 0; overflow: auto; font: 11px/1.6 var(--mono); padding: 8px 0; }
+.tdiff div { padding: 0 12px; white-space: pre-wrap; }
+.tdiff .a { background: var(--c-add-bg); } .tdiff .d { background: var(--c-del-bg); }
+.tdiff .pg { color: var(--a-muted); font-size: 10px; padding-top: 6px; }
+/* fonts */
+.spec { position: absolute; inset: 0; overflow: auto; padding: 14px 16px; display: grid; gap: 10px; align-content: start; }
+.spec .big { font-size: 30px; line-height: 1.15; }
+.glyphs { display: grid; grid-template-columns: repeat(auto-fill, minmax(30px, 1fr)); gap: 3px; }
+.glyphs span { aspect-ratio: 1; display: grid; place-items: center; border: 1px solid var(--a-line); border-radius: 3px; font-size: 17px; background: var(--a-panel); }
+.glyphs span.add { background: var(--c-add-bg); border-color: var(--c-add); }
+.glyphs span.del { background: var(--c-del-bg); border-color: var(--c-del); opacity: .7; }
+.glyphs span.mod { background: var(--c-mod-bg); border-color: var(--c-mod); }
+/* curves */
+.tracks { position: absolute; left: 0; top: 0; bottom: 0; width: 168px; border-right: 1px solid var(--a-line); overflow: auto; background: var(--a-panel); font: 11px var(--body); padding: 6px 0; z-index: 2; }
+.tracks div { padding: 2px 10px; display: flex; gap: 6px; align-items: center; white-space: nowrap; }
+.tracks div.on { background: var(--a-sel); }
+.tracks .k { margin-left: auto; font: 9.5px var(--mono); }
+.graph { position: absolute; left: 168px; right: 0; top: 0; bottom: 0; }
+/* data */
+.grid { position: absolute; inset: 0; overflow: auto; }
+.cards { position: absolute; inset: 0; overflow: auto; padding: 10px; display: grid; gap: 8px; align-content: start; }
+.card { border: 1px solid var(--a-line); border-radius: 7px; background: var(--a-panel); padding: 7px 10px; display: grid; gap: 3px; font: 11.5px var(--body); }
+.card .ch { display: flex; gap: 8px; align-items: center; font-weight: 600; }
+.card .row { display: grid; grid-template-columns: 110px 1fr; gap: 8px; font: 11px var(--mono); }
+.card .row span:first-child { color: var(--a-muted); font-family: var(--body); }
+.card.add { border-left: 3px solid var(--c-add); } .card.mod { border-left: 3px solid var(--c-mod); } .card.del { border-left: 3px solid var(--c-del); opacity: .75; }
+/* scene list */
+.hier { position: absolute; right: 8px; top: 48px; max-height: calc(100% - 60px); width: 190px; background: rgb(16 19 24 / .55); backdrop-filter: blur(6px); border-radius: 8px; color: #dfe4ea; font: 11px var(--body); padding: 6px 0; overflow: auto; z-index: 3; }
+.hier input { all: unset; display: block; margin: 0 8px 6px; padding: 2px 7px; border-radius: 4px; background: rgb(255 255 255 / .1); font: 10.5px var(--mono); width: calc(100% - 30px); }
+.hier div { padding: 1px 10px; display: flex; gap: 6px; align-items: center; white-space: nowrap; cursor: pointer; }
+.hier div:hover { background: rgb(255 255 255 / .1); }
+.dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.lfs { position: absolute; inset: 0; display: grid; place-items: center; background: var(--a-bg); }
+.lfs .card2 { display: grid; gap: 8px; justify-items: start; padding: 16px 18px; border: 1px solid var(--a-line); border-radius: 8px; background: var(--a-panel); max-width: 380px; }
+.lfs .t { font: 600 13px var(--body); } .lfs .m { font: 11px var(--mono); color: var(--a-muted); }
+.states { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px; }
+.states .body { height: 220px; }
+@media (max-width: 980px) { .states { grid-template-columns: 1fr; } }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+} }
+</script>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="eyebrow">gitgud lab · round 7 · <a href="index.html">all rounds</a></div>
+    <h1>R7 · Previews for more file types</h1>
+    <p>How ten more kinds of file look when you click them in the working copy, a commit or the conflict side picker, and how two versions compare. Each format has two variants; one is Claude's pick. Everything is example data drawn in the page (a boat game's assets, not your repos). Images and textures aren't here: the image diff and texture viewer already cover them.</p>
+    <div class="brief">
+      <div><span class="tag t-dec">decided 2026-11-24</span>One batch with every format offered. Max picked "Unity .mat, Audio, PDF, Fonts + SVG + video" and "Sprite atlases/slices, Animation curves, Data tables, Unity scenes 3D" (8 picks; split into 10 sections here).</div>
+      <div><span class="tag t-dec">decided 2026-11-23 (R6)</span>3D: Studio look, Textured / Changes, Side by side / Swipe / Onion, inline + Expand, backdrop follows the theme.</div>
+      <div><span class="tag t-dec">decided 2026-11-24</span>Every Claude's pick on this page. Max: "Go with your picks".</div>
+    </div>
+    <nav class="toc" aria-label="Round 7">
+      <a href="#frame">The shared frame</a><a href="#mat">1 .mat</a><a href="#audio">2 Audio</a><a href="#pdf">3 PDF</a><a href="#font">4 Fonts</a><a href="#svg">5 SVG</a><a href="#video">6 Video</a><a href="#sprite">7 Sprites</a><a href="#anim">8 Curves</a><a href="#data">9 Data</a><a href="#scene">10 Scenes</a><a href="#states">States</a><a href="#q" class="pick">Verdict · all Claude's picks</a>
+    </nav>
+  </header>
+
+  <section class="fmt" id="frame">
+    <div class="fh"><span class="n">0</span><h2>The shared frame</h2><span class="tag t-prop">proposal · Claude's pick</span></div>
+    <p class="idea">Every viewer keeps R6's frame so all previews read as one family: the file path and a kind pill on the left of the header; then <b>how the two versions are arranged</b>, the format's compare modes (Side by side, Swipe, Onion where pixels overlay; Stacked / Overlay for sound); Expand to fill the window. Format controls (shape, slices, which rows, Wave / Spectrogram) float in the pill over the view; numbers live in the caption line along the bottom, with deltas coloured <span class="d-add">added</span> / <span class="d-del">removed</span> / <span class="d-mod">changed</span>. Text-based Unity files already open in the structural diff, so they get R6's prefab switch grown to three: <b>Visual | Structure | Source</b>. The alternative, each viewer mimicking its own tool (a DAW, a PDF reader, a spreadsheet), would make ten different UIs to learn. Not every frame below follows this yet (some put view switches in the header); the questions ask whether to make it the rule.</p>
+  </section>
+
+  <!-- 1 · MAT -->
+  <section class="fmt" id="mat">
+    <div class="fh"><span class="n">1</span><h2>Unity material</h2><span class="ext">.mat</span></div>
+    <div class="pair">
+      <div class="var">
+        <div class="vhead"><span class="lab">R7-M1</span><h3>Ball + changes</h3><span class="tag t-pick">Claude's pick</span></div>
+        <div class="frame" data-modes="Side by side,Swipe,Onion">
+          <div class="vh"><span class="fp">Assets/Art/Boats/Materials/<b>M_Hull_Navy.mat</b></span><span class="pill">Material · URP/Lit</span><span class="seg modes"></span><span class="seg"><button class="on">Visual</button><button>Structure</button><button>Source</button></span><button class="tog">Expand</button></div>
+          <div class="body studio" style="height:250px">
+            <div class="split"><div><span class="lbl" style="left:8px">HEAD</span><canvas data-ball="old"></canvas></div><div><span class="lbl" style="left:8px">Working copy</span><canvas data-ball="new"></canvas></div></div>
+            <div class="chrome" style="top:auto;bottom:8px"><span class="seg"><button class="on">Sphere</button><button>Cube</button><button>Plane</button><button>Your mesh</button></span></div>
+          </div>
+          <table class="dt">
+            <tr><th>Property</th><th>HEAD</th><th>Working copy</th></tr>
+            <tr><td>Base Map</td><td>T_Hull_Red.png</td><td class="mod">T_Hull_Navy.png</td></tr>
+            <tr><td>Base Color</td><td><span class="sw" style="background:#ffffff"></span>#FFFFFF</td><td class="mod"><span class="sw" style="background:#dfe8ff"></span>#DFE8FF</td></tr>
+            <tr><td>Smoothness</td><td>0.45</td><td class="mod">0.62</td></tr>
+            <tr><td>Normal Map</td><td>none</td><td class="mod">T_Hull_Normal.png</td></tr>
+          </table>
+          <div class="cap"><b>4 changed</b> · keyword <span class="d-add">+_NORMALMAP</span> · 23 unchanged hidden <button class="tog">Show all</button></div>
+        </div>
+        <p class="idea">The material on a ball in the Studio look (still; orbit and <kbd>F</kbd> as decided in R6, both versions on one camera), with only what changed listed under it: colours as swatches, textures by name. "Your mesh" previews it on a mesh that uses it in the repo.</p>
+        <div class="gc"><div><h4>Good</h4><ul><li>See it and read it at once.</li><li>Same stage as R6, so it looks like the prefab view.</li></ul></div><div><h4>Costs</h4><ul><li>Custom shaders are approximated (same note as R6).</li><li>A <code>.mat</code> stores internal names (<code>_BaseMap</code>, <code>_Smoothness</code>) and keeps properties of earlier shaders: friendly names need a table per known shader (Standard, URP, HDRP); custom shaders show raw names, stale properties marked.</li><li>"Your mesh" needs a reverse lookup (which prefabs use this material), which doesn't exist yet.</li></ul></div></div>
+      </div>
+      <div class="var">
+        <div class="vhead"><span class="lab">R7-M2</span><h3>Inspector sheet</h3><span class="tag t-prop">proposal</span></div>
+        <div class="frame">
+          <div class="vh"><span class="fp">Assets/Art/Boats/Materials/<b>M_Hull_Navy.mat</b></span><span class="pill">Material · URP/Lit</span><span class="seg"><button class="on">Visual</button><button>Structure</button><button>Source</button></span><button class="tog">Expand</button></div>
+          <div class="body" style="height:388px; overflow:auto">
+            <table class="dt">
+              <tr><th style="width:30%">Surface Inputs</th><th><canvas data-ball="old" data-thumb="1" style="display:inline-block;width:34px;height:34px;vertical-align:middle"></canvas> HEAD</th><th><canvas data-ball="new" data-thumb="1" style="display:inline-block;width:34px;height:34px;vertical-align:middle"></canvas> Working copy</th></tr>
+              <tr><td>Workflow</td><td>Metallic</td><td>Metallic</td></tr>
+              <tr><td>Surface Type</td><td>Opaque</td><td>Opaque</td></tr>
+              <tr><td>Base Map</td><td><span class="sw" style="background:linear-gradient(#c8442f 55%,#f4f1ea 55% 62%,#1d232c 62%)"></span>T_Hull_Red</td><td class="mod"><span class="sw" style="background:linear-gradient(#2a4c7a 55%,#f4f1ea 55% 62%,#1d232c 62%)"></span>T_Hull_Navy</td></tr>
+              <tr><td>Base Color</td><td><span class="sw" style="background:#fff"></span>#FFFFFF</td><td class="mod"><span class="sw" style="background:#dfe8ff"></span>#DFE8FF</td></tr>
+              <tr><td>Metallic</td><td>0</td><td>0</td></tr>
+              <tr><td>Smoothness</td><td>0.45</td><td class="mod">0.62</td></tr>
+              <tr><td>Normal Map</td><td>none</td><td class="mod">T_Hull_Normal · 1.0</td></tr>
+              <tr><td>Occlusion</td><td>—</td><td>—</td></tr>
+              <tr><td>Emission</td><td>off</td><td>off</td></tr>
+              <tr><td>Base Map tiling</td><td>0.6, 2.2</td><td>0.6, 2.2</td></tr>
+              <tr><td>Render Queue</td><td>2000</td><td>2000</td></tr>
+            </table>
+          </div>
+        </div>
+        <p class="idea">Like Unity's Inspector: every property in order, both versions side by side, changed cells amber. Tiny ball thumbnails in the header instead of a 3D stage.</p>
+        <div class="gc"><div><h4>Good</h4><ul><li>Reads exactly like Unity.</li><li>Full context, nothing hidden.</li></ul></div><div><h4>Costs</h4><ul><li>You don't see the result, just values.</li><li>Long; the change is one row among many.</li></ul></div></div>
+      </div>
+    </div>
+    <div class="pickline"><b>Claude's pick: M1.</b> A material is visual first. M1 shows the result and still lists the exact changes, and the full sheet is one click away (Show all).</div>
+  </section>
+
+  <!-- 2 · AUDIO -->
+  <section class="fmt" id="audio">
+    <div class="fh"><span class="n">2</span><h2>Audio</h2><span class="ext">.wav .ogg .mp3 .flac .aiff</span></div>
+    <div class="pair">
+      <div class="var">
+        <div class="vhead"><span class="lab">R7-A1</span><h3>Stacked lanes + A/B</h3><span class="tag t-pick">Claude's pick</span></div>
+        <div class="frame" data-audio="lanes">
+          <div class="vh"><span class="fp">Assets/Audio/SFX/<b>Horn_Long.wav</b></span><span class="pill">WAV · LFS</span><span class="seg"><button class="on">Stacked</button><button>Overlay</button></span><button class="tog">Expand</button></div>
+          <div class="body studio">
+            <div class="lane"><span class="ln">HEAD · 2.40 s</span><canvas data-wave="old"></canvas></div>
+            <div class="lane"><span class="ln">Working copy · 2.85 s</span><canvas data-wave="new"></canvas></div>
+            <div class="playhead"></div>
+            <div class="transport"><button class="play" data-act="play">▶</button><button class="ab on" data-act="a">A</button><button class="ab" data-act="b">B</button><input type="range" min="0" max="1000" value="0" data-act="scrub"><span class="time">0.00 / 2.85 s</span></div>
+          </div>
+          <div class="cap"><b>2.40 → 2.85 s</b> <span class="d-mod">+0.45 s</span> · 48 kHz · mono · peak −3.1 → <span class="d-mod">−1.2 dBFS</span> · loudness <span class="d-mod">+2.4 LU</span></div>
+        </div>
+        <p class="idea">One lane per version on a shared time axis and playhead (press play to hear the example). A / B swaps which version you hear at the same moment, like a DAW's compare. Stereo files get two thin lanes per version.</p>
+        <div class="gc"><div><h4>Good</h4><ul><li>A/B at the same position is how you actually judge sound.</li><li>Length and loudness changes are spelled out.</li></ul></div><div><h4>Costs</h4><ul><li>Two lanes halve the height.</li><li>The webview decodes WAV, MP3, OGG and FLAC but not AIFF, and resamples everything: AIFF decoding and the true rate, channels and loudness come from Rust (a decoder crate, see question 6).</li></ul></div></div>
+      </div>
+      <div class="var">
+        <div class="vhead"><span class="lab">R7-A2</span><h3>Overlay + spectrogram</h3><span class="tag t-prop">proposal</span></div>
+        <div class="frame" data-audio="overlay">
+          <div class="vh"><span class="fp">Assets/Audio/SFX/<b>Horn_Long.wav</b></span><span class="pill">WAV · LFS</span><span class="seg"><button class="on">Wave</button><button>Spectrogram</button></span><button class="tog">Expand</button></div>
+          <div class="body studio">
+            <canvas data-wave="overlay"></canvas>
+            <div class="chrome"><span class="seg"><button class="on">Both</button><button>HEAD</button><button>Working</button></span></div>
+            <div class="playhead"></div>
+            <div class="transport"><button class="play" data-act="play">▶</button><input type="range" min="0" max="1000" value="0" data-act="scrub"><span class="time">0.00 / 2.85 s</span></div>
+          </div>
+          <div class="cap"><span style="color:var(--l1)">■</span> HEAD ghost · <span style="color:var(--l0)">■</span> working copy · <b>+0.45 s</b> · peak <span class="d-mod">+1.9 dB</span></div>
+        </div>
+        <p class="idea">Both waveforms on one lane, HEAD as an orange ghost (R6's onion colour), full height. A spectrogram mode shows pitch and tone changes a waveform hides.</p>
+        <div class="gc"><div><h4>Good</h4><ul><li>Timing and envelope changes pop out.</li><li>Spectrogram catches EQ and pitch edits.</li></ul></div><div><h4>Costs</h4><ul><li>No quick A/B listening.</li><li>Overlapping waves get muddy on loud files.</li></ul></div></div>
+      </div>
+    </div>
+    <div class="pickline"><b>Claude's pick: A1.</b> For sound, listening beats looking, and A/B at the same playhead is the fastest way to hear a change. A2's overlay could live inside A1 as its Overlay mode. Not drawn, a third idea worth weighing: a difference lane (HEAD minus working copy) that is flat where nothing changed.</div>
+  </section>
+
+  <!-- 3 · PDF -->
+  <section class="fmt" id="pdf">
+    <div class="fh"><span class="n">3</span><h2>PDF</h2><span class="ext">.pdf</span></div>
+    <div class="pair">
+      <div class="var">
+        <div class="vhead"><span class="lab">R7-P1</span><h3>Pages + changed-page rail</h3><span class="tag t-pick">Claude's pick</span></div>
+        <div class="frame">
+          <div class="vh"><span class="fp">Docs/Design/<b>Harbour_Level_GDD.pdf</b></span><span class="pill">PDF · 12 pages</span><span class="seg"><button class="on">Side by side</button><button>Swipe</button><button>Onion</button><button>Text</button></span><button class="tog">Expand</button></div>
+          <div class="body">
+            <div class="thumbs"><div class="thumb">1</div><div class="thumb">2</div><div class="thumb mod on">3</div><div class="thumb">4</div><div class="thumb add">5</div><div class="thumb">6</div><div style="font:9px var(--mono);color:var(--a-muted);text-align:center">⋮ 7–8</div><div class="thumb mod">9</div></div>
+            <div class="split" style="left:64px">
+              <div class="pages"><span class="lbl" style="left:8px">HEAD · p.3</span><div class="page"><h5>3 · Harbour approach</h5><p>The player enters the harbour from the east channel. Two tugs patrol the outer buoys and <span class="hl-del">turn back at the red marker</span>.</p><div class="ph"></div><p>Docking takes 40 seconds at full throttle. Fuel pickups sit on the north pier.</p></div></div>
+              <div class="pages"><span class="lbl" style="left:8px">Working copy · p.3</span><div class="page"><h5>3 · Harbour approach</h5><p>The player enters the harbour from the east channel. Two tugs patrol the outer buoys and <span class="hl-add">follow the player to the breakwater</span>.</p><div class="ph" style="background:#cfe0d8"></div><p>Docking takes <span class="hl-mod">55</span> seconds at full throttle. Fuel pickups sit on the north pier.</p></div></div>
+            </div>
+          </div>
+          <div class="cap"><b>12 pages</b> · <span class="d-mod">2 changed</span> · <span class="d-add">1 added</span> (p.5) · pages matched by their text, so HEAD p.8 lines up with working p.9</div>
+        </div>
+        <p class="idea">Pages render with pdf.js; a thin rail lists pages with changed ones ringed amber and added ones green. Changes are highlighted on the page; Swipe and Onion work per page like the image diff; Text shows the extracted-text diff.</p>
+        <div class="gc"><div><h4>Good</h4><ul><li>You see the document as printed.</li><li>The rail jumps straight to changed pages in a long PDF.</li></ul></div><div><h4>Costs</h4><ul><li>Pages are small side by side in a narrow pane.</li><li>Highlights need text positions: scanned PDFs get a pixel heatmap instead.</li><li>Finding changed pages means reading every page of both versions: a 300-page PDF shows progress while it scans. pdf.js is a few MB (question 6).</li></ul></div></div>
+      </div>
+      <div class="var">
+        <div class="vhead"><span class="lab">R7-P2</span><h3>Text first</h3><span class="tag t-prop">proposal</span></div>
+        <div class="frame">
+          <div class="vh"><span class="fp">Docs/Design/<b>Harbour_Level_GDD.pdf</b></span><span class="pill">PDF · 12 pages</span><span class="seg"><button class="on">Text</button><button>Pages</button></span><button class="tog">Expand</button></div>
+          <div class="body">
+            <div class="tdiff">
+              <div class="pg">— page 3 · Harbour approach</div>
+              <div>The player enters the harbour from the east channel. Two tugs patrol</div>
+              <div class="d">− the outer buoys and turn back at the red marker.</div>
+              <div class="a">+ the outer buoys and follow the player to the breakwater.</div>
+              <div class="d">− Docking takes 40 seconds at full throttle.</div>
+              <div class="a">+ Docking takes 55 seconds at full throttle.</div>
+              <div class="pg">— page 5 · new</div>
+              <div class="a">+ Storm variant: waves double, tugs stay in port, the fuel</div>
+              <div class="a">+ pickups move to the south pier.</div>
+              <div class="pg">— page 9 · Rewards</div>
+              <div class="d">− Gold medal under 2:30.</div>
+              <div class="a">+ Gold medal under 2:10.</div>
+            </div>
+          </div>
+          <div class="cap"><b>3 pages changed</b> · <span class="d-add">+5</span> <span class="d-del">−3</span> lines · layout changes not shown</div>
+        </div>
+        <p class="idea">The extracted text as a normal diff, grouped by page, like code. Pages are one click away.</p>
+        <div class="gc"><div><h4>Good</h4><ul><li>Fastest to read for design docs and specs.</li><li>Uses the existing diff view.</li></ul></div><div><h4>Costs</h4><ul><li>Images, layout and diagrams changes are invisible.</li><li>Text extraction can scramble columns.</li></ul></div></div>
+      </div>
+    </div>
+    <div class="pickline"><b>Claude's pick: P1.</b> A PDF in a game repo is usually a GDD or a style guide with pictures; P1 keeps them and still points at the changes. P2 lives on as P1's Text mode.</div>
+  </section>
+
+  <!-- 4 · FONTS -->
+  <section class="fmt" id="font">
+    <div class="fh"><span class="n">4</span><h2>Fonts</h2><span class="ext">.ttf .otf .woff .woff2</span></div>
+    <div class="pair">
+      <div class="var">
+        <div class="vhead"><span class="lab">R7-T1</span><h3>Specimen + glyph grid</h3><span class="tag t-pick">Claude's pick</span></div>
+        <div class="frame">
+          <div class="vh"><span class="fp">Assets/UI/Fonts/<b>Harbour-Display.otf</b></span><span class="pill">OTF · v1.2 → v1.3</span><span class="seg"><button class="on">Side by side</button><button>Onion</button></span><button class="tog">Expand</button></div>
+          <div class="body">
+            <div class="split">
+              <div class="spec"><span class="lbl" style="left:8px">HEAD</span><div class="big" style="font-family:'Space Grotesk';font-weight:500;margin-top:18px">Dock at 07:45!</div><div style="font-family:'Space Grotesk';font-size:13px">The quick tug jumps over the lazy barge.</div>
+                <div class="glyphs" style="font-family:'Space Grotesk';font-weight:500"><span>A</span><span>g</span><span>Q</span><span>7</span><span>@</span><span>ß</span><span>&amp;</span><span class="del">€</span></div></div>
+              <div class="spec"><span class="lbl" style="left:8px">Working copy</span><div class="big" style="font-family:'Space Grotesk';font-weight:600;margin-top:18px">Dock at 07:45!</div><div style="font-family:'Space Grotesk';font-size:13px;font-weight:600">The quick tug jumps over the lazy barge.</div>
+                <div class="glyphs" style="font-family:'Space Grotesk';font-weight:600"><span class="mod">A</span><span class="mod">g</span><span>Q</span><span class="mod">7</span><span>@</span><span>ß</span><span>&amp;</span><span class="del" title="removed">€</span><span class="add">₽</span></div></div>
+            </div>
+            <div class="chrome"><span class="seg"><button class="on">Sample</button><button>All glyphs</button><button>Metrics</button></span></div>
+          </div>
+          <div class="cap"><b>412 → 418 glyphs</b> · <span class="d-add">+7</span> <span class="d-del">−1</span> · <span class="d-mod">63 outlines changed</span> · strokes redrawn heavier (same family, same weight class) · type your own sample text</div>
+        </div>
+        <p class="idea">A sample line (editable) set in both versions, then the glyph grid with added, removed and redrawn glyphs tinted. Onion lays one version's outlines over the other.</p>
+        <div class="gc"><div><h4>Good</h4><ul><li>Shows the font in use and every glyph change.</li><li>Missing glyphs for a language stand out.</li></ul></div><div><h4>Costs</h4><ul><li>Kerning changes need the Metrics tab to see.</li><li>Glyph counts and outlines need a font parser in Rust (WOFF2 needs decompression too); variable fonts get axis sliders, <code>.ttc</code> collections a face picker, a broken font a "can't read" card.</li><li>Unity renders UI text from TextMeshPro font assets (<code>.asset</code>: SDF atlas + glyph table), not the <code>.otf</code>; those are a separate viewer (question 9).</li></ul></div></div>
+      </div>
+      <div class="var">
+        <div class="vhead"><span class="lab">R7-T2</span><h3>Glyph overlay sheet</h3><span class="tag t-prop">proposal</span></div>
+        <div class="frame">
+          <div class="vh"><span class="fp">Assets/UI/Fonts/<b>Harbour-Display.otf</b></span><span class="pill">OTF · v1.2 → v1.3</span><span class="seg"><button class="on">Changed</button><button>All</button></span><button class="tog">Expand</button></div>
+          <div class="body">
+            <div class="spec" style="grid-template-columns:repeat(auto-fill,minmax(70px,1fr));display:grid">
+              <div style="position:relative;height:70px;border:1px solid var(--a-line);border-radius:5px;display:grid;place-items:center"><span style="position:absolute;font:500 44px 'Space Grotesk';color:var(--l1);opacity:.55">A</span><span style="position:absolute;font:600 44px 'Space Grotesk';color:var(--l0);opacity:.75">A</span><span style="position:absolute;bottom:1px;font:9px var(--mono);color:var(--a-muted)">U+0041</span></div>
+              <div style="position:relative;height:70px;border:1px solid var(--a-line);border-radius:5px;display:grid;place-items:center"><span style="position:absolute;font:500 44px 'Space Grotesk';color:var(--l1);opacity:.55">g</span><span style="position:absolute;font:600 44px 'Space Grotesk';color:var(--l0);opacity:.75">g</span><span style="position:absolute;bottom:1px;font:9px var(--mono);color:var(--a-muted)">U+0067</span></div>
+              <div style="position:relative;height:70px;border:1px solid var(--a-line);border-radius:5px;display:grid;place-items:center"><span style="position:absolute;font:500 44px 'Space Grotesk';color:var(--l1);opacity:.55">7</span><span style="position:absolute;font:600 44px 'Space Grotesk';color:var(--l0);opacity:.75">7</span><span style="position:absolute;bottom:1px;font:9px var(--mono);color:var(--a-muted)">U+0037</span></div>
+              <div style="position:relative;height:70px;border:1px solid var(--c-add);background:var(--c-add-bg);border-radius:5px;display:grid;place-items:center"><span style="font:600 40px 'Space Grotesk'">₽</span><span style="position:absolute;bottom:1px;font:9px var(--mono);color:var(--a-muted)">added</span></div>
+              <div style="position:relative;height:70px;border:1px solid var(--c-del);background:var(--c-del-bg);border-radius:5px;display:grid;place-items:center;opacity:.7"><span style="font:500 40px 'Space Grotesk'">€</span><span style="position:absolute;bottom:1px;font:9px var(--mono);color:var(--a-muted)">removed</span></div>
+            </div>
+          </div>
+          <div class="cap"><span style="color:var(--l1)">■</span> HEAD · <span style="color:var(--l0)">■</span> working copy · <b>71 glyphs changed</b></div>
+        </div>
+        <p class="idea">Only the glyphs that changed, each drawn twice on top of each other (HEAD orange, working blue), like a type designer's compare sheet.</p>
+        <div class="gc"><div><h4>Good</h4><ul><li>Every outline change is visible, even 1-unit nudges.</li></ul></div><div><h4>Costs</h4><ul><li>No sense of the font in a sentence.</li><li>Specialist view for a non-specialist team.</li></ul></div></div>
+      </div>
+    </div>
+    <div class="pickline"><b>Claude's pick: T1.</b> Most people need "does the UI text still look right, and did we lose a glyph"; T1 answers both. T2's overlay is T1's Onion mode.</div>
+  </section>
+
+  <!-- 5 · SVG -->
+  <section class="fmt" id="svg">
+    <div class="fh"><span class="n">5</span><h2>SVG</h2><span class="ext">.svg</span></div>
+    <div class="pair">
+      <div class="var">
+        <div class="vhead"><span class="lab">R7-S1</span><h3>Rendered, through the image diff</h3><span class="tag t-dec">exists today</span></div>
+        <div class="frame">
+          <div class="vh"><span class="fp">Assets/UI/Icons/<b>icon_anchor.svg</b></span><span class="pill">SVG · 1.2 KB</span><span class="seg"><button class="on">Side by side</button><button>Swipe</button><button>Onion</button></span><button class="tog">Source</button><button class="tog">Expand</button></div>
+          <div class="body" style="height:220px;background:repeating-conic-gradient(var(--a-line) 0 25%, var(--a-panel) 0 50%) 0 0/16px 16px">
+            <div class="split">
+              <div style="display:grid;place-items:center"><span class="lbl" style="left:8px">HEAD</span><svg viewBox="0 0 64 64" width="120" height="120" fill="none" stroke="#d97a2b" stroke-width="4" stroke-linecap="round"><circle cx="32" cy="12" r="5"/><path d="M32 17v38M20 26h24M10 38c2 10 11 17 22 17s20-7 22-17"/></svg></div>
+              <div style="display:grid;place-items:center"><span class="lbl" style="left:8px">Working copy</span><svg viewBox="0 0 64 64" width="120" height="120" fill="none" stroke="#0072b2" stroke-width="5" stroke-linecap="round"><circle cx="32" cy="12" r="5"/><path d="M32 17v38M18 26h28M10 38c2 10 11 17 22 17s20-7 22-17M6 34l4 4 4-4M50 34l4 4 4-4"/></svg></div>
+            </div>
+          </div>
+          <div class="cap"><b>64 × 64</b> · viewBox unchanged · <span class="d-mod">2 paths added, stroke colour and width changed</span> · Source shows the XML diff</div>
+        </div>
+        <p class="idea">This is what gitgud does today: <code>.svg</code> already opens in the image diff (checkerboard, Side by side / Swipe / Onion, zoom). New here would only be the attribute summary in the caption and a Source switch to the XML diff.</p>
+        <div class="gc"><div><h4>Good</h4><ul><li>Nothing new to learn; colour edits (the most common icon change) show.</li></ul></div><div><h4>Costs</h4><ul><li>The caption's summary needs an attribute-level XML compare, which doesn't exist yet.</li></ul></div></div>
+      </div>
+      <div class="var">
+        <div class="vhead"><span class="lab">R7-S2</span><h3>Outline view</h3><span class="tag t-prop">proposal</span></div>
+        <div class="frame">
+          <div class="vh"><span class="fp">Assets/UI/Icons/<b>icon_anchor.svg</b></span><span class="pill">SVG · 1.2 KB</span><span class="seg"><button class="on">Outlines</button><button>Rendered</button></span><button class="tog">Expand</button></div>
+          <div class="body" style="height:220px;display:grid;place-items:center">
+            <svg viewBox="0 0 64 64" width="170" height="170" fill="none" stroke-width="1" stroke-linecap="round"><g stroke="var(--c-del)" stroke-width="2.2" stroke-dasharray="2.5 1.5"><circle cx="32" cy="12" r="5"/><path d="M32 17v38M20 26h24M10 38c2 10 11 17 22 17s20-7 22-17"/></g><g stroke="var(--c-add)"><circle cx="32" cy="12" r="5"/><path d="M32 17v38M18 26h28M10 38c2 10 11 17 22 17s20-7 22-17M6 34l4 4 4-4M50 34l4 4 4-4"/></g><g fill="var(--a-fg)" stroke="none"><circle cx="18" cy="26" r="1.3"/><circle cx="46" cy="26" r="1.3"/></g></svg>
+          </div>
+          <div class="cap"><span class="d-del">- - HEAD paths</span> · <span class="d-add">— working paths</span> · nodes shown as dots</div>
+        </div>
+        <p class="idea">Paths only, HEAD dashed red under working green, with nodes, like an editor's outline mode. Good for icon work; colours and fills are hidden.</p>
+        <div class="gc"><div><h4>Good</h4><ul><li>Small path edits are visible.</li></ul></div><div><h4>Costs</h4><ul><li>New mode to build for one format.</li></ul></div></div>
+      </div>
+    </div>
+    <div class="pickline"><b>Claude's pick: keep S1 as it is</b>, plus the caption summary and Source switch. S2 as an extra Outlines mode only if icon work needs it.</div>
+  </section>
+
+  <!-- 6 · VIDEO -->
+  <section class="fmt" id="video">
+    <div class="fh"><span class="n">6</span><h2>Video</h2><span class="ext">.mp4 .webm .mov</span></div>
+    <div class="pair">
+      <div class="var">
+        <div class="vhead"><span class="lab">R7-V1</span><h3>Synced players</h3><span class="tag t-pick">Claude's pick</span></div>
+        <div class="frame" data-video="1">
+          <div class="vh"><span class="fp">Assets/Video/<b>Intro_Harbour.mp4</b></span><span class="pill">MP4 · LFS · 1080p</span><span class="seg"><button class="on">Side by side</button><button>Swipe</button><button>Onion</button></span><button class="tog">Expand</button></div>
+          <div class="body" style="background:#0d0f13">
+            <div class="split"><div><span class="lbl" style="left:8px">HEAD</span><canvas data-film="old"></canvas></div><div><span class="lbl" style="left:8px">Working copy</span><canvas data-film="new"></canvas></div></div>
+            <div class="transport"><button class="play" data-act="play">▶</button><button class="ab" data-act="step">◀|</button><button class="ab" data-act="step">|▶</button><input type="range" min="0" max="1000" value="0" data-act="scrub"><span class="time">00:00.0 / 00:08.0</span><button class="ab" data-act="mute">🔇</button></div>
+          </div>
+          <div class="cap"><b>8.0 s</b> · 1920×1080 · 30 fps · H.264 · <span class="d-mod">bitrate 8 → 12 Mb/s</span> · <button class="tog">Find where frames differ</button></div>
+        </div>
+        <p class="idea">Both versions in lockstep on one transport, frame stepping with <kbd>,</kbd> <kbd>.</kbd>, Swipe and Onion like the image diff. "Find where frames differ" is an explicit step: it decodes both clips and marks the scrub bar.</p>
+        <div class="gc"><div><h4>Good</h4><ul><li>Same modes as images and 3D.</li><li>Frame stepping finds the exact change.</li></ul></div><div><h4>Costs</h4><ul><li>Two players drift and need a sync loop; frame stepping needs the fps from the file (a container parser), and stays approximate in a webview.</li><li>WebView2 reliably plays H.264 and VP9; HEVC and AV1 depend on the machine; ProRes never: those get the "can't play here" card.</li></ul></div></div>
+      </div>
+      <div class="var">
+        <div class="vhead"><span class="lab">R7-V2</span><h3>Filmstrip</h3><span class="tag t-prop">proposal</span></div>
+        <div class="frame" data-video="strip">
+          <div class="vh"><span class="fp">Assets/Video/<b>Intro_Harbour.mp4</b></span><span class="pill">MP4 · LFS · 1080p</span><button class="tog">Play</button><button class="tog">Expand</button></div>
+          <div class="body" style="background:#0d0f13; display:grid; grid-template-rows:auto 1fr auto 1fr; gap:4px; padding:8px">
+            <span style="font:10px var(--mono);color:#aab3c0">HEAD</span><div style="position:relative;min-height:0"><canvas data-strip="old"></canvas></div>
+            <span style="font:10px var(--mono);color:#aab3c0">Working copy</span><div style="position:relative;min-height:0"><canvas data-strip="new"></canvas></div>
+          </div>
+          <div class="cap">8 frames, one per second · <span class="d-mod">amber</span> = differs · click a frame to play from there</div>
+        </div>
+        <p class="idea">Two rows of thumbnails, one per second, differing frames ringed amber. Scan the whole clip at a glance; click to play.</p>
+        <div class="gc"><div><h4>Good</h4><ul><li>Whole clip visible without playing.</li></ul></div><div><h4>Costs</h4><ul><li>Decoding a frame per second up front is slow for long clips.</li><li>Motion changes between samples are missed.</li></ul></div></div>
+      </div>
+    </div>
+    <div class="pickline"><b>Claude's pick: V1.</b> It is the 3D and image language applied to time; V2's strip could come back later as a scrub-bar preview.</div>
+  </section>
+
+  <!-- 7 · SPRITES -->
+  <section class="fmt" id="sprite">
+    <div class="fh"><span class="n">7</span><h2>Sprite sheets</h2><span class="ext">texture + its .meta slices (Sprite Mode: Multiple) · .psb layers</span></div>
+    <div class="pair">
+      <div class="var">
+        <div class="vhead"><span class="lab">R7-SP1</span><h3>Slices over the texture</h3><span class="tag t-pick">Claude's pick</span></div>
+        <div class="frame">
+          <div class="vh"><span class="fp">Assets/UI/Sprites/<b>HUD_Icons.png</b></span><span class="pill">Sprite sheet · 13 slices</span><span class="seg"><button class="on">Side by side</button><button>Swipe</button><button>Onion</button></span><button class="tog">Expand</button></div>
+          <div class="body" style="height:300px; background:repeating-conic-gradient(var(--a-line) 0 25%, var(--a-panel) 0 50%) 0 0/14px 14px">
+            <div class="split"><div><span class="lbl" style="left:8px">HEAD</span><canvas data-atlas="old"></canvas></div><div><span class="lbl" style="left:8px">Working copy</span><canvas data-atlas="new"></canvas></div></div>
+            <div class="chrome" style="top:auto;bottom:8px"><span class="seg"><button class="on">Slices</button><button>Pixels</button></span><button class="tog on">Pivots</button></div>
+          </div>
+          <div class="cap"><b>12 → 13 slices</b> · <span class="d-add">+1 icon_fuel</span> · <span class="d-mod">2 moved</span> · <span class="d-mod">icon_anchor resized 32→40</span> · changed 9-slice borders drawn always, others on hover</div>
+        </div>
+        <p class="idea">The texture with each sprite's rectangle drawn on it, tinted by change; pivots as dots. Hover names the sprite and shows its 9-slice border. Pixels hides the boxes to see the art.</p>
+        <div class="gc"><div><h4>Good</h4><ul><li>The texture and its slicing are shown together, which is how Unity's Sprite Editor works.</li><li>Moved or resized slices are obvious.</li></ul></div><div><h4>Costs</h4><ul><li>Small sprites on a big atlas need zoom.</li></ul></div></div>
+      </div>
+      <div class="var">
+        <div class="vhead"><span class="lab">R7-SP2</span><h3>Sprite grid</h3><span class="tag t-prop">proposal</span></div>
+        <div class="frame">
+          <div class="vh"><span class="fp">Assets/UI/Sprites/<b>HUD_Icons.png</b></span><span class="pill">Sprite sheet · 13 slices</span><span class="seg"><button class="on">Changed</button><button>All</button></span><button class="tog">Expand</button></div>
+          <div class="body" style="height:300px"><canvas data-atlas="grid"></canvas></div>
+          <div class="cap">each sprite cut out, HEAD | working copy · sorted by change</div>
+        </div>
+        <p class="idea">Every sprite cut out into a tile, before and after side by side, sorted so changes come first. Reads like an asset list.</p>
+        <div class="gc"><div><h4>Good</h4><ul><li>Each sprite at a readable size, whatever the atlas size.</li></ul></div><div><h4>Costs</h4><ul><li>Packing and spacing problems on the sheet are invisible.</li></ul></div></div>
+      </div>
+    </div>
+    <div class="pickline"><b>Claude's pick: SP1.</b> Slicing bugs (overlaps, wrong pivots, bad borders) only show on the sheet itself.</div>
+    <p class="idea"><b>Sprite atlases (<code>.spriteatlas</code>) are different:</b> the packed atlas page is generated by Unity into <code>Library/</code> and isn't in the repo, so there's nothing to draw slices on. An atlas change is a list change (packables added or removed, packing settings), shown as a table like section 9. Re-slicing a sheet usually changes only <code>HUD_Icons.png.meta</code>, not the PNG: that case is in the States below.</p>
+  </section>
+
+  <!-- 8 · ANIM CURVES -->
+  <section class="fmt" id="anim">
+    <div class="fh"><span class="n">8</span><h2>Animation curves</h2><span class="ext">.anim</span></div>
+    <div class="pair">
+      <div class="var">
+        <div class="vhead"><span class="lab">R7-AC1</span><h3>Curve editor</h3><span class="tag t-pick">Claude's pick</span></div>
+        <div class="frame">
+          <div class="vh"><span class="fp">Assets/Art/Boats/Anims/<b>Skiff_Bob.anim</b></span><span class="pill">Clip · 2.00 s · loop</span><span class="seg"><button class="on">Visual</button><button>Structure</button><button>Source</button></span><button class="tog">Expand</button></div>
+          <div class="body">
+            <div class="tracks">
+              <div style="color:var(--a-muted);font:600 9.5px var(--mono);letter-spacing:.06em">HULL</div>
+              <div class="on"><span class="dot" style="background:#9b6cf0"></span>Position.y<span class="k d-mod">~</span></div>
+              <div><span class="dot" style="background:#3498db"></span>Rotation.x<span class="k d-mod">~</span></div>
+              <div><span class="dot" style="background:#17a2b8"></span>Rotation.z<span class="k"></span></div>
+              <div style="color:var(--a-muted);font:600 9.5px var(--mono);letter-spacing:.06em">FLAG</div>
+              <div><span class="dot" style="background:#e84393"></span>Rotation.y<span class="k d-add">+</span></div>
+            </div>
+            <div class="graph"><svg data-curves="1" width="100%" height="100%"></svg></div>
+            <div class="chrome"><span class="seg"><button class="on">Curves</button><button>Dope sheet</button><button>3D</button></span></div>
+          </div>
+          <div class="cap">dashed = HEAD · solid = working copy · <b>2 tracks changed</b>, <span class="d-add">1 added</span> · plotted keys <span class="d-mod">8 → 15</span></div>
+        </div>
+        <p class="idea">Unity's Curve Editor: tracks on the left with change marks, the changed ones plotted with HEAD dashed under the working version, keys as dots. The pill switches to a dope sheet (AC2) or 3D, which plays the clip on a model that uses it (R6 viewer). Sprite flipbook tracks draw as a row of sprite thumbnails, not a curve.</p>
+        <div class="gc"><div><h4>Good</h4><ul><li>Exact: shape, timing and keys.</li><li>3D is one click for "how does it feel".</li></ul></div><div><h4>Costs</h4><ul><li>Many tracks get crowded; select tracks to plot.</li><li>True shapes need tangents and weights, which the 3D reader skips today; rotations stored as quaternions need converting to the euler view (with wrap fixes).</li><li>3D needs to find a model or Animator that uses the clip (a reverse lookup, question 8).</li></ul></div></div>
+      </div>
+      <div class="var">
+        <div class="vhead"><span class="lab">R7-AC2</span><h3>Dope sheet</h3><span class="tag t-prop">proposal</span></div>
+        <div class="frame">
+          <div class="vh"><span class="fp">Assets/Art/Boats/Anims/<b>Skiff_Bob.anim</b></span><span class="pill">Clip · 2.00 s · loop</span><span class="seg"><button class="on">Visual</button><button>Structure</button><button>Source</button></span><button class="tog">Expand</button></div>
+          <div class="body"><svg data-dope="1" width="100%" height="100%"></svg></div>
+          <div class="cap">◆ unchanged · <span class="d-mod">◆ moved or new value</span> · <span class="d-add">◆ added</span> · <span class="d-del">◇ removed</span></div>
+        </div>
+        <p class="idea">Keyframes as diamonds on a timeline per property, coloured by change. Compact; shows timing, not values.</p>
+        <div class="gc"><div><h4>Good</h4><ul><li>Fits dozens of tracks.</li><li>Retimed keys are obvious.</li></ul></div><div><h4>Costs</h4><ul><li>A changed value on the same key time is just an amber diamond: no shape.</li></ul></div></div>
+      </div>
+    </div>
+    <div class="pickline"><b>Claude's pick: AC1.</b> Animators reason in curves; the dope sheet can be a compact mode when a clip has many tracks.</div>
+  </section>
+
+  <!-- 9 · DATA -->
+  <section class="fmt" id="data">
+    <div class="fh"><span class="n">9</span><h2>Data tables</h2><span class="ext">.csv .tsv · .json arrays · ScriptableObject .asset</span></div>
+    <div class="pair">
+      <div class="var">
+        <div class="vhead"><span class="lab">R7-D1</span><h3>Grid with cell diff</h3><span class="tag t-pick">Claude's pick</span></div>
+        <div class="frame">
+          <div class="vh"><span class="fp">Assets/Data/<b>BoatStats.csv</b></span><span class="pill">CSV · 48 rows</span><span class="seg"><button class="on">Changed rows</button><button>All rows</button></span><button class="tog">Source</button><button class="tog">Expand</button></div>
+          <div class="body"><div class="grid"><table class="dt">
+            <tr><th>id</th><th>name</th><th>speed</th><th>turn</th><th>hull_hp</th><th>cost</th></tr>
+            <tr><td>skiff</td><td>Skiff</td><td class="mod">12 <span class="arrow">→</span> 13.5</td><td>90</td><td>40</td><td>0</td></tr>
+            <tr><td>tug</td><td>Harbour Tug</td><td>7</td><td class="mod">35 <span class="arrow">→</span> 42</td><td>220</td><td class="mod">800 <span class="arrow">→</span> 650</td></tr>
+            <tr class="add"><td>hydrofoil</td><td>Hydrofoil</td><td>22</td><td>60</td><td>30</td><td>2400</td></tr>
+            <tr class="del"><td>raft</td><td>Raft</td><td>4</td><td>120</td><td>15</td><td>0</td></tr>
+            <tr><td colspan="6" style="color:var(--a-muted);font-size:10px">44 unchanged rows hidden</td></tr>
+          </table></div></div>
+          <div class="cap"><b>48 rows</b> · <span class="d-mod">2 changed (4 cells)</span> · <span class="d-add">1 added</span> · <span class="d-del">1 removed</span> · rows matched by <code style="font-size:10px">id</code> (first column)</div>
+        </div>
+        <p class="idea">A spreadsheet. Rows are matched by key, so a reorder isn't a change: a column named <code>id</code>, else <code>key</code>, else <code>name</code>, else the first column; when that key isn't unique, rows are matched by position and the caption says so. Changed cells show old → new; added rows green, removed struck through. A ScriptableObject list shows as the same grid (one tab per list when it has several).</p>
+        <div class="gc"><div><h4>Good</h4><ul><li>Balance tweaks read at a glance.</li><li>Reordering rows doesn't show as everything changed.</li></ul></div><div><h4>Costs</h4><ul><li>Nested data (objects in a cell) has to be flattened.</li><li>ScriptableObjects store raw field names (<code>m_Speed</code>), references as GUIDs (resolved to names) and <code>[SerializeReference]</code> data separately.</li><li>Messy CSV (quoted line breaks, <code>;</code> delimiters, UTF-16 Excel exports) needs a tolerant parser and a "couldn't read" card.</li></ul></div></div>
+      </div>
+      <div class="var">
+        <div class="vhead"><span class="lab">R7-D2</span><h3>Record cards</h3><span class="tag t-prop">proposal</span></div>
+        <div class="frame">
+          <div class="vh"><span class="fp">Assets/Data/<b>Boats.asset</b></span><span class="pill">ScriptableObject · BoatDatabase</span><span class="seg"><button class="on">Visual</button><button>Structure</button><button>Source</button></span><button class="tog">Expand</button></div>
+          <div class="body"><div class="cards">
+            <div class="card mod"><div class="ch">Skiff <span class="pill">modified</span></div><div class="row"><span>speed</span><span>12 → <b class="d-mod">13.5</b></span></div><div class="row"><span>upgrades[2].cost</span><span>150 → <b class="d-mod">120</b></span></div></div>
+            <div class="card add"><div class="ch">Hydrofoil <span class="pill">added</span></div><div class="row"><span>speed</span><span>22</span></div><div class="row"><span>prefab</span><span>Hydrofoil.prefab</span></div></div>
+            <div class="card del"><div class="ch">Raft <span class="pill">removed</span></div></div>
+          </div></div>
+          <div class="cap">one card per record · nested fields by path</div>
+        </div>
+        <p class="idea">One card per record listing only the changed fields by path. Handles nested ScriptableObject data that doesn't fit a grid.</p>
+        <div class="gc"><div><h4>Good</h4><ul><li>Nested lists and objects stay readable.</li></ul></div><div><h4>Costs</h4><ul><li>No overview: you can't compare one column across rows.</li></ul></div></div>
+      </div>
+    </div>
+    <div class="pickline"><b>Claude's pick: D1</b>, with D2's cards used for a record whose cells hold nested data (click the cell). Balance data is tabular; the grid shows the shape of a tuning pass.</div>
+    <p class="idea"><b>Which viewer a <code>.asset</code> gets</b> depends on what it holds, read from its first object: ScriptableObject → this grid; Mesh → 3D (already built, R6); TextMeshPro font asset → question 9; anything else (TerrainData, LightingData…) → Structure.</p>
+  </section>
+
+  <!-- 10 · SCENES -->
+  <section class="fmt" id="scene">
+    <div class="fh"><span class="n">10</span><h2>Unity scenes in 3D</h2><span class="ext">.unity</span></div>
+    <div class="pair">
+      <div class="var">
+        <div class="vhead"><span class="lab">R7-U1</span><h3>R6 Studio + hierarchy</h3><span class="tag t-pick">Claude's pick</span></div>
+        <div class="frame">
+          <div class="vh"><span class="fp">Assets/Scenes/<b>Harbour.unity</b></span><span class="pill">Scene</span><span class="seg"><button class="on">Side by side</button><button>Swipe</button><button>Onion</button></span><span class="seg"><button class="on">Visual</button><button>Structure</button><button>Source</button></span><button class="tog">Expand</button></div>
+          <div class="body studio" style="height:360px">
+            <canvas data-scene="persp"></canvas>
+            <div class="chrome"><span class="seg"><button>Textured</button><button class="on">Changes</button></span><button class="tog">Wire</button><button class="tog on">Changed only</button></div>
+            <div class="hier"><input placeholder="Filter objects…"><div><span class="dot" style="background:var(--c-add)"></span>Buoy_Red (4)</div><div><span class="dot" style="background:var(--c-mod)"></span>Pier_North · moved 2.0 m</div><div><span class="dot" style="background:var(--c-del)"></span>Crane_Old</div><div><span class="dot" style="background:var(--c-mod)"></span>Lighthouse · material</div></div>
+          </div>
+          <div class="cap"><b>1,840 objects</b> · <span class="d-add">+4</span> <span class="d-del">−1</span> <span class="d-mod">~2</span> · lighting and skybox approximated · streams in by distance</div>
+        </div>
+        <p class="idea">The decided R6 viewer on a whole scene, in Changes mode, with the change legend grown into a filterable hierarchy (click flies to it). "Changed only" dims everything else. Drawn here as <b>one merged view</b> (the moved pier's old place as an amber wire ghost), which is new: R6 tints both sides of a side by side. Question 10 asks about it.</p>
+        <div class="gc"><div><h4>Good</h4><ul><li>Nothing new to learn: it is the prefab viewer.</li><li>The hierarchy finds a change among thousands of objects.</li></ul></div><div><h4>Costs</h4><ul><li>Heavy: today's reader parses a whole file before drawing; a 100 MB, 100k-object scene needs streaming and LOD, which is new work.</li><li>Terrain (a heightmap in TerrainData), baked lighting (binary LightingData) and ProBuilder meshes are approximated or skipped.</li><li>The hierarchy overlay takes a third of a narrow inspector.</li></ul></div></div>
+      </div>
+      <div class="var">
+        <div class="vhead"><span class="lab">R7-U2</span><h3>Top-down map</h3><span class="tag t-prop">proposal</span></div>
+        <div class="frame">
+          <div class="vh"><span class="fp">Assets/Scenes/<b>Harbour.unity</b></span><span class="pill">Scene · 1,840 objects</span><span class="seg"><button class="on">Map</button><button>3D</button></span><span class="seg"><button class="on">Visual</button><button>Structure</button><button>Source</button></span><button class="tog">Expand</button></div>
+          <div class="body" style="height:360px"><canvas data-scene="map"></canvas></div>
+          <div class="cap">orthographic from above · footprints tinted by change · click opens 3D at that object</div>
+        </div>
+        <p class="idea">An orthographic plan of the scene with every object's footprint, tinted by change, like a level designer's map. Fast even for huge scenes; 3D on click.</p>
+        <div class="gc"><div><h4>Good</h4><ul><li>Whole level at once; cheap to draw.</li><li>Layout changes (moved props) read instantly.</li></ul></div><div><h4>Costs</h4><ul><li>Height and look changes are invisible from above.</li></ul></div></div>
+      </div>
+    </div>
+    <div class="pickline"><b>Claude's pick: U1.</b> It reuses the decided R6 viewer and its Changes legend, which already answers "what changed", and Max liked it on prefabs. U2's map is a good later mode for huge open levels.</div>
+  </section>
+
+  <!-- STATES -->
+  <section class="fmt" id="states">
+    <div class="fh"><span class="n">·</span><h2>States, shared by every viewer</h2><span class="tag t-prop">proposal</span></div>
+    <div class="states">
+      <div class="var"><h3>New file</h3><div class="frame"><div class="vh"><span class="fp">Assets/Audio/SFX/<b>Engine_Idle.ogg</b></span><span class="pill">OGG · added</span><span class="seg"><button class="on" disabled>Stacked</button><button disabled style="opacity:.4">Overlay</button></span></div><div class="body studio"><div class="lane" style="height:100%"><span class="ln">Working copy · 4.10 s</span><canvas data-wave="new2"></canvas></div><div class="transport"><button class="play">▶</button><input type="range" value="0"><span class="time">0.00 / 4.10 s</span></div></div></div><p class="idea">One version: the viewer shows it alone, compare modes greyed, like R6.</p></div>
+      <div class="var"><h3>LFS object not downloaded</h3><div class="frame"><div class="vh"><span class="fp">Assets/Video/<b>Trailer_4K.mp4</b></span><span class="pill">MP4 · LFS</span></div><div class="body"><div class="lfs"><div class="card2"><span class="t">This version isn't on this machine yet</span><span class="m">Git LFS object · 412 MB · oid 3e9a…c10d</span><button class="btn prim">Download and preview</button><span class="m">Up to 25 MB downloads on its own.</span></div></div></div></div><p class="idea">Same card as images and 3D; the 25 MB auto-download rule holds.</p></div>
+      <div class="var"><h3>Can't preview this one</h3><div class="frame"><div class="vh"><span class="fp">Assets/Video/<b>Cutscene_ProRes.mov</b></span><span class="pill">MOV · ProRes 4444</span></div><div class="body"><div class="lfs"><div class="card2"><span class="t">WebView2 can't play ProRes</span><span class="m">8.4 s · 3840×2160 · 24 fps · ProRes 4444 · audio PCM 48 kHz</span><span class="m">Duration and format are still compared: <span class="d-mod">8.0 → 8.4 s</span></span><button class="btn">Open in default app</button></div></div></div></div><p class="idea">Codecs or encrypted PDFs the webview can't open: say why, still compare the metadata, offer the system app.</p></div>
+      <div class="var"><h3>Huge file</h3><div class="frame"><div class="vh"><span class="fp">Assets/Data/<b>Dialogue_AllLanguages.csv</b></span><span class="pill">CSV · 184,220 rows</span><span class="seg"><button class="on">Changed rows</button><button>All rows</button></span></div><div class="body"><div class="grid"><table class="dt"><tr><th>key</th><th>en</th><th>fr</th></tr><tr><td>tug.hail.01</td><td>Ahoy there!</td><td class="mod">Ohé ! <span class="arrow">→</span> Ohé du bateau !</td></tr><tr class="add"><td>storm.warn.03</td><td>Waves incoming!</td><td>Vagues en approche !</td></tr></table></div><div class="warn"><b>Big file:</b> showing changed rows only; All rows loads in pages of 5,000.</div></div></div><p class="idea">Every viewer has a size ceiling: above it, show only what changed and page the rest, and say so. A scene above its ceiling (say 100k objects) opens in Structure, with 3D on request.</p></div>
+      <div class="var"><h3>Only the .meta changed</h3><div class="frame"><div class="vh"><span class="fp">Assets/UI/Sprites/<b>HUD_Icons.png.meta</b></span><span class="pill">Import settings</span><span class="seg"><button class="on">Side by side</button><button>Swipe</button><button>Onion</button></span></div><div class="body" style="background:repeating-conic-gradient(var(--a-line) 0 25%, var(--a-panel) 0 50%) 0 0/14px 14px"><div class="split"><div><span class="lbl" style="left:8px">HEAD</span><canvas data-atlas="old"></canvas></div><div><span class="lbl" style="left:8px">Working copy</span><canvas data-atlas="new"></canvas></div></div><div class="warn"><b>Import settings changed, the PNG didn't:</b> 1 slice added, 2 moved · Max Size 2048 → 1024</div></div></div><p class="idea">Re-slicing a sheet, or changing an audio or video import setting, changes only the <code>.meta</code>. Proposal: clicking the <code>.meta</code> opens the asset's viewer with an "import settings changed" note (question 7).</p></div>
+      <div class="var"><h3>Binary Unity asset</h3><div class="frame"><div class="vh"><span class="fp">Assets/Scenes/<b>Harbour_LightingData.asset</b></span><span class="pill">Unity binary</span></div><div class="body"><div class="lfs"><div class="card2"><span class="t">Stored in Unity's binary format</span><span class="m">Asset Serialization isn't Force Text for this file (LightingData is always binary), so its contents can't be read or compared.</span><span class="m">Size <span class="d-mod">4.2 → 4.6 MB</span></span><button class="btn">Check serialization in Settings</button></div></div></div></div><p class="idea">With Mixed or Force Binary serialization, <code>.unity</code>, <code>.asset</code>, <code>.mat</code> and <code>.anim</code> are binary: say so, compare sizes, and point to the existing Force Text check.</p></div>
+      <div class="var"><h3>In the conflict side picker</h3><div class="frame"><div class="vh"><span class="fp">Assets/Audio/SFX/<b>Horn_Long.wav</b></span><span class="pill">WAV · conflict</span><span class="seg"><button class="on">Stacked</button><button>Overlay</button></span><button class="btn prim">Use yours</button><button class="btn">Use theirs</button></div><div class="body studio" style="height:220px"><div class="lane"><span class="ln">Yours (main) · 2.40 s</span><canvas data-wave="old"></canvas></div><div class="lane"><span class="ln">Theirs (feature/horns) · 2.85 s</span><canvas data-wave="new"></canvas></div><div class="transport"><button class="play">▶</button><button class="ab on">Yours</button><button class="ab">Theirs</button><input type="range" value="0"><span class="time">0.00 / 2.85 s</span></div></div></div><p class="idea">Every viewer works in the side picker: the sides are named Yours / Theirs (A/B buttons take those names), and the picker's buttons sit in the header. In a commit the sides are Parent / Commit.</p></div>
+    </div>
+  </section>
+
+  <!-- QUESTIONS -->
+  <section class="fmt" id="q">
+    <div class="fh"><span class="n">?</span><h2>Verdict</h2><span class="tag t-dec">decided 2026-11-24 · every Claude's pick below</span></div>
+    <p class="idea">Max: "Go with your picks". Each answer below is now decided; details in docs/lab/decisions.md.</p>
+    <ol class="q">
+      <li><b>Shared frame as a rule:</b> the header holds only how the two versions are arranged (Side by side / Swipe / Onion, or Stacked / Overlay for sound); every other view switch lives in the pill over the view; Expand on the right? Claude's pick: yes, and the frames get redrawn to follow it.</li>
+      <li><b>Per format: which default, and which extra modes are in scope?</b> Most "not picked" variants would come back as a mode inside the pick (A2 → Overlay, P2 → Text, T2 → Onion, AC2 → Dope sheet, D2 → nested cells, V2 → scrub preview, U2 → Map). Claude's picks for the default: M1, A1, P1, T1, S1 (as today), V1, SP1, AC1, D1, U1; extra modes later, one at a time.</li>
+      <li><b>Unity text files</b> (.mat, .anim, .asset, .unity): R6's prefab switch "Structure | 3D" becomes <b>Visual | Structure | Source</b>, opening in Visual and remembering the last choice? Claude's pick: yes, remembered per format (prefab and .mat can differ).</li>
+      <li><b>Audio and video on open:</b> never autoplay, video starts muted, one app-wide volume. Claude's pick: yes to all three.</li>
+      <li><b>Remembered choices</b> (A/B, Stacked/Overlay, PDF Text, Changed rows, Curves/Dope sheet…): per format, like R6's shading? Claude's pick: per format.</li>
+      <li><b>New dependencies</b> (your rule: ask first): pdf.js for PDF (frontend, a few MB); a font parser in Rust (<code>ttf-parser</code> or <code>skrifa</code>, plus WOFF2 decompression); an audio decoder in Rust (<code>symphonia</code>) for AIFF, true sample rate, loudness and the spectrogram; an MP4/MOV container parser in Rust (<code>mp4</code> / <code>re_mp4</code>-style, no ffmpeg) for fps and codec. Claude's pick: all four, nothing heavier (no ffmpeg/ffprobe).</li>
+      <li><b>A change only in the <code>.meta</code></b> (re-slicing, import settings): open the asset's viewer with an "import settings changed" note? Claude's pick: yes.</li>
+      <li><b>"Your mesh" for .mat and "3D" for .anim</b> need a reverse lookup (which prefabs use this material or clip). Pick the first user automatically, let you choose from a list, or drop it for now? Claude's pick: a list, first entry preselected.</li>
+      <li><b>TextMeshPro font assets</b> (what Unity UI actually renders): add an SDF-atlas + glyph-table viewer to this batch, or later? Claude's pick: later; the .otf/.ttf viewer first.</li>
+      <li><b>Scenes:</b> one merged Changes view (U1 as drawn: moved objects as a ghost) or R6's side by side with both tinted? And above what size does a scene open in Structure first? Claude's pick: merged view as an extra mode next to side by side; Structure first above 20k objects (a guess, to measure).</li>
+      <li><b>Auto-download:</b> keep the 25 MiB LFS rule for audio and video too? "Open in default app" writes the old version to a temp file in the OS temp folder, deleted when gitgud closes. Claude's pick: yes, and that temp-file rule.</li>
+      <li><b>Order of building:</b> Claude's pick: fonts, .mat (reuses R6), audio, data tables, PDF, video, sprite sheets, curves, scenes last (biggest). SVG is already there.</li>
+    </ol>
+  </section>
+</div>
+
+<script type="module">
+// ---------- compare-mode buttons and toggles (visual only) ----------
+document.querySelectorAll(".seg").forEach((seg) => seg.addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b || b.disabled) return;
+  seg.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b));
+}));
+document.querySelectorAll(".frame[data-modes]").forEach((f) => {
+  const seg = f.querySelector(".seg.modes");
+  f.dataset.modes.split(",").forEach((m, i) => { const b = document.createElement("button"); b.textContent = m; if (!i) b.className = "on"; seg.append(b); });
+});
+document.querySelectorAll(".tog").forEach((t) => t.addEventListener("click", () => t.classList.toggle("on")));
+
+const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const fit = (c) => { const r = c.parentElement.getBoundingClientRect(); const d = devicePixelRatio; c.width = r.width * d; c.height = r.height * d; c.style.width = r.width + "px"; c.style.height = r.height + "px"; const g = c.getContext("2d"); g.setTransform(d, 0, 0, d, 0, 0); return [g, r.width, r.height]; };
+
+// ---------- audio ----------
+function horn(t, len, bright) {
+  if (t > len) return 0;
+  const env = Math.min(1, t / .08) * Math.min(1, (len - t) / .5);
+  return env * (.55 * Math.sin(2 * Math.PI * 110 * t) + .25 * Math.sin(2 * Math.PI * 220 * t) + bright * .2 * Math.sin(2 * Math.PI * 440 * t)) * (0.8 + .2 * Math.sin(t * 9));
+}
+const SR = 8000, DUR = 2.85;
+const sig = { old: (t) => horn(t, 2.4, 0) * .7, new: (t) => horn(t, 2.85, 1) * .9, new2: (t) => horn(t * .7, 2.85, .5) * .8 };
+function drawWave(c, which) {
+  const [g, w, h] = fit(c);
+  const lanes = which === "overlay" ? [["new", css("--l0"), .55], ["old", css("--l1"), .6]] : [[which, css("--l0"), .9]];
+  const dur = which === "new2" ? 4.1 : DUR;
+  for (const [k, col, a] of lanes) {
+    g.globalAlpha = a; g.fillStyle = col;
+    for (let x = 0; x < w; x++) {
+      let mx = 0; const t0 = x / w * dur, t1 = (x + 1) / w * dur;
+      for (let t = t0; t < t1; t += 1 / SR) mx = Math.max(mx, Math.abs(sig[k](t)));
+      const y = mx * h * .42; g.fillRect(x, h / 2 - y, 1, y * 2 || 1);
+    }
+  }
+  g.globalAlpha = 1;
+}
+let actx;
+function playWith(frame, which) {
+  actx ??= new AudioContext();
+  const len = which === "old" ? 2.4 : DUR, buf = actx.createBuffer(1, Math.ceil(len * 22050), 22050), d = buf.getChannelData(0);
+  for (let i = 0; i < d.length; i++) d[i] = sig[which](i / 22050) * .35;
+  const s = actx.createBufferSource(); s.buffer = buf; s.connect(actx.destination);
+  const off = (frame._pos ?? 0) * DUR; if (off < len) s.start(0, off);
+  return s;
+}
+document.querySelectorAll(".frame[data-audio]").forEach((f) => {
+  f.querySelectorAll("canvas[data-wave]").forEach((c) => drawWave(c, c.dataset.wave));
+  const ph = f.querySelector(".playhead"), body = f.querySelector(".body"), time = f.querySelector(".time"), scrub = f.querySelector("[data-act=scrub]");
+  let src = null, start = 0, which = "new";
+  const set = (p) => { f._pos = p; ph.style.left = (p * body.clientWidth) + "px"; time.textContent = `${(p * DUR).toFixed(2)} / 2.85 s`; scrub.value = p * 1000; };
+  const stop = () => { src?.stop(); src = null; f.querySelector("[data-act=play]").textContent = "▶"; };
+  const go = () => { src = playWith(f, which); start = actx.currentTime - (f._pos ?? 0) * DUR; f.querySelector("[data-act=play]").textContent = "❚❚";
+    const tick = () => { if (!src) return; const p = (actx.currentTime - start) / DUR; if (p >= 1) { stop(); set(0); return; } set(p); requestAnimationFrame(tick); }; tick(); };
+  f.querySelector("[data-act=play]").onclick = () => (src ? stop() : go());
+  scrub.oninput = () => { const was = !!src; stop(); set(scrub.value / 1000); if (was) go(); };
+  f.querySelectorAll("[data-act=a],[data-act=b]").forEach((b) => b.onclick = () => {
+    which = b.dataset.act === "a" ? "old" : "new";
+    f.querySelectorAll(".ab").forEach((x) => x.classList.toggle("on", x === b));
+    if (src) { stop(); go(); }
+  });
+  which = f.dataset.audio === "lanes" ? "old" : "new";
+  set(0);
+});
+document.querySelectorAll("canvas[data-wave=new2]").forEach((c) => drawWave(c, "new2"));
+
+// ---------- video (generated harbour clip) ----------
+function frameAt(g, w, h, t, v) {
+  const sky = g.createLinearGradient(0, 0, 0, h); sky.addColorStop(0, v ? "#f2a65a" : "#7fb3d5"); sky.addColorStop(1, v ? "#f6d6a8" : "#d6eaf8");
+  g.fillStyle = sky; g.fillRect(0, 0, w, h);
+  g.fillStyle = v ? "#2d5f7a" : "#1f618d"; g.fillRect(0, h * .62, w, h * .38);
+  g.fillStyle = "#555"; g.fillRect(w * .78, h * .3, w * .05, h * .34); g.fillStyle = "#ddd"; g.fillRect(w * .77, h * .26, w * .07, h * .05);
+  const x = ((t * .12) % 1.2 - .1) * w, y = h * .6 + Math.sin(t * 2) * 3;
+  g.fillStyle = v ? "#2a4c7a" : "#c8442f"; g.beginPath(); g.moveTo(x - 30, y); g.lineTo(x + 34, y); g.lineTo(x + 24, y + 12); g.lineTo(x - 26, y + 12); g.fill();
+  g.fillStyle = "#eee"; g.fillRect(x - 10, y - 14, 18, 14);
+  if (v && t > 3.2) { g.fillStyle = "#fff"; g.font = "bold 14px Space Grotesk"; g.fillText("HARBOUR", w * .06, h * .18); }
+}
+document.querySelectorAll(".frame[data-video='1']").forEach((f) => {
+  const cs = [...f.querySelectorAll("canvas[data-film]")].map((c) => [fit(c), c.dataset.film === "new"]);
+  const scrub = f.querySelector("[data-act=scrub]"), time = f.querySelector(".time"), play = f.querySelector("[data-act=play]");
+  let t = 0, on = false, last = 0;
+  const draw = () => { cs.forEach(([[g, w, h], v]) => frameAt(g, w, h, t, v)); scrub.value = t / 8 * 1000; time.textContent = `00:0${t.toFixed(1)} / 00:08.0`; };
+  const loop = (ts) => { if (!on) return; t += (ts - last) / 1000; last = ts; if (t > 8) t = 0; draw(); requestAnimationFrame(loop); };
+  play.onclick = () => { on = !on; play.textContent = on ? "❚❚" : "▶"; last = performance.now(); if (on) requestAnimationFrame(loop); };
+  scrub.oninput = () => { t = scrub.value / 1000 * 8; draw(); };
+  t = 3.6; draw();
+});
+document.querySelectorAll("canvas[data-strip]").forEach((c) => {
+  const [g, w, h] = fit(c), n = 8, fw = w / n;
+  for (let i = 0; i < n; i++) {
+    g.save(); g.translate(i * fw + 2, 2); g.beginPath(); g.rect(0, 0, fw - 4, h - 4); g.clip();
+    frameAt(g, fw - 4, h - 4, i, c.dataset.strip === "new"); g.restore();
+    if (c.dataset.strip === "new" && i >= 3) { g.strokeStyle = css("--c-mod"); g.lineWidth = 2; g.strokeRect(i * fw + 2, 2, fw - 4, h - 4); }
+  }
+});
+
+// ---------- sprite atlas ----------
+const icons = [["anchor", "#2a4c7a"], ["wheel", "#8e5a2b"], ["buoy", "#d8452f"], ["fish", "#16a085"], ["coin", "#e1a91a"], ["flag", "#0072b2"], ["rope", "#a0804e"], ["star", "#e1a91a"], ["heart", "#d8452f"], ["map", "#4e7d4b"], ["bell", "#c98a00"], ["gull", "#7f8c8d"]];
+function drawIcon(g, x, y, s, col, i) { g.fillStyle = col; g.beginPath(); if (i % 3 === 0) g.arc(x + s / 2, y + s / 2, s * .38, 0, 7); else if (i % 3 === 1) g.roundRect(x + s * .15, y + s * .15, s * .7, s * .7, s * .18); else { g.moveTo(x + s / 2, y + s * .1); g.lineTo(x + s * .9, y + s * .85); g.lineTo(x + s * .1, y + s * .85); } g.fill(); g.fillStyle = "rgb(255 255 255 / .8)"; g.beginPath(); g.arc(x + s * .42, y + s * .4, s * .09, 0, 7); g.fill(); }
+document.querySelectorAll("canvas[data-atlas]").forEach((c) => {
+  const [g, w, h] = fit(c), v = c.dataset.atlas;
+  if (v === "grid") {
+    const t = 46, list = [["anchor", "mod"], ["fuel", "add"], ["wheel", "mod"], ["buoy", "mod"], ["fish", ""], ["coin", ""]];
+    list.forEach(([n, k], i) => {
+      const x = 12 + (i % 3) * (w - 24) / 3, y = 12 + Math.floor(i / 3) * 120;
+      g.font = "10px JetBrains Mono"; g.fillStyle = css("--a-muted"); g.fillText(`${n}${k ? " · " + k : ""}`, x, y + 10);
+      [0, 1].forEach((side) => { const bx = x + side * (t + 14), by = y + 18; g.strokeStyle = css("--a-line"); g.strokeRect(bx, by, t, t);
+        if (!(k === "add" && side === 0)) drawIcon(g, bx + 4, by + 4, t - 8 + (n === "anchor" && side ? 6 : 0), k === "add" ? "#27ae60" : icons[i % 12][1], i); });
+      if (k) { g.fillStyle = css(k === "add" ? "--c-add" : "--c-mod"); g.fillRect(x, y + 18 + t + 4, 2 * t + 14, 2); }
+    });
+    return;
+  }
+  const s = 32, pad = 8, cols = 6, ox = (w - cols * (s + pad)) / 2, oy = 34, nw = v === "new";
+  icons.forEach(([n, col], i) => {
+    let x = ox + (i % cols) * (s + pad), y = oy + Math.floor(i / cols) * (s + pad), size = s, tint = null;
+    if (nw && n === "anchor") { size = 40; tint = "mod"; }
+    if (nw && (n === "fish" || n === "coin")) { x += 14; tint = "mod"; }
+    drawIcon(g, x, y, size, col, i);
+    g.strokeStyle = tint ? css("--c-mod") : "rgb(120 130 145 / .7)"; g.lineWidth = tint ? 2 : 1; g.setLineDash(tint ? [] : [3, 2]); g.strokeRect(x - 2, y - 2, size + 4, size + 4); g.setLineDash([]);
+    g.fillStyle = css("--l1"); g.beginPath(); g.arc(x + size / 2, y + size / 2, 2, 0, 7); g.fill();
+  });
+  if (nw) { const x = ox, y = oy + 2 * (s + pad) + 4; drawIcon(g, x, y, s, "#27ae60", 4); g.strokeStyle = css("--c-add"); g.lineWidth = 2; g.strokeRect(x - 2, y - 2, s + 4, s + 4); g.font = "10px JetBrains Mono"; g.fillStyle = css("--c-add"); g.fillText("icon_fuel", x + s + 8, y + s / 2 + 3); }
+});
+
+// ---------- curves ----------
+document.querySelectorAll("svg[data-curves]").forEach((svg) => {
+  const r = svg.getBoundingClientRect(), w = r.width, h = r.height, ns = "http://www.w3.org/2000/svg";
+  const X = (t) => 30 + t / 2 * (w - 44), Y = (v) => h / 2 - v * h * .32;
+  const add = (tag, a) => { const e = document.createElementNS(ns, tag); for (const k in a) e.setAttribute(k, a[k]); svg.append(e); return e; };
+  for (let i = 0; i <= 8; i++) { add("line", { x1: X(i / 4), x2: X(i / 4), y1: 8, y2: h - 18, stroke: css("--a-line") }); add("text", { x: X(i / 4) - 8, y: h - 5, "font-size": 9, fill: css("--a-muted"), "font-family": "JetBrains Mono" }).textContent = (i / 4).toFixed(2); }
+  add("line", { x1: 30, x2: w - 14, y1: Y(0), y2: Y(0), stroke: css("--a-line"), "stroke-dasharray": "2 3" });
+  const curve = (f, col, dash, keys) => {
+    let d = ""; for (let i = 0; i <= 200; i++) { const t = i / 100; d += (i ? "L" : "M") + X(t) + " " + Y(f(t)); }
+    add("path", { d, fill: "none", stroke: col, "stroke-width": dash ? 1.4 : 2, "stroke-dasharray": dash ? "4 3" : "", opacity: dash ? .75 : 1 });
+    keys.forEach((t) => add("rect", { x: X(t) - 3, y: Y(f(t)) - 3, width: 6, height: 6, transform: `rotate(45 ${X(t)} ${Y(f(t))})`, fill: dash ? css("--a-panel") : col, stroke: col }));
+  };
+  curve((t) => .6 * Math.sin(t * Math.PI), "#9b6cf0", true, [0, .5, 1, 1.5, 2]);
+  curve((t) => .8 * Math.sin(t * Math.PI) + .15 * Math.sin(t * 3 * Math.PI), "#9b6cf0", false, [0, .33, .66, 1, 1.33, 1.66, 2]);
+  curve((t) => .3 * Math.cos(t * Math.PI), "#3498db", true, [0, 1, 2]);
+  curve((t) => .45 * Math.cos(t * Math.PI), "#3498db", false, [0, 1, 2]);
+  curve((t) => .25 * Math.sin(t * 2 * Math.PI), "#e84393", false, [0, .5, 1, 1.5, 2]);
+});
+document.querySelectorAll("svg[data-dope]").forEach((svg) => {
+  const r = svg.getBoundingClientRect(), w = r.width, ns = "http://www.w3.org/2000/svg";
+  const add = (tag, a, txt) => { const e = document.createElementNS(ns, tag); for (const k in a) e.setAttribute(k, a[k]); if (txt) e.textContent = txt; svg.append(e); return e; };
+  const X = (t) => 150 + t / 2 * (w - 170);
+  const rows = [["Hull · Position.y", [[0, ""], [.33, "add"], [.5, "del"], [.66, "add"], [1, "mod"], [1.33, "add"], [1.5, "del"], [1.66, "add"], [2, ""]]], ["Hull · Rotation.x", [[0, "mod"], [1, "mod"], [2, "mod"]]], ["Hull · Rotation.z", [[0, ""], [1, ""], [2, ""]]], ["Flag · Rotation.y", [[0, "add"], [.5, "add"], [1, "add"], [1.5, "add"], [2, "add"]]], ["Motor · Rotation.x", [[0, ""], [2, ""]]], ["Cargo · Scale", [[0, ""]]]];
+  for (let i = 0; i <= 8; i++) add("line", { x1: X(i / 4), x2: X(i / 4), y1: 6, y2: 26 * rows.length + 8, stroke: css("--a-line") });
+  rows.forEach(([n, keys], i) => {
+    const y = 20 + i * 26; add("text", { x: 10, y: y + 4, "font-size": 11, fill: css("--a-fg"), "font-family": "Inter" }, n);
+    keys.forEach(([t, k]) => { const col = k === "add" ? css("--c-add") : k === "mod" ? css("--c-mod") : k === "del" ? css("--c-del") : css("--a-muted");
+      add("rect", { x: X(t) - 5, y: y - 5, width: 10, height: 10, transform: `rotate(45 ${X(t)} ${y})`, fill: k === "del" ? "none" : col, stroke: col, "stroke-width": 1.5 }); });
+  });
+});
+
+// ---------- scene map ----------
+const sceneObjs = [["Pier_North", -3, -2, 4, 1, "mod", -3, -4], ["Pier_South", -3, 3, 4, 1, ""], ["Lighthouse", 5, -4, 1.2, 1.2, "mod"], ["Crane_Old", 1, 4, 1.4, 1.4, "del"], ["Warehouse", -6, 0, 2.4, 3, ""], ["Buoy_Red", 4, 0, .5, .5, "add"], ["Buoy_Red", 6, 1.5, .5, .5, "add"], ["Buoy_Red", 4, 3, .5, .5, "add"], ["Buoy_Red", 7, -1.5, .5, .5, "add"], ["Tug", 1, -.5, 1.6, .7, ""], ["Shed", -6, -4, 1.4, 1.4, ""], ["Shed", -6, 4, 1.4, 1.4, ""]];
+document.querySelectorAll("canvas[data-scene=map]").forEach((c) => {
+  const [g, w, h] = fit(c), S = Math.min(w, h) / 18, cx = w / 2, cy = h / 2;
+  const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+  g.fillStyle = dark ? "#1d2a36" : "#cfe3ef"; g.fillRect(0, 0, w, h); g.fillStyle = dark ? "#2e2a22" : "#e7dcc6"; g.fillRect(0, 0, cx - 1.5 * S, h);
+  g.strokeStyle = dark ? "rgb(255 255 255 / .06)" : "rgb(0 0 0 / .06)"; for (let i = -9; i <= 9; i++) { g.beginPath(); g.moveTo(cx + i * S, 0); g.lineTo(cx + i * S, h); g.stroke(); g.beginPath(); g.moveTo(0, cy + i * S); g.lineTo(w, cy + i * S); g.stroke(); }
+  for (const [n, x, z, sw, sd, k, ox, oz] of sceneObjs) {
+    const col = k === "add" ? "#2fd3a0" : k === "del" ? "#ff6b5a" : k === "mod" ? "#f0c040" : "#9aa3ae";
+    if (ox !== undefined) { g.setLineDash([4, 3]); g.strokeStyle = "#c98a00"; g.strokeRect(cx + (ox - sw / 2) * S, cy + (oz - sd / 2) * S, sw * S, sd * S); g.setLineDash([]); g.beginPath(); g.moveTo(cx + ox * S, cy + oz * S); g.lineTo(cx + x * S, cy + z * S); g.stroke(); }
+    g.fillStyle = col; g.globalAlpha = k === "del" ? .55 : 1; g.fillRect(cx + (x - sw / 2) * S, cy + (z - sd / 2) * S, sw * S, sd * S); g.globalAlpha = 1;
+    g.strokeStyle = "rgb(0 0 0 / .35)"; g.strokeRect(cx + (x - sw / 2) * S, cy + (z - sd / 2) * S, sw * S, sd * S);
+  }
+  g.font = "10px JetBrains Mono"; g.fillStyle = css("--a-fg"); g.fillText("Pier_North moved 2.0 m", cx - 6 * S, cy - 2.9 * S); g.fillText("Crane_Old removed", cx + .2 * S, cy + 5.4 * S);
+});
+
+// ---------- three.js: material balls + scene ----------
+import * as THREE from "three";
+import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+const tex = (base, stripe) => { const cv = document.createElement("canvas"); cv.width = 256; cv.height = 128; const g = cv.getContext("2d"); g.fillStyle = base; g.fillRect(0, 0, 256, 128); g.fillStyle = "#f4f1ea"; g.fillRect(0, 60, 256, 8); g.fillStyle = "#1d232c"; g.fillRect(0, 92, 256, 36); if (stripe) { g.fillStyle = stripe; g.fillRect(0, 20, 256, 6); } const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; return t; };
+const mats = { old: new THREE.MeshStandardMaterial({ map: tex("#c8442f"), roughness: .55 }), new: new THREE.MeshStandardMaterial({ map: tex("#2a4c7a", "#dfe8ff"), roughness: .38, color: "#dfe8ff" }) };
+const balls = [];
+document.querySelectorAll("canvas[data-ball]").forEach((c) => {
+  const thumb = !!c.dataset.thumb, r = thumb ? { width: 34, height: 34 } : c.parentElement.getBoundingClientRect();
+  const ren = new THREE.WebGLRenderer({ canvas: c, antialias: true, alpha: true }); ren.setPixelRatio(devicePixelRatio); ren.setSize(r.width, r.height, !thumb);
+  if (thumb) { c.style.width = "34px"; c.style.height = "34px"; }
+  const sc = new THREE.Scene(); sc.environment = new THREE.PMREMGenerator(ren).fromScene(new RoomEnvironment(), .04).texture;
+  const cam = new THREE.PerspectiveCamera(30, r.width / r.height, .1, 20); cam.position.set(0, .3, thumb ? 3.6 : 5.6);
+  const m = new THREE.Mesh(new THREE.SphereGeometry(1, 48, 32), mats[c.dataset.ball]); sc.add(m);
+  const key = new THREE.DirectionalLight("#fff", 1.6); key.position.set(3, 4, 3); sc.add(key);
+  balls.push([ren, sc, cam, m]);
+});
+const sceneCanvas = document.querySelector("canvas[data-scene=persp]");
+let scene3;
+if (sceneCanvas) {
+  const r = sceneCanvas.parentElement.getBoundingClientRect();
+  const ren = new THREE.WebGLRenderer({ canvas: sceneCanvas, antialias: true, alpha: true }); ren.setPixelRatio(devicePixelRatio); ren.setSize(r.width, r.height);
+  const sc = new THREE.Scene(); sc.add(new THREE.HemisphereLight("#fff", "#667", 1.2));
+  const sun = new THREE.DirectionalLight("#fff", 1.4); sun.position.set(5, 9, 4); sc.add(sun);
+  const water = new THREE.Mesh(new THREE.PlaneGeometry(30, 30).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: "#9fb4c4", roughness: .9 })); sc.add(water);
+  const tint = { add: "#2fd3a0", del: "#ff6b5a", mod: "#f0c040", "": "#d9dde3" };
+  for (const [n, x, z, sw, sd, k, ox, oz] of sceneObjs) {
+    const hgt = n === "Lighthouse" ? 3 : n.startsWith("Buoy") ? .6 : n === "Crane_Old" ? 2.4 : n === "Warehouse" ? 1.6 : .5;
+    const mesh = new THREE.Mesh(n.startsWith("Buoy") || n === "Lighthouse" ? new THREE.CylinderGeometry(sw / 2, sw / 2, hgt, 20) : new THREE.BoxGeometry(sw, hgt, sd), new THREE.MeshStandardMaterial({ color: tint[k], roughness: .6, transparent: k === "del", opacity: k === "del" ? .45 : 1 }));
+    mesh.position.set(x, hgt / 2, z); sc.add(mesh);
+    if (ox !== undefined) { const ghost = new THREE.Mesh(new THREE.BoxGeometry(sw, hgt, sd), new THREE.MeshBasicMaterial({ color: "#c98a00", wireframe: true })); ghost.position.set(ox, hgt / 2, oz); sc.add(ghost); }
+  }
+  const cam = new THREE.PerspectiveCamera(38, r.width / r.height, .1, 100); cam.position.set(-6, 13, 17); cam.lookAt(-1, 0, 0);
+  scene3 = [ren, sc, cam];
+}
+const t0 = performance.now();
+function tick() {
+  const t = (performance.now() - t0) / 1000;
+  for (const [ren, sc, cam, m] of balls) { m.rotation.y = .7; ren.render(sc, cam); }
+  if (scene3) { const [ren, sc, cam] = scene3; ren.render(sc, cam); }
+  requestAnimationFrame(tick);
+}
+tick();
+</script>
+</body>
+</html>

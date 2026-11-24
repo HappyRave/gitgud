@@ -11,14 +11,15 @@
     type UnityYamlDiff,
   } from "$lib/api";
   import { imageUrl, isImage } from "$lib/images";
-  import { isModel, modelKind } from "$lib/model/source";
-  import ModelViewer from "./ModelViewer.svelte";
-  import { prefs, setModelView, setPaneSize, toggleIgnoreWhitespace } from "$lib/prefs.svelte";
+  import { prefs, setPaneSize, toggleIgnoreWhitespace, viewModeFor } from "$lib/prefs.svelte";
   import { isUnityYaml } from "$lib/unity";
+  import { viewerFor } from "$lib/viewers/route";
   import DiffView from "./DiffView.svelte";
+  import FilePreview from "./FilePreview.svelte";
   import Splitter from "./Splitter.svelte";
   import LoadingBar from "./LoadingBar.svelte";
   import UnityDiffView from "./UnityDiffView.svelte";
+  import ViewSwitch from "./ViewSwitch.svelte";
 
   let {
     repoId,
@@ -53,8 +54,9 @@
   let file = $state<string | null>(null);
   let diff = $state<FileDiff | null>(null);
   let unityDiff = $state<UnityYamlDiff | null>(null);
-  let preferStructural = $state(true);
-  const show3d = $derived(!!file && modelKind(file) === "prefab" && prefs.modelView === "3d");
+  const mode = $derived(file ? viewModeFor(file) : "source");
+  const preferStructural = $derived(mode === "structure");
+  const showVisual = $derived(!!file && mode === "visual" && viewerFor(file) !== null);
   let fetchRev = $state(0);
   let error = $state<string | null>(null);
 
@@ -86,8 +88,9 @@
     file = path;
     diff = null;
     unityDiff = null;
-    const structural = isUnityYaml(path) && preferStructural;
-    const stale = () => commit !== id || file !== path || prefs.ignoreWhitespace !== ignoreWs || (isUnityYaml(path) && preferStructural) !== structural;
+    const structural = isUnityYaml(path) && viewModeFor(path) === "structure";
+    const stale = () =>
+      commit !== id || file !== path || prefs.ignoreWhitespace !== ignoreWs || (isUnityYaml(path) && viewModeFor(path) === "structure") !== structural;
     const loadRaw = () => {
       unityDiff = null;
       commitFileDiff(repoId, id, path, ignoreWs).then(
@@ -123,8 +126,7 @@
 
   $effect(() => {
     const ws = prefs.ignoreWhitespace;
-    const _pref = preferStructural;
-    void _pref;
+    void preferStructural;
     if (detail && file) {
       showFile(file, ws);
     }
@@ -154,26 +156,8 @@
   <div class="ph">
     Commit <span class="ct">· {detail?.shortId ?? commit.slice(0, 7)}</span>
     <span class="r">
-      {#if file && modelKind(file) === "prefab"}
-        <button
-          type="button"
-          class="close"
-          class:on={show3d}
-          aria-pressed={show3d}
-          title="Show the prefab in 3D"
-          onclick={() => setModelView("3d")}>3D</button
-        >
-      {/if}
-      {#if file && isUnityYaml(file)}
-        <button
-          type="button"
-          class="close"
-          class:on={!show3d && preferStructural}
-          aria-pressed={!show3d && preferStructural}
-          title="Toggle Unity structural property diff vs raw YAML diff"
-          onclick={() => (show3d ? setModelView("source") : (preferStructural = !preferStructural))}
-          >{preferStructural ? "Structural" : "Raw"}</button
-        >
+      {#if file}
+        <ViewSwitch path={file} />
       {/if}
       {#if file && onhistory}
         <button type="button" class="close" title="File history" onclick={() => file && onhistory(file)}>History</button>
@@ -251,13 +235,15 @@
     />
 
     <div class="diff-col">
-      {#if show3d && file}
-        <ModelViewer
+      {#if showVisual && file}
+        <FilePreview
           {repoId}
           path={file}
           before={detail.parents[0] ? { label: `Parent ${detail.parents[0].slice(0, 7)}`, at: { at: "parent", commit } } : null}
           after={{ label: detail.shortId, at: { at: "commit", commit } }}
           bust={fetchRev}
+          meta={diff?.binaryMeta ?? null}
+          onfetch={handleFetchLfs}
         />
       {:else if unityDiff && file && isUnityYaml(file) && preferStructural}
         <UnityDiffView diff={unityDiff} />
@@ -272,16 +258,6 @@
                   url: imageUrl(repoId, file, { at: "parent", commit }, fetchRev),
                 },
                 after: { label: detail.shortId, url: imageUrl(repoId, file, { at: "commit", commit }, fetchRev) },
-              }
-            : null}
-          models={file && isModel(file) && !isUnityYaml(file)
-            ? {
-                repoId,
-                bust: fetchRev,
-                before: detail.parents[0]
-                  ? { label: `Parent ${detail.parents[0].slice(0, 7)}`, at: { at: "parent", commit } }
-                  : null,
-                after: { label: detail.shortId, at: { at: "commit", commit } },
               }
             : null}
           onfetchlfs={handleFetchLfs}

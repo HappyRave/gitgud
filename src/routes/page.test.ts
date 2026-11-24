@@ -2564,7 +2564,7 @@ describe("Unity, LFS locks, Smart Merge verify, and open-editor guard", () => {
   });
 
   it("shows structural Unity prefab diff and auto-lock suggestion for unlocked LFS assets", async () => {
-    prefs.modelView = "source";
+    prefs.views = { prefab: "structure" };
     const calls = app({
       launch_path: () => "C:/work/unity",
       lfs_info: () => ({

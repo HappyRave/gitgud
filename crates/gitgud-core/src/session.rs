@@ -1841,6 +1841,56 @@ impl Session {
         repo.model_bytes(None, path, version, lfs::AUTO_FETCH_MAX_BYTES)
     }
 
+    /// `path` at `version` as stored, LFS objects up to the auto-fetch limit fetched first.
+    ///
+    /// # Errors
+    /// As [`Repo::file_bytes`].
+    pub fn file_bytes(
+        &self,
+        id: u32,
+        path: &str,
+        version: &crate::image::Version,
+    ) -> Result<Vec<u8>, Error> {
+        let repo = self.get(id)?.repo.clone();
+        if let Some((oid, size)) = repo.lfs_pointer_at(path, version)?
+            && size <= lfs::AUTO_FETCH_MAX_BYTES
+            && !lfs::lfs_is_hydrated(&repo, &oid)
+            && repo.primary_remote_url().is_some()
+        {
+            self.lfs_fetch_object(id, &oid, size, Some(path))?;
+        }
+        repo.file_bytes(None, path, version, lfs::AUTO_FETCH_MAX_BYTES)
+    }
+
+    /// See [`Repo::unity_asset_info`].
+    ///
+    /// # Errors
+    /// As [`Repo::unity_asset_info`].
+    pub fn unity_asset_info(
+        &self,
+        id: u32,
+        path: &str,
+        version: &crate::image::Version,
+    ) -> Result<crate::preview::UnityAssetInfo, Error> {
+        self.get(id)?.repo.unity_asset_info(path, version)
+    }
+
+    /// Writes `path` at `version` to a read-only temp copy for opening in its default
+    /// app; see [`crate::preview::write_open_copy`].
+    ///
+    /// # Errors
+    /// As [`Session::file_bytes`], or when the copy can't be written.
+    pub fn open_copy(
+        &self,
+        id: u32,
+        path: &str,
+        version: &crate::image::Version,
+        label: &str,
+    ) -> Result<std::path::PathBuf, Error> {
+        let bytes = self.file_bytes(id, path, version)?;
+        crate::preview::write_open_copy(path, label, &bytes)
+    }
+
     /// The file model `near` refers to as `reference` at `version`, found by
     /// [`Repo::model_reference`]: images decoded as [`Session::image_bytes`]
     /// does, anything else (a glTF `.bin`) as stored.

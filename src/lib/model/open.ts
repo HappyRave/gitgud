@@ -5,7 +5,7 @@ import { loadShared } from "./shared";
 import type { LoadedModel } from "./load";
 import { assemblePrefab } from "./prefab";
 import { LoadProgress } from "./progress";
-import { modelKind, modelUrl, refUrl, toVersion } from "./source";
+import { meshFileKind, modelUrl, refUrl, toVersion } from "./source";
 
 /** One version of a model, as the viewer is given it. */
 export interface ModelSide {
@@ -32,7 +32,7 @@ export async function openSide(
   bust: number,
   progress: LoadProgress = new LoadProgress(),
 ): Promise<Opened> {
-  const kind = modelKind(path);
+  const kind = meshFileKind(path);
   if (!kind) {
     return { model: null, error: `${path} is not a 3D model` };
   }

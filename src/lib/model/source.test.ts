@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hasSourceView, isModel, modelKind, modelUrl, refUrl, toVersion } from "./source";
+import { isModel, meshFileKind, modelKind, modelUrl, refUrl, toVersion } from "./source";
 
 describe("model sources", () => {
   it("recognises model files by extension", () => {
@@ -9,8 +9,7 @@ describe("model sources", () => {
     expect(isModel("a.png")).toBe(false);
     expect(modelKind("x.GLTF")).toBe("gltf");
     expect(modelKind("x.mat")).toBeNull();
-    expect(hasSourceView("a.obj")).toBe(true);
-    expect(hasSourceView("a.fbx")).toBe(false);
+    expect(meshFileKind("Meshes/Hull.asset")).toBe("asset");
   });
 
   it("turns image versions into backend versions", () => {

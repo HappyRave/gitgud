@@ -827,6 +827,15 @@ export interface LfsCacheStats {
   prunableBytes: number;
 }
 
+/** What a Unity YAML-extension file holds, for picking its viewer. */
+export interface UnityAssetInfo {
+  /** Stored in Unity's binary format (Asset Serialization isn't Force Text). */
+  binary: boolean;
+  /** Unity class id of the first object: 114 MonoBehaviour, 43 Mesh, 21 Material… */
+  classId: number | null;
+  size: number;
+}
+
 /** What gitgud keeps for a repo to go faster (Settings › Caches). */
 export interface CacheStats {
   guidIndexFile: string;
@@ -961,6 +970,8 @@ export interface Commands {
   worktree_unity_diff: { args: { id: number; path: string; side: Side }; result: UnityYamlDiff };
   commit_unity_diff: { args: { id: number; commit: string; path: string }; result: UnityYamlDiff };
   model_info: { args: { id: number; path: string; version: FileVersion }; result: ModelInfo };
+  unity_asset_info: { args: { id: number; path: string; version: FileVersion }; result: UnityAssetInfo };
+  open_version: { args: { id: number; path: string; version: FileVersion; label: string }; result: string };
   unity_conflict_table: { args: { id: number; path: string }; result: UnityConflictTable };
   resolve_unity_conflict: { args: { id: number; path: string; picks: UnityPropertyPick[] }; result: Opened };
   unity_post_merge_check: { args: { id: number; paths: string[] }; result: UnityIntegrityIssue[] };
@@ -1254,6 +1265,10 @@ export const worktreeUnityDiff = (id: number, path: string, side: Side) => call(
 export const commitUnityDiff = (id: number, commit: string, path: string) =>
   call("commit_unity_diff", { id, commit, path });
 export const modelInfo = (id: number, path: string, version: FileVersion) => call("model_info", { id, path, version });
+export const unityAssetInfo = (id: number, path: string, version: FileVersion) => call("unity_asset_info", { id, path, version });
+/** Writes `path` at `version` to a temp copy, opens it in its default app, and returns where. */
+export const openVersion = (id: number, path: string, version: FileVersion, label: string) =>
+  call("open_version", { id, path, version, label });
 export const unityConflictTable = (id: number, path: string) => call("unity_conflict_table", { id, path });
 export const resolveUnityConflict = (id: number, path: string, picks: UnityPropertyPick[]) =>
   call("resolve_unity_conflict", { id, path, picks });

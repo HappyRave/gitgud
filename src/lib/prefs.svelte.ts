@@ -1,3 +1,5 @@
+import { formatKey, type ViewMode, viewModes } from "$lib/viewers/route";
+
 const SPLIT_KEY = "gitgud.diff.split";
 const LAYOUT_KEY = "gitgud.diff.layout";
 const WS_KEY = "gitgud.diff.ignoreWs";
@@ -7,6 +9,7 @@ const PANES_KEY = "gitgud.ui.panes";
 const MODEL_SHADING_KEY = "gitgud.model.shading";
 const MODEL_PLAYING_KEY = "gitgud.model.playing";
 const MODEL_VIEW_KEY = "gitgud.model.view";
+const VIEWS_KEY = "gitgud.views";
 
 export type DiffLayout = "auto" | "unified" | "split";
 export type Density = "standard" | "compact";
@@ -64,6 +67,24 @@ function readPanes(): PaneSizes {
   }
 }
 
+function readViews(): Record<string, ViewMode> {
+  const out: Record<string, ViewMode> = {};
+  try {
+    const parsed = JSON.parse(readStorage(VIEWS_KEY) ?? "{}") as Record<string, unknown>;
+    for (const [k, v] of Object.entries(parsed)) {
+      if (v === "visual" || v === "structure" || v === "source") {
+        out[k] = v;
+      }
+    }
+  } catch {
+    // A broken value starts over with every format on its first view.
+  }
+  if (!out.prefab && readStorage(MODEL_VIEW_KEY) === "source") {
+    out.prefab = "structure";
+  }
+  return out;
+}
+
 const initialSplit = readStorage(SPLIT_KEY) === "1";
 const storedLayout = readStorage(LAYOUT_KEY);
 const initialLayout: DiffLayout =
@@ -88,12 +109,23 @@ export const prefs = $state({
   modelShading: (readStorage(MODEL_SHADING_KEY) === "changes" ? "changes" : "textured") as ModelShading,
   /** Whether the 3D viewer was left playing (R6: remembered). */
   modelPlaying: readStorage(MODEL_PLAYING_KEY) === "1",
-  /** 3D or the text view for prefabs and text model files (3D first, then remembered). */
-  modelView: (readStorage(MODEL_VIEW_KEY) === "source" ? "source" : "3d") as ModelView,
+  /** The view last chosen per file format: Visual, Structure or Source (R7: remembered per format). */
+  views: readViews(),
 });
 
 export type ModelShading = "textured" | "changes";
-export type ModelView = "3d" | "source";
+
+/** The view `path` opens in: the one last chosen for its format, else its first. */
+export function viewModeFor(path: string): ViewMode {
+  const modes = viewModes(path);
+  const saved = prefs.views[formatKey(path)];
+  return saved && modes.includes(saved) ? saved : modes[0];
+}
+
+export function setViewMode(path: string, mode: ViewMode) {
+  prefs.views[formatKey(path)] = mode;
+  writeStorage(VIEWS_KEY, JSON.stringify(prefs.views));
+}
 
 export function setModelShading(shading: ModelShading) {
   prefs.modelShading = shading;
@@ -103,11 +135,6 @@ export function setModelShading(shading: ModelShading) {
 export function setModelPlaying(playing: boolean) {
   prefs.modelPlaying = playing;
   writeStorage(MODEL_PLAYING_KEY, playing ? "1" : "0");
-}
-
-export function setModelView(view: ModelView) {
-  prefs.modelView = view;
-  writeStorage(MODEL_VIEW_KEY, view);
 }
 
 export function setPaneSize<K extends keyof PaneSizes>(key: K, value: number | null) {

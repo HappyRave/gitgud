@@ -148,8 +148,8 @@ describe("WorkingFileDiff", () => {
     await waitFor(() => expect(screen.getAllByText("Hydrated")).toHaveLength(2));
   });
 
-  it("opens a prefab in 3D first, and Structure is remembered", async () => {
-    prefs.modelView = "3d";
+  it("opens a prefab in Visual first, and the view is remembered per format", async () => {
+    prefs.views = {};
     const structural = { path: "Gun.prefab", addedObjects: 1, removedObjects: 0, modifiedProperties: 0, objects: [] };
     mockCommands({
       worktree_file_diff: () => diff("raw yaml line"),
@@ -160,14 +160,17 @@ describe("WorkingFileDiff", () => {
     });
     render(WorkingFileDiff, { repoId: 3, path: "Gun.prefab", side: "unstaged", perHunk: false, revision: 0, onhunk: vi.fn() });
     expect(await screen.findByRole("application", { name: "3D preview of Gun.prefab" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "3D" })).toHaveAttribute("aria-pressed", "true");
-    await fireEvent.click(screen.getByRole("button", { name: "Structural" }));
-    expect(localStorage.getItem("gitgud.model.view")).toBe("source");
+    expect(screen.getByRole("radio", { name: "Visual" })).toHaveAttribute("aria-checked", "true");
+    await fireEvent.click(screen.getByRole("radio", { name: "Structure" }));
+    expect(JSON.parse(localStorage.getItem("gitgud.views") ?? "{}")).toEqual({ prefab: "structure" });
     expect(screen.queryByRole("application")).toBeNull();
+    expect(await screen.findByText("+1 objects")).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("radio", { name: "Source" }));
+    expect(await screen.findByText("raw yaml line")).toBeInTheDocument();
   });
 
   it("shows a loading bar instead of the old view while a slow structural diff loads", async () => {
-    prefs.modelView = "source";
+    prefs.views = { prefab: "structure" };
     let finish: (() => void) | null = null;
     const structural = { path: "Gun.prefab", addedObjects: 1, removedObjects: 0, modifiedProperties: 0, objects: [] };
     mockCommands({
@@ -177,11 +180,11 @@ describe("WorkingFileDiff", () => {
     render(WorkingFileDiff, { repoId: 3, path: "Gun.prefab", side: "unstaged", revision: 0, perHunk: true, onhunk: vi.fn() });
     expect(await screen.findByText("+1 objects")).toBeInTheDocument();
 
-    await fireEvent.click(screen.getByRole("button", { name: "Structural" }));
+    await fireEvent.click(screen.getByRole("radio", { name: "Source" }));
     expect(await screen.findByText("raw yaml line")).toBeInTheDocument();
 
     finish = () => {};
-    await fireEvent.click(screen.getByRole("button", { name: "Raw" }));
+    await fireEvent.click(screen.getByRole("radio", { name: "Structure" }));
 
     expect(await screen.findByRole("progressbar", { name: "Loading structural diff…" })).toBeInTheDocument();
     expect(screen.queryByText("raw yaml line")).toBeNull();

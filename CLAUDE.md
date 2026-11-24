@@ -150,6 +150,14 @@ replaying at most 255 rows (spike 4.3).
   three.js lazily; `stage.ts` draws both versions in one WebGL context with a shared camera and clock;
   `compare.ts` matches objects by name path for the Changes tint and legend. FBX pivots are baked into
   prefab meshes as Unity's import does (`pivotOffset`).
+- **Viewers** (R7; `$lib/viewers/route.ts`, `FilePreview.svelte`, `ViewSwitch.svelte`, `preview.rs`):
+  `viewerFor(path)` picks a file's viewer by extension; a `.meta` opens its asset's viewer with an
+  "import settings changed" note; `.asset` is decided by its first object's class
+  (`unity_asset_info`: 43 Mesh → 3D). `viewModes` / `viewModeFor` give Visual | Structure | Source,
+  remembered per format in `prefs.views` (R6's prefab "Text" carries over as Structure). The
+  protocol's `/file` serves any file at a version, LFS resolved (25 MiB auto-fetch). Binary Unity
+  assets get a card (`PreviewCard.svelte`); "Open in default app" (`open_version`) writes a
+  read-only copy under `%TEMP%/gitgud-open/<pid>/`, deleted on exit (stale folders after a day).
 - **Caches** (`caches.rs`, Settings › Caches): the GUID index is updated from changed `.meta` files
   (size + mtime), saved to `.git/gitgud/guid-index`, built in the background when a Unity repo opens,
   and marked stale (not dropped) on refresh; `.meta` GUIDs are kept per blob and per commit tree;

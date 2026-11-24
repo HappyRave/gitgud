@@ -17,6 +17,7 @@ pub mod merge;
 pub mod model;
 pub mod oplog;
 pub mod ops;
+pub mod preview;
 pub mod proposals;
 pub mod rebase;
 pub mod remote;

@@ -111,7 +111,7 @@ describe("CommitDetail", () => {
   });
 
   it("shows a loading bar while a slow structural diff loads", async () => {
-    prefs.modelView = "source";
+    prefs.views = { prefab: "structure" };
     let finish!: () => void;
     const structural = { path: "Gun.prefab", addedObjects: 1, removedObjects: 0, modifiedProperties: 0, objects: [] };
     setup({

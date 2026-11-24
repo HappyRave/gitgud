@@ -1,5 +1,6 @@
 use gitgud_core::image::{Version, image_type};
 use gitgud_core::model::{model_kind, model_mime};
+use gitgud_core::preview::file_mime;
 use gitgud_core::repo::Error;
 use gitgud_core::session::Session;
 use tauri::Url;
@@ -10,7 +11,8 @@ use tauri::http::{Response, StatusCode, header};
 /// show a version of an image without base64 over IPC. `at` is `head`,
 /// `index`, `worktree`, `yours`, `theirs`, or `commit` / `parent` with `commit=<id>`.
 /// `/model` serves a 3D model the same way; `/ref?path=<model>&ref=<name>`
-/// serves the file that model refers to as `ref` (a texture, a glTF buffer).
+/// serves the file that model refers to as `ref` (a texture, a glTF buffer);
+/// `/file` serves any file as stored (audio, video, PDF, fonts, data).
 pub fn respond(session: &Session, uri: &str) -> Response<Vec<u8>> {
     match read(session, uri) {
         Ok((bytes, mime)) => Response::builder()
@@ -57,6 +59,10 @@ fn read(session: &Session, uri: &str) -> Result<(Vec<u8>, &'static str), (Status
             let kind = model_kind(&path).ok_or_else(|| bad("not a 3D model"))?;
             let bytes = session.model_bytes(repo, &path, &version).map_err(fail)?;
             Ok((bytes, model_mime(kind)))
+        }
+        "/file" => {
+            let bytes = session.file_bytes(repo, &path, &version).map_err(fail)?;
+            Ok((bytes, file_mime(&path)))
         }
         "/ref" => {
             let reference = param("ref").ok_or_else(|| bad("missing ref"))?;
@@ -159,6 +165,17 @@ mod tests {
         assert_eq!(r.status(), StatusCode::OK);
         assert_eq!(r.headers()[header::CONTENT_TYPE], "image/png");
         assert_eq!(r.body(), "\u{89}PNG-hull".as_bytes());
+
+        let pdf = respond(
+            &session,
+            &format!("http://gitgud.localhost/file?repo={id}&path=Art%2Fboat.bin&at=head"),
+        );
+        assert_eq!(pdf.status(), StatusCode::OK);
+        assert_eq!(pdf.body(), b"buffer");
+        assert_eq!(
+            pdf.headers()[header::CONTENT_TYPE],
+            "application/octet-stream"
+        );
 
         let bin = respond(
             &session,

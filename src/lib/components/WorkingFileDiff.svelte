@@ -12,13 +12,14 @@
     type UnityYamlDiff,
   } from "$lib/api";
   import { imageUrl, isImage } from "$lib/images";
-  import { isModel, modelKind } from "$lib/model/source";
-  import ModelViewer from "./ModelViewer.svelte";
-  import { prefs, setDiffLayout, setModelView, toggleIgnoreWhitespace } from "$lib/prefs.svelte";
+  import { prefs, setDiffLayout, toggleIgnoreWhitespace, viewModeFor } from "$lib/prefs.svelte";
   import { isUnityYaml } from "$lib/unity";
+  import { viewerFor } from "$lib/viewers/route";
   import DiffView, { type LineAction } from "./DiffView.svelte";
+  import FilePreview from "./FilePreview.svelte";
   import LoadingBar from "./LoadingBar.svelte";
   import UnityDiffView from "./UnityDiffView.svelte";
+  import ViewSwitch from "./ViewSwitch.svelte";
 
   let {
     repoId,
@@ -91,18 +92,12 @@
           },
   );
 
-  const isPrefab = $derived(modelKind(path) === "prefab");
-  const show3d = $derived(isPrefab && prefs.modelView === "3d");
-  const models = $derived(
-    !isModel(path)
-      ? null
-      : {
-          repoId,
-          bust: revision + fetchRev,
-          ...(side === "staged"
-            ? { before: { label: "HEAD", at: { at: "head" as const } }, after: { label: "Staged", at: { at: "index" as const } } }
-            : { before: { label: "Index", at: { at: "index" as const } }, after: { label: "On disk", at: { at: "worktree" as const } } }),
-        },
+  const mode = $derived(viewModeFor(path));
+  const showVisual = $derived(mode === "visual" && viewerFor(path) !== null);
+  const sides = $derived(
+    side === "staged"
+      ? { before: { label: "HEAD", at: { at: "head" as const } }, after: { label: "Staged", at: { at: "index" as const } } }
+      : { before: { label: "Index", at: { at: "index" as const } }, after: { label: "On disk", at: { at: "worktree" as const } } },
   );
 
   async function handleFetchLfs(_which: "before" | "after", meta: BinarySide) {
@@ -123,11 +118,11 @@
 
   let diff = $state<FileDiff | null>(null);
   let unityDiff = $state<UnityYamlDiff | null>(null);
-  let preferStructural = $state(true);
   let error = $state<string | null>(null);
   /** The hunk Alt+↑↓ moved to; S / U / ⌫ act on it. */
   let focused = $state(0);
   const isUnityFile = $derived(isUnityYaml(path));
+  const preferStructural = $derived(mode === "structure");
   // A refresh of the same view keeps the old diff up; a different view clears it so it shows loading.
   let shownView = "";
 
@@ -150,7 +145,7 @@
     const structural = isUnityFile && preferStructural;
     const key = `${repoId}:${path}:${side}:${revision}:${ws}:${structural}`;
     const stale = () =>
-      key !== `${repoId}:${path}:${side}:${revision}:${prefs.ignoreWhitespace}:${isUnityYaml(path) && preferStructural}`;
+      key !== `${repoId}:${path}:${side}:${revision}:${prefs.ignoreWhitespace}:${isUnityYaml(path) && viewModeFor(path) === "structure"}`;
     error = null;
     const view = `${repoId}:${path}:${side}:${ws}:${structural}`;
     if (view !== shownView) {
@@ -204,7 +199,7 @@
   /** Runs a hunk key; false when it doesn't apply here (wrong side, no hunks). */
   export function hunkKey(action: "next" | "prev" | "stage" | "unstage" | "discard"): boolean {
     const hunks = diff?.hunks ?? [];
-    if (!perHunk || (isUnityFile && preferStructural && unityDiff) || hunks.length === 0) {
+    if (!perHunk || showVisual || (isUnityFile && preferStructural && unityDiff) || hunks.length === 0) {
       return false;
     }
     if (action === "next" || action === "prev") {
@@ -228,28 +223,8 @@
   <h3 class="dh">
     <span class="name">{path}</span> <span class="side">{side === "staged" ? "staged" : "unstaged"}</span>
     <span class="keys">
-      {#if perHunk && (diff?.hunks.length ?? 0) > 1}Alt+↑↓ hunks ·{/if}
-      {#if isPrefab}
-        <button
-          type="button"
-          class="bare mode"
-          class:active={show3d}
-          aria-pressed={show3d}
-          title="Show the prefab in 3D"
-          onclick={() => setModelView("3d")}>3D</button
-        > ·
-      {/if}
-      {#if isUnityFile}
-        <button
-          type="button"
-          class="bare mode"
-          class:active={!show3d && preferStructural}
-          aria-pressed={!show3d && preferStructural}
-          title="Toggle Unity structural property diff vs raw YAML diff"
-          onclick={() => (show3d ? setModelView("source") : (preferStructural = !preferStructural))}
-          >{preferStructural ? "Structural" : "Raw"}</button
-        > ·
-      {/if}
+      {#if perHunk && !showVisual && (diff?.hunks.length ?? 0) > 1}Alt+↑↓ hunks ·{/if}
+      <ViewSwitch {path} />
       {#if onhistory}
         <button type="button" class="bare mode" title="File history" onclick={() => onhistory(path)}>History</button> ·
       {/if}
@@ -270,8 +245,16 @@
       >
     </span>
   </h3>
-  {#if show3d && models}
-    <ModelViewer repoId={models.repoId} {path} before={models.before} after={models.after} bust={models.bust} />
+  {#if showVisual}
+    <FilePreview
+      {repoId}
+      {path}
+      before={sides.before}
+      after={sides.after}
+      bust={revision + fetchRev}
+      meta={diff?.binaryMeta ?? null}
+      onfetch={handleFetchLfs}
+    />
   {:else if error}
     <p role="alert">{error}</p>
   {:else if isUnityFile && preferStructural && unityDiff}
@@ -284,7 +267,6 @@
       {lineActions}
       focused={perHunk ? focused : null}
       {images}
-      models={isUnityFile ? null : models}
       split={effectiveSplit}
       onfetchlfs={handleFetchLfs}
     />

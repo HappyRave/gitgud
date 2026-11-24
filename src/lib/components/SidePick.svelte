@@ -3,9 +3,9 @@
   import { formatSizeDelta, imageFormatLabel, imageUrl, isImage } from "$lib/images";
   import { sideKey } from "$lib/keys";
   import { formatSize } from "$lib/merge/resolve";
-  import { isModel } from "$lib/model/source";
+  import { viewerFor } from "$lib/viewers/route";
+  import FilePreview from "./FilePreview.svelte";
   import ImageDiff from "./ImageDiff.svelte";
-  import ModelViewer from "./ModelViewer.svelte";
 
   let {
     repoId,
@@ -127,9 +127,9 @@
           onfetch={(which, meta) => fetchSide(which, meta)}
         />
       </div>
-    {:else if isModel(path) && (sides.yours || sides.theirs)}
+    {:else if viewerFor(path) && (sides.yours || sides.theirs)}
       <div class="viewer model">
-        <ModelViewer
+        <FilePreview
           {repoId}
           {path}
           before={sides.yours ? { label: `Yours · ${yoursLabel}`, at: { at: "yours" } } : null}
