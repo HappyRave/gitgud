@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
+  import { onDestroy, type Snippet } from "svelte";
   import type { BinaryMeta, BinarySide } from "$lib/api";
   import { type Change, type ModelStats, stats, TINT } from "$lib/model/compare";
   import type { ModelSide, Opened } from "$lib/model/open";
@@ -17,6 +17,8 @@
     bust = 0,
     meta = null,
     onfetch,
+    opener,
+    chrome,
   }: {
     repoId: number;
     path: string;
@@ -25,6 +27,10 @@
     bust?: number;
     meta?: BinaryMeta | null;
     onfetch?: (side: "before" | "after", meta: BinarySide) => Promise<void>;
+    /** Builds each side's model instead of loading `path` (the material viewer's ball). */
+    opener?: (side: ModelSide) => Promise<Opened>;
+    /** Replaces the view's own controls; shading stays Textured and the counts are hidden. */
+    chrome?: Snippet;
   } = $props();
 
   let canvas = $state<HTMLCanvasElement>();
@@ -73,8 +79,8 @@
       }
     };
     const [b, a]: [Opened | null, Opened] = await Promise.all([
-      before ? openSide(repoId, path, before, bust, progress) : Promise.resolve(null),
-      openSide(repoId, path, after, bust, progress),
+      before ? (opener ? opener(before) : openSide(repoId, path, before, bust, progress)) : Promise.resolve(null),
+      opener ? opener(after) : openSide(repoId, path, after, bust, progress),
     ]);
     if (token !== seq) {
       return;
@@ -130,7 +136,7 @@
     stage.split = split;
     stage.playing = prefs.modelPlaying && duration > 0;
     stage.setOnion(onion);
-    stage.setShading(single ? "textured" : prefs.modelShading);
+    stage.setShading(single || chrome ? "textured" : prefs.modelShading);
     stage.invalidate();
   }
 
@@ -212,7 +218,7 @@
     stage?.pick(e.clientX - r.left, e.clientY - r.top);
   }
 
-  const shown = $derived(single ? "textured" : prefs.modelShading);
+  const shown = $derived(single || chrome ? "textured" : prefs.modelShading);
   const sym = { added: "+", removed: "−", modified: "~" } as const;
 </script>
 
@@ -277,6 +283,9 @@
       {/if}
 
       <div class="chrome">
+        {#if chrome}
+          {@render chrome()}
+        {:else}
         <div class="seg" role="radiogroup" aria-label="Shading">
           <button
             type="button"
@@ -305,9 +314,10 @@
           title={big ? "Wireframe is off for models this large" : undefined}
           onclick={() => (wire = !wire)}>Wire</button
         >
+        {/if}
       </div>
 
-      {#if counts.after}
+      {#if counts.after && !chrome}
         <div class="stats">
           <b>{fmt(counts.after.triangles)}</b> tris
           {#if counts.before}<span class="d">{delta(counts.before.triangles, counts.after.triangles)}</span>{/if}

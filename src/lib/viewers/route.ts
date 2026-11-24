@@ -15,6 +15,7 @@ const BY_EXT: Record<string, ViewerKind> = {
   gltf: "model",
   glb: "model",
   asset: "asset",
+  mat: "material",
   ttf: "font",
   otf: "font",
   ttc: "font",

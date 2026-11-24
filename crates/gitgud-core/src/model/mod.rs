@@ -15,7 +15,7 @@ use std::sync::Arc;
 use serde::Serialize;
 
 pub use anim::{ClipSource, SceneClip, Track};
-pub use material::Material;
+pub use material::{Material, MaterialProperty, MaterialView};
 pub use prefab::{MeshRef, ModelNode, ModelScene};
 
 use crate::cli::GitCli;
@@ -24,6 +24,9 @@ use crate::repo::{Error, Repo};
 use guids::Guids;
 use meta::Meta;
 use tree::Files;
+
+/// How many users of a material the "Your mesh" list offers.
+pub const MAX_USERS: usize = 50;
 
 /// The kinds of 3D asset the viewer opens.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -154,6 +157,78 @@ impl Repo {
         Ok(info)
     }
 
+    /// Every property, keyword and the render queue of the `.mat` at `path`.
+    ///
+    /// # Errors
+    /// [`Error::Refused`] when it isn't in that version or holds no material.
+    pub fn material_view(
+        &self,
+        git: Option<&GitCli>,
+        path: &str,
+        version: &Version,
+    ) -> Result<MaterialView, Error> {
+        let files = Files::new(self, version)?.with_git(git);
+        MaterialView::load(path, &Guids::new(&files))
+    }
+
+    /// Prefabs and models that use the material at `path` in `version`, prefabs
+    /// first, at most [`MAX_USERS`]: files naming its GUID, found with `git grep`.
+    ///
+    /// # Errors
+    /// [`Error::Command`] when git grep fails; [`Error::Read`] when the version can't be read.
+    pub fn material_users(
+        &self,
+        git: &GitCli,
+        path: &str,
+        version: &Version,
+    ) -> Result<Vec<String>, Error> {
+        let files = Files::new(self, version)?;
+        let Some(guid) = files
+            .read_text(&format!("{path}.meta"))?
+            .as_deref()
+            .and_then(Meta::guid_only)
+        else {
+            return Ok(Vec::new());
+        };
+        let rev = match version {
+            Version::Head => Some("HEAD".to_owned()),
+            Version::Commit(id) => Some(id.clone()),
+            Version::Parent(id) => Some(format!("{id}^")),
+            _ => None,
+        };
+        let mut args = vec!["grep", "-l", "-F", "-e", guid.as_str()];
+        if matches!(version, Version::Index) {
+            args.push("--cached");
+        }
+        if let Some(r) = &rev {
+            args.push(r);
+        }
+        args.extend([
+            "--",
+            "*.prefab",
+            "*.fbx.meta",
+            "*.obj.meta",
+            "*.gltf.meta",
+            "*.glb.meta",
+        ]);
+        let (code, out, err) = git.run_status(self.root(), &args, None)?;
+        if code > 1 {
+            return Err(Error::Command {
+                command: "git grep".into(),
+                message: err.trim().to_owned(),
+            });
+        }
+        let prefix = rev.map(|r| format!("{r}:")).unwrap_or_default();
+        let mut users: Vec<String> = out
+            .lines()
+            .map(|l| l.strip_prefix(&prefix).unwrap_or(l))
+            .map(|l| l.strip_suffix(".meta").unwrap_or(l).to_owned())
+            .collect();
+        users.sort_by_key(|p| (!p.ends_with(".prefab"), p.clone()));
+        users.truncate(MAX_USERS);
+        Ok(users)
+    }
+
     fn read_model_info(
         &self,
         git: Option<&GitCli>,
@@ -262,6 +337,51 @@ mod tests {
         assert_eq!(info(&Version::Worktree).scale, 3.0);
         assert_eq!(info(&Version::Head).scale, 2.0);
         assert_eq!(r.model_infos.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn finds_the_prefabs_and_models_that_use_a_material() {
+        let guid = "3333cccc000000000000000000000000";
+        let uses = format!("m_Materials:\n  - {{fileID: 2100000, guid: {guid}, type: 2}}\n");
+        let repo = TestRepo::init();
+        repo.write(
+            "Assets/hull.mat",
+            "--- !u!21 &2100000\nMaterial:\n  m_Name: Hull\n",
+        )
+        .write("Assets/hull.mat.meta", &format!("guid: {guid}\n"))
+        .write("Assets/Boats/Tug.prefab", &uses)
+        .write("Assets/Other.prefab", "m_Materials: []\n")
+        .write("Assets/Art/boat.fbx", "fbx")
+        .write(
+            "Assets/Art/boat.fbx.meta",
+            &format!("externalObjects:\n  second: {{fileID: 2100000, guid: {guid}, type: 2}}\n"),
+        )
+        .commit_all("one");
+        repo.write("Assets/Barge.prefab", &uses);
+        repo.git(&["add", "Assets/Barge.prefab"]);
+        let head = repo.git(&["rev-parse", "HEAD"]).trim().to_owned();
+        let r = crate::repo::open(repo.path()).unwrap();
+        let git = GitCli::new(&crate::git::locate().unwrap());
+        let users = |v: Version| r.material_users(&git, "Assets/hull.mat", &v).unwrap();
+        assert_eq!(
+            users(Version::Head),
+            ["Assets/Boats/Tug.prefab", "Assets/Art/boat.fbx"]
+        );
+        assert_eq!(users(Version::Commit(head.clone())), users(Version::Head));
+        assert_eq!(
+            users(Version::Worktree),
+            [
+                "Assets/Barge.prefab",
+                "Assets/Boats/Tug.prefab",
+                "Assets/Art/boat.fbx"
+            ]
+        );
+        assert_eq!(users(Version::Index), users(Version::Worktree));
+        assert!(
+            r.material_users(&git, "Assets/none.mat", &Version::Head)
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]

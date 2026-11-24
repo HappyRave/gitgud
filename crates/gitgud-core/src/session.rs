@@ -1945,6 +1945,34 @@ impl Session {
         repo.model_info(git, path, version)
     }
 
+    /// See [`Repo::material_view`].
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`], or as [`Repo::material_view`].
+    pub fn material_view(
+        &self,
+        id: u32,
+        path: &str,
+        version: &crate::image::Version,
+    ) -> Result<crate::model::MaterialView, Error> {
+        let repo = self.get(id)?.repo.clone();
+        repo.material_view(self.git().ok(), path, version)
+    }
+
+    /// See [`Repo::material_users`].
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`], or as [`Repo::material_users`].
+    pub fn material_users(
+        &self,
+        id: u32,
+        path: &str,
+        version: &crate::image::Version,
+    ) -> Result<Vec<String>, Error> {
+        let repo = self.get(id)?.repo.clone();
+        repo.material_users(self.git()?, path, version)
+    }
+
     /// Detects available local AI CLIs and env key presence (never reads key values).
     #[must_use]
     pub fn ai_providers(&self) -> AiProviderStatus {

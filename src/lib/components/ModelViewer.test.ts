@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
+import { createRawSnippet } from "svelte";
 import { BoxGeometry, Group, Mesh, MeshStandardMaterial } from "three";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { compare } from "$lib/model/compare";
@@ -109,6 +110,17 @@ describe("ModelViewer", () => {
     await fireEvent.click(screen.getByRole("radio", { name: "Swipe" }));
     expect(stages[0].mode).toBe("swipe");
     expect(screen.getByRole("button", { name: "Drag to swipe" })).toBeInTheDocument();
+  });
+
+  it("builds sides with a given opener and shows the given controls instead of its own", async () => {
+    const opener = vi.fn(async (_side: ModelSide): Promise<Opened> => ({ model: boat(0, false), error: null }));
+    const chrome = createRawSnippet(() => ({ render: () => "<button>Sphere</button>" }));
+    render(ModelViewer, { repoId: 1, path: "Assets/M/hull.mat", before: HEAD, after: DISK, opener, chrome });
+    expect(await screen.findByRole("button", { name: "Sphere" })).toBeInTheDocument();
+    expect(opener.mock.calls.map(([s]) => s.label)).toEqual(["HEAD", "On disk"]);
+    expect(screen.queryByRole("radio", { name: "Changes" })).toBeNull();
+    expect(screen.queryByText(/tris/)).toBeNull();
+    expect(stages[0].shading).toBe("textured");
   });
 
   it("shows an added file alone, with compare and Changes off", async () => {

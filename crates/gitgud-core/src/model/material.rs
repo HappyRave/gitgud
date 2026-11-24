@@ -154,6 +154,214 @@ impl Material {
     }
 }
 
+/// Everything a `.mat` sets, for the material viewer's table.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MaterialView {
+    /// What the 3D stage renders.
+    pub material: Material,
+    pub properties: Vec<MaterialProperty>,
+    pub keywords: Vec<String>,
+    /// `m_CustomRenderQueue`; -1 means the shader's own.
+    pub render_queue: Option<i32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MaterialProperty {
+    /// The shader's name for it (`_BaseMap`).
+    pub key: String,
+    /// The Inspector's label for known shaders, else `key`.
+    pub label: String,
+    pub value: String,
+    /// The colour of a colour property, for a swatch.
+    pub color: Option<[f32; 4]>,
+    /// Left over from an earlier shader: the current shader doesn't declare it.
+    pub stale: bool,
+}
+
+/// Inspector labels for the properties of Unity's built-in, URP and HDRP shaders.
+const LABELS: [(&str, &str); 34] = [
+    ("_BaseMap", "Base Map"),
+    ("_BaseColor", "Base Color"),
+    ("_BaseColorMap", "Base Map"),
+    ("_MainTex", "Albedo"),
+    ("_Color", "Color"),
+    ("_BumpMap", "Normal Map"),
+    ("_BumpScale", "Normal Scale"),
+    ("_NormalMap", "Normal Map"),
+    ("_NormalScale", "Normal Scale"),
+    ("_Metallic", "Metallic"),
+    ("_MetallicGlossMap", "Metallic Map"),
+    ("_MaskMap", "Mask Map"),
+    ("_Smoothness", "Smoothness"),
+    ("_Glossiness", "Smoothness"),
+    ("_GlossMapScale", "Smoothness Scale"),
+    ("_SpecColor", "Specular Color"),
+    ("_SpecGlossMap", "Specular Map"),
+    ("_OcclusionMap", "Occlusion Map"),
+    ("_OcclusionStrength", "Occlusion"),
+    ("_EmissionColor", "Emission Color"),
+    ("_EmissionMap", "Emission Map"),
+    ("_EmissiveColor", "Emission Color"),
+    ("_EmissiveColorMap", "Emission Map"),
+    ("_ParallaxMap", "Height Map"),
+    ("_Parallax", "Height Scale"),
+    ("_DetailAlbedoMap", "Detail Albedo"),
+    ("_DetailNormalMap", "Detail Normal"),
+    ("_DetailMask", "Detail Mask"),
+    ("_Cutoff", "Alpha Cutoff"),
+    ("_AlphaClip", "Alpha Clipping"),
+    ("_Surface", "Surface Type"),
+    ("_Blend", "Blending Mode"),
+    ("_Cull", "Render Face"),
+    ("_WorkflowMode", "Workflow"),
+];
+
+impl MaterialView {
+    /// Reads every property of the `.mat` at `path`.
+    ///
+    /// # Errors
+    /// [`Error::Refused`] when the file isn't in that version or holds no material.
+    pub(crate) fn load(path: &str, guids: &Guids<'_>) -> Result<Self, Error> {
+        let not_found = || Error::Refused(format!("{path} has no material in that version"));
+        let text = guids.files.read_text(path)?.ok_or_else(not_found)?;
+        let doc = docs(&text)
+            .into_iter()
+            .find(|d| d.class_id == MATERIAL_CLASS)
+            .ok_or_else(not_found)?;
+        let material = Material::load(path, guids)?;
+        let b = &doc.body;
+        let known = material
+            .approximated
+            .then(|| declared(b, guids))
+            .transpose()?
+            .flatten();
+        let props = &b["m_SavedProperties"];
+        let mut properties = Vec::new();
+        let mut add = |key: String, value: String, color: Option<[f32; 4]>| {
+            let label = LABELS
+                .iter()
+                .find(|(k, _)| *k == key)
+                .map_or_else(|| key.clone(), |(_, l)| (*l).to_owned());
+            let stale = known.as_ref().is_some_and(|k| !k.contains(&key));
+            properties.push(MaterialProperty {
+                key,
+                label,
+                value,
+                color,
+                stale,
+            });
+        };
+        for (key, tex) in keyed_list(&props["m_TexEnvs"]) {
+            let name = match obj_ref(&tex["m_Texture"]).and_then(|r| r.guid) {
+                Some(g) => guids
+                    .path(&g)?
+                    .map_or_else(|| format!("missing ({g})"), |p| base_name(&p).to_owned()),
+                None => "none".to_owned(),
+            };
+            let scale = vec2(&tex["m_Scale"], [1.0, 1.0]);
+            let offset = vec2(&tex["m_Offset"], [0.0, 0.0]);
+            let mut value = name;
+            if scale != [1.0, 1.0] || offset != [0.0, 0.0] {
+                value.push_str(&format!(
+                    " · tiling {}, {} · offset {}, {}",
+                    scale[0], scale[1], offset[0], offset[1]
+                ));
+            }
+            add(key, value, None);
+        }
+        for list in ["m_Ints", "m_Floats"] {
+            for (key, v) in keyed_list(&props[list]) {
+                add(key, scalar(v).unwrap_or_default(), None);
+            }
+        }
+        for (key, v) in keyed_list(&props["m_Colors"]) {
+            let c = color(v);
+            add(key, hex(c), Some(c));
+        }
+        let mut keywords: Vec<String> = match b["m_ValidKeywords"].as_vec() {
+            Some(list) => list.iter().filter_map(scalar).collect(),
+            None => scalar(&b["m_ShaderKeywords"])
+                .unwrap_or_default()
+                .split_whitespace()
+                .map(str::to_owned)
+                .collect(),
+        };
+        keywords.sort();
+        Ok(Self {
+            material,
+            properties,
+            keywords,
+            render_queue: num(&b["m_CustomRenderQueue"]).map(|q| q as i32),
+        })
+    }
+}
+
+/// `#RRGGBB`, or `#RRGGBBAA` when not opaque; HDR values above 1 show as floats.
+fn hex(c: [f32; 4]) -> String {
+    if c.iter().any(|v| *v > 1.0 || *v < 0.0) {
+        return format!("({}, {}, {}, {})", c[0], c[1], c[2], c[3]);
+    }
+    let byte = |v: f32| (v * 255.0).round() as u8;
+    let rgb = format!("#{:02X}{:02X}{:02X}", byte(c[0]), byte(c[1]), byte(c[2]));
+    if c[3] < 1.0 {
+        format!("{rgb}{:02X}", byte(c[3]))
+    } else {
+        rgb
+    }
+}
+
+/// The property names a custom shader's source declares, when its source is in the repo.
+fn declared(material: &yaml_rust2::Yaml, guids: &Guids<'_>) -> Result<Option<Vec<String>>, Error> {
+    let Some(guid) = obj_ref(&material["m_Shader"]).and_then(|r| r.guid) else {
+        return Ok(None);
+    };
+    let Some(path) = guids.path(&guid)?.filter(|p| p.ends_with(".shader")) else {
+        return Ok(None);
+    };
+    let Some(text) = guids.files.read_text(&path)? else {
+        return Ok(None);
+    };
+    let Some(start) = text.find("Properties") else {
+        return Ok(None);
+    };
+    let block = &text[start..];
+    let Some(open) = block.find('{') else {
+        return Ok(None);
+    };
+    let mut depth = 0;
+    let mut end = block.len();
+    for (i, ch) in block[open..].char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    end = open + i;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let names = block[open + 1..end]
+        .lines()
+        .filter_map(|l| {
+            let mut l = l.trim();
+            while let Some(rest) = l.strip_prefix('[') {
+                l = rest.split_once(']').map_or("", |(_, r)| r).trim_start();
+            }
+            let name: String = l
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            (!name.is_empty() && l[name.len()..].trim_start().starts_with('(')).then_some(name)
+        })
+        .collect();
+    Ok(Some(names))
+}
+
 fn shader_name(material: &yaml_rust2::Yaml, guids: &Guids<'_>) -> Result<(String, bool), Error> {
     let Some(r) = obj_ref(&material["m_Shader"]) else {
         return Ok(("(no shader)".into(), true));
@@ -253,5 +461,47 @@ mod tests {
         let gone = Material::load("Assets/M/gone.mat", &g).unwrap();
         assert!(gone.missing);
         assert_eq!(gone.name, "gone");
+    }
+
+    #[test]
+    fn lists_every_property_with_labels_keywords_and_stale_marks() {
+        let repo = TestRepo::init();
+        let body = format!(
+            "{}    m_Ints:\n    - _Cull: 2\n  m_ValidKeywords:\n  - _NORMALMAP\n  - _ALPHATEST_ON\n  m_CustomRenderQueue: 2450\n",
+            mat(&format!("{{fileID: 4800000, guid: {SHADER}, type: 3}}"))
+                .replace(
+                    "    - _BaseColor: {r: 0.2, g: 0.4, b: 0.6, a: 1}\n",
+                    "    - _BaseColor: {r: 1, g: 0.5, b: 0, a: 1}\n    - _EmissionColor: {r: 2, g: 0, b: 0, a: 1}\n"
+                )
+        );
+        repo.write("Assets/T/hull.png", "x")
+            .write("Assets/T/hull.png.meta", &format!("guid: {TEX}\n"))
+            .write(
+                "Assets/S/Hull.shader",
+                "Shader \"BoatAttack/Hull\"\n{\n  Properties\n  {\n    [MainTexture] _BaseMap (\"Albedo\", 2D) = \"white\" {}\n    [HDR]_BaseColor(\"Color\", Color) = (1,1,1,1)\n    _Smoothness (\"Smooth\", Range(0,1)) = 0.5\n  }\n  SubShader { Pass { } }\n}\n",
+            )
+            .write("Assets/S/Hull.shader.meta", &format!("guid: {SHADER}\n"))
+            .write("Assets/M/hull.mat", &body)
+            .commit_all("one");
+        let r = crate::repo::open(repo.path()).unwrap();
+        let files = Files::new(&r, &Version::Head).unwrap();
+        let v = MaterialView::load("Assets/M/hull.mat", &Guids::new(&files)).unwrap();
+        let get = |k: &str| v.properties.iter().find(|p| p.key == k).unwrap();
+        assert_eq!(get("_BaseMap").label, "Base Map");
+        assert_eq!(
+            get("_BaseMap").value,
+            "hull.png · tiling 2, 3 · offset 0.5, 0"
+        );
+        assert_eq!(get("_BumpMap").value, "none");
+        assert_eq!(get("_BaseColor").value, "#FF8000");
+        assert_eq!(get("_BaseColor").color, Some([1.0, 0.5, 0.0, 1.0]));
+        assert_eq!(get("_EmissionColor").value, "(2, 0, 0, 1)");
+        assert_eq!(get("_Cull").value, "2");
+        assert!(!get("_BaseMap").stale && !get("_Smoothness").stale);
+        assert!(get("_Metallic").stale && get("_BumpMap").stale);
+        assert_eq!(v.keywords, ["_ALPHATEST_ON", "_NORMALMAP"]);
+        assert_eq!(v.render_queue, Some(2450));
+        assert_eq!(v.material.shader, "BoatAttack/Hull");
+        assert!(MaterialView::load("Assets/M/gone.mat", &Guids::new(&files)).is_err());
     }
 }

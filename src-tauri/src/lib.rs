@@ -1328,6 +1328,26 @@ async fn model_info(
 }
 
 #[tauri::command]
+async fn material_view(
+    session: State<'_, Session>,
+    id: u32,
+    path: String,
+    version: gitgud_core::image::Version,
+) -> Result<gitgud_core::model::MaterialView, Error> {
+    session.material_view(id, &path, &version)
+}
+
+#[tauri::command]
+async fn material_users(
+    session: State<'_, Session>,
+    id: u32,
+    path: String,
+    version: gitgud_core::image::Version,
+) -> Result<Vec<String>, Error> {
+    session.material_users(id, &path, &version)
+}
+
+#[tauri::command]
 async fn font_info(
     session: State<'_, Session>,
     id: u32,
@@ -1739,6 +1759,8 @@ fn app_with_library<R: Runtime>(builder: Builder<R>, library: Option<LibraryStor
             unity_asset_info,
             open_version,
             font_info,
+            material_view,
+            material_users,
             unity_conflict_table,
             resolve_unity_conflict,
             unity_post_merge_check,
@@ -1930,6 +1952,21 @@ mod tests {
             )
             .unwrap_err();
         assert!(err.to_string().contains("not a 3D model"));
+        let view = ipc
+            .call(
+                "material_view",
+                json!({ "id": id, "path": "Assets/hull.mat", "version": "worktree" }),
+            )
+            .unwrap();
+        assert_eq!(view["material"]["shader"], "Standard");
+        assert_eq!(view["renderQueue"], Value::Null);
+        let users = ipc
+            .call(
+                "material_users",
+                json!({ "id": id, "path": "Assets/hull.mat", "version": "head" }),
+            )
+            .unwrap();
+        assert_eq!(users, json!(["Assets/boat.fbx"]));
     }
 
     #[test]

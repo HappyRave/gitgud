@@ -7,6 +7,7 @@
   import { metaTarget, viewerFor } from "$lib/viewers/route";
   import FontViewer from "./FontViewer.svelte";
   import LoadingBar from "./LoadingBar.svelte";
+  import MaterialViewer from "./MaterialViewer.svelte";
   import ModelViewer from "./ModelViewer.svelte";
   import PreviewCard from "./PreviewCard.svelte";
 
@@ -93,6 +94,8 @@
     />
   {:else if shown === "model"}
     <ModelViewer {repoId} path={target} {before} {after} {bust} {meta} {onfetch} />
+  {:else if shown === "material"}
+    <MaterialViewer {repoId} path={target} {before} {after} {bust} {meta} {onfetch} />
   {:else if shown === "font"}
     <FontViewer {repoId} path={target} {before} {after} {bust} {meta} {onfetch} />
   {:else}

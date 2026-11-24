@@ -836,6 +836,24 @@ export interface UnityAssetInfo {
   size: number;
 }
 
+/** Everything a `.mat` sets, for the material viewer. */
+export interface MaterialView {
+  material: ModelMaterial;
+  properties: MaterialProperty[];
+  keywords: string[];
+  /** -1: the shader's own queue. */
+  renderQueue: number | null;
+}
+
+export interface MaterialProperty {
+  key: string;
+  label: string;
+  value: string;
+  color: [number, number, number, number] | null;
+  /** Left over from an earlier shader. */
+  stale: boolean;
+}
+
 /** A font file's names, metrics and glyphs, for the font viewer. */
 export interface FontInfo {
   /** "TrueType", "OpenType (CFF)", prefixed "WOFF · " / "WOFF2 · ", suffixed " · collection". */
@@ -996,6 +1014,8 @@ export interface Commands {
   model_info: { args: { id: number; path: string; version: FileVersion }; result: ModelInfo };
   unity_asset_info: { args: { id: number; path: string; version: FileVersion }; result: UnityAssetInfo };
   open_version: { args: { id: number; path: string; version: FileVersion; label: string }; result: string };
+  material_view: { args: { id: number; path: string; version: FileVersion }; result: MaterialView };
+  material_users: { args: { id: number; path: string; version: FileVersion }; result: string[] };
   font_info: { args: { id: number; path: string; version: FileVersion; face?: number }; result: FontInfo };
   unity_conflict_table: { args: { id: number; path: string }; result: UnityConflictTable };
   resolve_unity_conflict: { args: { id: number; path: string; picks: UnityPropertyPick[] }; result: Opened };
@@ -1294,7 +1314,9 @@ export const unityAssetInfo = (id: number, path: string, version: FileVersion) =
 /** Writes `path` at `version` to a temp copy, opens it in its default app, and returns where. */
 export const openVersion = (id: number, path: string, version: FileVersion, label: string) =>
   call("open_version", { id, path, version, label });
-export const fontInfo = (id: number, path: string, version: FileVersion) => call("font_info", { id, path, version });
+export const materialView = (id: number, path: string, version: FileVersion) => call("material_view", { id, path, version });
+export const materialUsers = (id: number, path: string, version: FileVersion) => call("material_users", { id, path, version });
+export const fontInfo =(id: number, path: string, version: FileVersion) => call("font_info", { id, path, version });
 export const unityConflictTable = (id: number, path: string) => call("unity_conflict_table", { id, path });
 export const resolveUnityConflict = (id: number, path: string, picks: UnityPropertyPick[]) =>
   call("resolve_unity_conflict", { id, path, picks });
