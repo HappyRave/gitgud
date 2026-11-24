@@ -836,6 +836,30 @@ export interface UnityAssetInfo {
   size: number;
 }
 
+/** A font file's names, metrics and glyphs, for the font viewer. */
+export interface FontInfo {
+  /** "TrueType", "OpenType (CFF)", prefixed "WOFF · " / "WOFF2 · ", suffixed " · collection". */
+  format: string;
+  faces: number;
+  family: string | null;
+  style: string | null;
+  version: string | null;
+  weight: number;
+  italic: boolean;
+  unitsPerEm: number;
+  ascender: number;
+  descender: number;
+  lineGap: number;
+  xHeight: number | null;
+  capHeight: number | null;
+  glyphCount: number;
+  axes: { tag: string; name: string | null; min: number; default: number; max: number }[];
+  /** Every mapped Unicode code point, ascending. */
+  codepoints: number[];
+  /** Outline hash per code point (same order); 0 for an empty glyph. */
+  outlines: number[];
+}
+
 /** What gitgud keeps for a repo to go faster (Settings › Caches). */
 export interface CacheStats {
   guidIndexFile: string;
@@ -972,6 +996,7 @@ export interface Commands {
   model_info: { args: { id: number; path: string; version: FileVersion }; result: ModelInfo };
   unity_asset_info: { args: { id: number; path: string; version: FileVersion }; result: UnityAssetInfo };
   open_version: { args: { id: number; path: string; version: FileVersion; label: string }; result: string };
+  font_info: { args: { id: number; path: string; version: FileVersion; face?: number }; result: FontInfo };
   unity_conflict_table: { args: { id: number; path: string }; result: UnityConflictTable };
   resolve_unity_conflict: { args: { id: number; path: string; picks: UnityPropertyPick[] }; result: Opened };
   unity_post_merge_check: { args: { id: number; paths: string[] }; result: UnityIntegrityIssue[] };
@@ -1269,6 +1294,7 @@ export const unityAssetInfo = (id: number, path: string, version: FileVersion) =
 /** Writes `path` at `version` to a temp copy, opens it in its default app, and returns where. */
 export const openVersion = (id: number, path: string, version: FileVersion, label: string) =>
   call("open_version", { id, path, version, label });
+export const fontInfo = (id: number, path: string, version: FileVersion) => call("font_info", { id, path, version });
 export const unityConflictTable = (id: number, path: string) => call("unity_conflict_table", { id, path });
 export const resolveUnityConflict = (id: number, path: string, picks: UnityPropertyPick[]) =>
   call("resolve_unity_conflict", { id, path, picks });

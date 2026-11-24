@@ -1862,6 +1862,21 @@ impl Session {
         repo.file_bytes(None, path, version, lfs::AUTO_FETCH_MAX_BYTES)
     }
 
+    /// See [`Repo::font_info`]; LFS objects up to the auto-fetch limit are fetched first.
+    ///
+    /// # Errors
+    /// As [`Session::file_bytes`], or when the file can't be read as a font.
+    pub fn font_info(
+        &self,
+        id: u32,
+        path: &str,
+        version: &crate::image::Version,
+        face: u32,
+    ) -> Result<crate::font::FontInfo, Error> {
+        let bytes = self.file_bytes(id, path, version)?;
+        crate::font::read_font(&bytes, face).map_err(|e| Error::Refused(format!("{path}: {e}")))
+    }
+
     /// See [`Repo::unity_asset_info`].
     ///
     /// # Errors

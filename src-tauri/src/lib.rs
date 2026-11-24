@@ -1328,6 +1328,17 @@ async fn model_info(
 }
 
 #[tauri::command]
+async fn font_info(
+    session: State<'_, Session>,
+    id: u32,
+    path: String,
+    version: gitgud_core::image::Version,
+    face: Option<u32>,
+) -> Result<gitgud_core::font::FontInfo, Error> {
+    session.font_info(id, &path, &version, face.unwrap_or(0))
+}
+
+#[tauri::command]
 async fn unity_asset_info(
     session: State<'_, Session>,
     id: u32,
@@ -1727,6 +1738,7 @@ fn app_with_library<R: Runtime>(builder: Builder<R>, library: Option<LibraryStor
             model_info,
             unity_asset_info,
             open_version,
+            font_info,
             unity_conflict_table,
             resolve_unity_conflict,
             unity_post_merge_check,
@@ -1918,6 +1930,44 @@ mod tests {
             )
             .unwrap_err();
         assert!(err.to_string().contains("not a 3D model"));
+    }
+
+    #[test]
+    fn font_info_reads_each_version_and_refuses_what_isnt_a_font() {
+        use gitgud_core::font::fixture::tiny_ttf;
+        let repo = TestRepo::init();
+        std::fs::write(
+            repo.path().join("ui.ttf"),
+            tiny_ttf(&[(0, 0), (250, 500), (500, 0)]),
+        )
+        .unwrap();
+        repo.write("notes.ttf", "plain text").commit_all("one");
+        std::fs::write(
+            repo.path().join("ui.ttf"),
+            tiny_ttf(&[(0, 0), (250, 600), (500, 0)]),
+        )
+        .unwrap();
+        let ipc = Ipc::new();
+        let id = open(&ipc, &repo)["id"].clone();
+        let read = |version: Value| {
+            ipc.call(
+                "font_info",
+                json!({ "id": id, "path": "ui.ttf", "version": version }),
+            )
+            .unwrap()
+        };
+        let (head, disk) = (read(json!("head")), read(json!("worktree")));
+        assert_eq!(head["codepoints"], json!([0x41, 0x42]));
+        assert_eq!(head["unitsPerEm"], 1000);
+        assert_eq!(head["outlines"][0], disk["outlines"][0]);
+        assert_ne!(head["outlines"][1], disk["outlines"][1]);
+        let err = ipc
+            .call(
+                "font_info",
+                json!({ "id": id, "path": "notes.ttf", "version": "head" }),
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("notes.ttf: not a font"));
     }
 
     #[test]

@@ -10,6 +10,7 @@ const MODEL_SHADING_KEY = "gitgud.model.shading";
 const MODEL_PLAYING_KEY = "gitgud.model.playing";
 const MODEL_VIEW_KEY = "gitgud.model.view";
 const VIEWS_KEY = "gitgud.views";
+const VIEWER_KEY = "gitgud.viewer";
 
 export type DiffLayout = "auto" | "unified" | "split";
 export type Density = "standard" | "compact";
@@ -85,6 +86,15 @@ function readViews(): Record<string, ViewMode> {
   return out;
 }
 
+function readViewer(): Record<string, string> {
+  try {
+    const parsed = JSON.parse(readStorage(VIEWER_KEY) ?? "{}") as Record<string, unknown>;
+    return Object.fromEntries(Object.entries(parsed).filter((e): e is [string, string] => typeof e[1] === "string"));
+  } catch {
+    return {};
+  }
+}
+
 const initialSplit = readStorage(SPLIT_KEY) === "1";
 const storedLayout = readStorage(LAYOUT_KEY);
 const initialLayout: DiffLayout =
@@ -111,6 +121,8 @@ export const prefs = $state({
   modelPlaying: readStorage(MODEL_PLAYING_KEY) === "1",
   /** The view last chosen per file format: Visual, Structure or Source (R7: remembered per format). */
   views: readViews(),
+  /** Choices inside a viewer (font Sample / All glyphs / Metrics…), per format (R7). */
+  viewer: readViewer(),
 });
 
 export type ModelShading = "textured" | "changes";
@@ -125,6 +137,17 @@ export function viewModeFor(path: string): ViewMode {
 export function setViewMode(path: string, mode: ViewMode) {
   prefs.views[formatKey(path)] = mode;
   writeStorage(VIEWS_KEY, JSON.stringify(prefs.views));
+}
+
+/** The choice `name` last made in `path`'s viewer if it is still one of `options`, else the first. */
+export function viewerChoice<T extends string>(path: string, name: string, options: readonly T[]): T {
+  const saved = prefs.viewer[`${formatKey(path)}.${name}`];
+  return options.find((o) => o === saved) ?? options[0];
+}
+
+export function setViewerChoice(path: string, name: string, value: string) {
+  prefs.viewer[`${formatKey(path)}.${name}`] = value;
+  writeStorage(VIEWER_KEY, JSON.stringify(prefs.viewer));
 }
 
 export function setModelShading(shading: ModelShading) {

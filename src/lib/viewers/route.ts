@@ -15,6 +15,11 @@ const BY_EXT: Record<string, ViewerKind> = {
   gltf: "model",
   glb: "model",
   asset: "asset",
+  ttf: "font",
+  otf: "font",
+  ttc: "font",
+  woff: "font",
+  woff2: "font",
 };
 
 const BINARY = new Set<ViewerKind>(["font", "audio", "video", "pdf"]);

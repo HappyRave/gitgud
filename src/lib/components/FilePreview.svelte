@@ -5,6 +5,7 @@
   import { formatSize } from "$lib/merge/resolve";
   import { setViewMode } from "$lib/prefs.svelte";
   import { metaTarget, viewerFor } from "$lib/viewers/route";
+  import FontViewer from "./FontViewer.svelte";
   import LoadingBar from "./LoadingBar.svelte";
   import ModelViewer from "./ModelViewer.svelte";
   import PreviewCard from "./PreviewCard.svelte";
@@ -92,6 +93,8 @@
     />
   {:else if shown === "model"}
     <ModelViewer {repoId} path={target} {before} {after} {bust} {meta} {onfetch} />
+  {:else if shown === "font"}
+    <FontViewer {repoId} path={target} {before} {after} {bust} {meta} {onfetch} />
   {:else}
     <div class="none">
       <p>No visual view for this kind of asset.</p>

@@ -6,6 +6,7 @@ pub mod cli;
 pub mod clone;
 pub mod config;
 pub mod diff;
+pub mod font;
 pub mod git;
 pub mod graph;
 pub mod history;
