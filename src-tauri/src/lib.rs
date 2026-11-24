@@ -1328,6 +1328,17 @@ async fn model_info(
 }
 
 #[tauri::command]
+async fn sprite_sheet(
+    session: State<'_, Session>,
+    id: u32,
+    texture: String,
+    before: Option<gitgud_core::image::Version>,
+    after: gitgud_core::image::Version,
+) -> Result<gitgud_core::model::SpriteSheet, Error> {
+    session.sprite_sheet(id, &texture, before.as_ref(), &after)
+}
+
+#[tauri::command]
 async fn video_info(
     session: State<'_, Session>,
     id: u32,
@@ -1795,6 +1806,7 @@ fn app_with_library<R: Runtime>(builder: Builder<R>, library: Option<LibraryStor
             audio_info,
             data_tables,
             video_info,
+            sprite_sheet,
             unity_conflict_table,
             resolve_unity_conflict,
             unity_post_merge_check,
@@ -2001,6 +2013,31 @@ mod tests {
             )
             .unwrap();
         assert_eq!(users, json!(["Assets/boat.fbx"]));
+    }
+
+    #[test]
+    fn sprite_sheet_diffs_a_resliced_texture() {
+        let meta = |w: u32| {
+            format!(
+                "TextureImporter:\n  spriteMode: 2\n  spriteSheet:\n    sprites:\n    - name: icon\n      rect: {{x: 0, y: 0, width: {w}, height: 32}}\n      pivot: {{x: 0.5, y: 0.5}}\n      border: {{x: 0, y: 0, z: 0, w: 0}}\n"
+            )
+        };
+        let repo = TestRepo::init();
+        repo.write("HUD.png", "png")
+            .write("HUD.png.meta", &meta(32))
+            .commit_all("one");
+        repo.write("HUD.png.meta", &meta(40));
+        let ipc = Ipc::new();
+        let id = open(&ipc, &repo)["id"].clone();
+        let s = ipc
+            .call(
+                "sprite_sheet",
+                json!({ "id": id, "texture": "HUD.png", "before": "head", "after": "worktree" }),
+            )
+            .unwrap();
+        assert_eq!(s["mode"], "multiple");
+        assert_eq!(s["after"][0]["rect"], json!([0.0, 0.0, 40.0, 32.0]));
+        assert_eq!(s["changes"][0]["kinds"], json!(["resized"]));
     }
 
     #[test]

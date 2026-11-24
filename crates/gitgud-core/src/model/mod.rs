@@ -6,6 +6,7 @@ mod mesh_asset;
 mod meta;
 mod prefab;
 mod scriptable;
+mod sprites;
 mod tree;
 mod yaml;
 
@@ -18,6 +19,7 @@ use serde::Serialize;
 pub use anim::{ClipSource, SceneClip, Track};
 pub use material::{Material, MaterialProperty, MaterialView};
 pub use prefab::{MeshRef, ModelNode, ModelScene};
+pub use sprites::{Sprite, SpriteChange, SpriteSheet};
 
 use crate::cli::GitCli;
 use crate::image::Version;
@@ -169,6 +171,39 @@ impl Repo {
         Ok(info)
     }
 
+    /// The sprites of `texture` (an image path) from its `.meta` at `after`, compared
+    /// with `before` when that version has the `.meta`.
+    ///
+    /// # Errors
+    /// [`Error::Read`] when a version can't be listed.
+    pub fn sprite_sheet(
+        &self,
+        texture: &str,
+        before: Option<&Version>,
+        after: &Version,
+    ) -> Result<SpriteSheet, Error> {
+        let meta = format!("{texture}.meta");
+        let read = |v: &Version| -> Result<Option<(String, Vec<sprites::Sprite>)>, Error> {
+            Ok(Files::new(self, v)?
+                .read_text(&meta)?
+                .map(|t| sprites::read_sprites(&t)))
+        };
+        let (mode, after_sprites) = read(after)?.unwrap_or_else(|| ("none".into(), Vec::new()));
+        let before_sprites = match before {
+            Some(v) => read(v)?.map(|(_, s)| s),
+            None => None,
+        };
+        Ok(SpriteSheet {
+            changes: before_sprites
+                .as_deref()
+                .map(|b| sprites::diff_sprites(b, &after_sprites))
+                .unwrap_or_default(),
+            mode,
+            before: before_sprites,
+            after: after_sprites,
+        })
+    }
+
     /// The tables in a CSV / TSV / JSON file or a ScriptableObject `.asset`, compared
     /// between `before` (when the file is there) and `after`.
     ///
@@ -182,18 +217,13 @@ impl Repo {
         after: &Version,
     ) -> Result<DataTables, Error> {
         let read = |version: &Version| -> Result<(String, Vec<Table>), Error> {
-            if path.to_ascii_lowercase().ends_with(".asset") {
+            let lower = path.to_ascii_lowercase();
+            if lower.ends_with(".asset") || lower.ends_with(".spriteatlas") {
                 let files = Files::new(self, version)?.with_git(git);
                 let text = files
                     .read_text(path)?
                     .ok_or_else(|| Error::Refused(format!("{path} isn't in that version")))?;
-                let (script, tables) =
-                    scriptable::scriptable_tables(&text, path, &Guids::new(&files))?;
-                let kind = script.map_or_else(
-                    || "ScriptableObject".to_owned(),
-                    |s| format!("ScriptableObject · {s}"),
-                );
-                return Ok((kind, tables));
+                return scriptable::scriptable_tables(&text, path, &Guids::new(&files));
             }
             let bytes = self.file_bytes(git, path, version, crate::lfs::AUTO_FETCH_MAX_BYTES)?;
             let tables = crate::table::read_tables(&bytes, path)
@@ -463,6 +493,29 @@ mod tests {
             )
             .unwrap();
         assert_eq!(added.tables[0].added, 0, "a new file compares as itself");
+        repo.write(
+            "Assets/HUD.spriteatlas",
+            &format!(
+                "--- !u!687078895 &4343727234628468602\nSpriteAtlas:\n  m_Name: HUD\n  m_EditorData:\n    packingSettings:\n      padding: 4\n    packables:\n    - {{fileID: 100100000, guid: {prefab}, type: 3}}\n  m_PackedSprites:\n  - {{fileID: 21300000, guid: {prefab}, type: 3}}\n"
+            ),
+        );
+        let a = r
+            .data_tables(None, "Assets/HUD.spriteatlas", None, &Version::Worktree)
+            .unwrap();
+        assert_eq!(a.kind, "Sprite Atlas");
+        let names: Vec<_> = a.tables.iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(names, ["fields", "packables"]);
+        assert_eq!(a.tables[1].columns, ["asset"]);
+        assert_eq!(
+            a.tables[1].rows[0].cells[0][1].as_deref(),
+            Some("Skiff.prefab")
+        );
+        assert!(
+            a.tables[0]
+                .rows
+                .iter()
+                .any(|r| r.cells[0][1].as_deref() == Some("packingSettings.padding"))
+        );
         repo.write(
             "Assets/Hull.asset",
             "--- !u!43 &4300000\nMesh:\n  m_Name: Hull\n",

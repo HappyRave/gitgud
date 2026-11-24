@@ -836,6 +836,30 @@ export interface UnityAssetInfo {
   size: number;
 }
 
+/** One sprite of a texture, in Unity pixels (origin bottom-left). */
+export interface Sprite {
+  name: string;
+  /** `[x, y, width, height]`; all 0 for a Single sprite (the whole texture). */
+  rect: [number, number, number, number];
+  pivot: [number, number];
+  /** 9-slice borders: `[left, bottom, right, top]`. */
+  border: [number, number, number, number];
+}
+
+export interface SpriteChange {
+  name: string;
+  kinds: ("added" | "removed" | "moved" | "resized" | "pivot" | "border")[];
+  note: string;
+}
+
+/** A texture's slicing at two versions, from its `.meta`. */
+export interface SpriteSheet {
+  mode: "single" | "multiple" | "none";
+  before: Sprite[] | null;
+  after: Sprite[];
+  changes: SpriteChange[];
+}
+
 /** An MP4 / MOV's video track, read from its boxes. */
 export interface VideoInfo {
   codec: string;
@@ -1074,6 +1098,7 @@ export interface Commands {
   model_info: { args: { id: number; path: string; version: FileVersion }; result: ModelInfo };
   unity_asset_info: { args: { id: number; path: string; version: FileVersion }; result: UnityAssetInfo };
   open_version: { args: { id: number; path: string; version: FileVersion; label: string }; result: string };
+  sprite_sheet: { args: { id: number; texture: string; before?: FileVersion | null; after: FileVersion }; result: SpriteSheet };
   video_info: { args: { id: number; path: string; version: FileVersion }; result: VideoInfo };
   data_tables: { args: { id: number; path: string; before?: FileVersion | null; after: FileVersion }; result: DataTables };
   audio_info: { args: { id: number; path: string; version: FileVersion }; result: AudioInfo };
@@ -1377,7 +1402,9 @@ export const unityAssetInfo = (id: number, path: string, version: FileVersion) =
 /** Writes `path` at `version` to a temp copy, opens it in its default app, and returns where. */
 export const openVersion = (id: number, path: string, version: FileVersion, label: string) =>
   call("open_version", { id, path, version, label });
-export const videoInfo = (id: number, path: string, version: FileVersion) => call("video_info", { id, path, version });
+export const spriteSheet = (id: number, texture: string, before: FileVersion | null, after: FileVersion) =>
+  call("sprite_sheet", { id, texture, before, after });
+export const videoInfo =(id: number, path: string, version: FileVersion) => call("video_info", { id, path, version });
 export const dataTables =(id: number, path: string, before: FileVersion | null, after: FileVersion) =>
   call("data_tables", { id, path, before, after });
 export const audioInfo =(id: number, path: string, version: FileVersion) => call("audio_info", { id, path, version });

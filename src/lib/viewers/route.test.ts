@@ -7,7 +7,12 @@ describe("viewer routing", () => {
     expect(viewerFor("Prefabs/Skiff.prefab")).toBe("model");
     expect(viewerFor("Meshes/Hull.asset")).toBe("asset");
     expect(viewerFor("Art/Boat.fbx.meta")).toBe("model");
-    expect(viewerFor("UI/icon.png.meta")).toBeNull();
+    expect(viewerFor("UI/icon.png.meta")).toBe("atlas");
+    expect(viewerFor("UI/icon.png")).toBeNull();
+    expect(viewerFor("UI/HUD.spriteatlas")).toBe("table");
+    expect(viewerFor("Audio/horn.wav")).toBe("audio");
+    expect(viewerFor("Docs/GDD.pdf")).toBe("pdf");
+    expect(viewerFor("UI/Display.woff2")).toBe("font");
     expect(viewerFor("README.md")).toBeNull();
     expect(metaTarget("a/b.wav.meta")).toBe("a/b.wav");
     expect(metaTarget("a/b.wav")).toBeNull();
@@ -20,6 +25,9 @@ describe("viewer routing", () => {
     expect(viewModes("Boat.gltf")).toEqual(["visual", "source"]);
     expect(viewModes("Boat.fbx.meta")).toEqual(["visual", "source"]);
     expect(viewModes("Gun.controller")).toEqual(["structure", "source"]);
+    expect(viewModes("HUD.png.meta")).toEqual(["visual", "source"]);
+    expect(viewModes("Horn.wav")).toEqual(["visual"]);
+    expect(viewModes("stats.csv")).toEqual(["visual", "source"]);
     expect(viewModes("notes.txt")).toEqual(["source"]);
   });
 

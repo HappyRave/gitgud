@@ -1991,6 +1991,20 @@ impl Session {
             .map_err(|e| Error::Refused(format!("{path}: {e}")))
     }
 
+    /// See [`Repo::sprite_sheet`].
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`], or as [`Repo::sprite_sheet`].
+    pub fn sprite_sheet(
+        &self,
+        id: u32,
+        texture: &str,
+        before: Option<&crate::image::Version>,
+        after: &crate::image::Version,
+    ) -> Result<crate::model::SpriteSheet, Error> {
+        self.get(id)?.repo.sprite_sheet(texture, before, after)
+    }
+
     /// See [`Repo::data_tables`].
     ///
     /// # Errors

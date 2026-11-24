@@ -7,9 +7,15 @@ use crate::repo::Error;
 use crate::table::{Record, Table, key_values, records};
 
 const MONO_BEHAVIOUR: u32 = 114;
+const SPRITE_ATLAS: u32 = 687_078_895;
 
-/// Unity's bookkeeping fields, not the asset's own data.
-const SKIP: [&str; 9] = [
+/// Unity's bookkeeping fields, not the asset's own data; for a sprite atlas also
+/// what Unity regenerates on every pack.
+const SKIP: [&str; 13] = [
+    "m_PackedSprites",
+    "m_PackedSpriteNamesToIndex",
+    "m_RenderDataMap",
+    "m_EditorData",
     "m_ObjectHideFlags",
     "m_CorrespondingSourceObject",
     "m_PrefabInstance",
@@ -21,37 +27,59 @@ const SKIP: [&str; 9] = [
     "m_EditorClassIdentifier",
 ];
 
-/// A ScriptableObject's lists of records as tables, its other fields as a
-/// "fields" table, and the name of its script.
+/// A ScriptableObject's (or sprite atlas's) lists of records as tables, its other
+/// fields as a "fields" table, and what it is: "ScriptableObject · <script>" or
+/// "Sprite Atlas". A list of references becomes a one-column "asset" table.
 ///
 /// # Errors
-/// [`Error::Refused`] when the file holds no MonoBehaviour.
+/// [`Error::Refused`] when the file holds neither.
 pub(crate) fn scriptable_tables(
     text: &str,
     path: &str,
     guids: &Guids<'_>,
-) -> Result<(Option<String>, Vec<Table>), Error> {
+) -> Result<(String, Vec<Table>), Error> {
     let doc = docs(text)
         .into_iter()
-        .find(|d| d.class_id == MONO_BEHAVIOUR)
+        .find(|d| d.class_id == MONO_BEHAVIOUR || d.class_id == SPRITE_ATLAS)
         .ok_or_else(|| Error::Refused(format!("{path} isn't a ScriptableObject")))?;
+    let kind = if doc.class_id == SPRITE_ATLAS {
+        "Sprite Atlas".to_owned()
+    } else {
+        match ref_guid(&doc.body["m_Script"]) {
+            Some(g) => guids.path(&g)?.map_or_else(
+                || "ScriptableObject".to_owned(),
+                |p| {
+                    format!(
+                        "ScriptableObject · {}",
+                        base_name(&p).trim_end_matches(".cs")
+                    )
+                },
+            ),
+            None => "ScriptableObject".to_owned(),
+        }
+    };
     let Some(body) = doc.body.as_hash() else {
-        return Ok((None, Vec::new()));
+        return Ok((kind, Vec::new()));
     };
-    let script = match ref_guid(&doc.body["m_Script"]) {
-        Some(g) => guids
-            .path(&g)?
-            .map(|p| base_name(&p).trim_end_matches(".cs").to_owned()),
-        None => None,
-    };
+    let editor = doc.body["m_EditorData"].as_hash().into_iter().flatten();
     let mut tables = Vec::new();
     let mut fields = Vec::new();
-    for (k, v) in body {
+    for (k, v) in body.iter().chain(editor) {
         let Some(key) = scalar(k) else { continue };
         if SKIP.contains(&key.as_str()) {
             continue;
         }
         match v.as_vec() {
+            Some(items) if !items.is_empty() && items.iter().all(is_ref) => {
+                let mut rows = Vec::with_capacity(items.len());
+                for (i, item) in items.iter().enumerate() {
+                    let mut flat = Vec::new();
+                    flatten(&format!("{i}"), item, guids, &mut flat)?;
+                    let value = flat.pop().map(|(_, v)| v).unwrap_or_default();
+                    rows.push(Record::Flat(vec![("asset".to_owned(), value)]));
+                }
+                tables.push(records(&key, rows.into_iter()));
+            }
             Some(items)
                 if !items.is_empty()
                     && items.iter().all(|i| i.as_hash().is_some() && !is_ref(i)) =>
@@ -74,7 +102,7 @@ pub(crate) fn scriptable_tables(
     if !fields.is_empty() {
         tables.insert(0, key_values(fields));
     }
-    Ok((script, tables))
+    Ok((kind, tables))
 }
 
 fn is_ref(y: &Yaml) -> bool {

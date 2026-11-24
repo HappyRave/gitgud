@@ -21,6 +21,7 @@ const BY_EXT: Record<string, ViewerKind> = {
   m4v: "video",
   mov: "video",
   webm: "video",
+  spriteatlas: "table",
   csv: "table",
   tsv: "table",
   json: "table",
@@ -50,13 +51,14 @@ export function metaTarget(path: string): string | null {
 
 /**
  * The viewer for `path`, or null when it has none. A `.meta` file opens its asset's
- * viewer (the import settings changed). `.asset` needs the file's first object to
+ * viewer (the import settings changed); an image's `.meta` opens the sprite-sheet
+ * view, which holds its slicing. `.asset` needs the file's first object to
  * pick between the grid and 3D, so it comes back as "asset".
  */
 export function viewerFor(path: string): ViewerKind | null {
   const target = metaTarget(path);
   if (target) {
-    return isImage(target) ? null : viewerFor(target);
+    return isImage(target) ? "atlas" : viewerFor(target);
   }
   return BY_EXT[ext(path)] ?? null;
 }

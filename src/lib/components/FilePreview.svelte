@@ -13,6 +13,7 @@
   import PdfViewer from "./PdfViewer.svelte";
   import ModelViewer from "./ModelViewer.svelte";
   import PreviewCard from "./PreviewCard.svelte";
+  import SpriteViewer from "./SpriteViewer.svelte";
   import VideoViewer from "./VideoViewer.svelte";
 
   let {
@@ -98,6 +99,8 @@
     <ModelViewer {repoId} path={target} {before} {after} {bust} {meta} {onfetch} />
   {:else if shown === "material"}
     <MaterialViewer {repoId} path={target} {before} {after} {bust} {meta} {onfetch} />
+  {:else if shown === "atlas"}
+    <SpriteViewer {repoId} path={target} {before} {after} {bust} />
   {:else if shown === "video"}
     <VideoViewer {repoId} path={target} {before} {after} {bust} {meta} {onfetch} />
   {:else if shown === "pdf"}
