@@ -1961,6 +1961,21 @@ impl Session {
             .map_err(|e| Error::Refused(format!("{path}: {e}")))
     }
 
+    /// Codec, size, fps and bitrate of the MP4 / MOV at `path` and `version`; LFS
+    /// objects up to the auto-fetch limit are fetched first.
+    ///
+    /// # Errors
+    /// As [`Session::file_bytes`], or when the file isn't an MP4 / MOV.
+    pub fn video_info(
+        &self,
+        id: u32,
+        path: &str,
+        version: &crate::image::Version,
+    ) -> Result<crate::video::VideoInfo, Error> {
+        let bytes = self.file_bytes(id, path, version)?;
+        crate::video::read_video(&bytes).map_err(|e| Error::Refused(format!("{path}: {e}")))
+    }
+
     /// Sound file `path` at `version` decoded to WAV, for formats the webview can't play.
     ///
     /// # Errors

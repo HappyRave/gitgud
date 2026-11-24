@@ -1328,6 +1328,16 @@ async fn model_info(
 }
 
 #[tauri::command]
+async fn video_info(
+    session: State<'_, Session>,
+    id: u32,
+    path: String,
+    version: gitgud_core::image::Version,
+) -> Result<gitgud_core::video::VideoInfo, Error> {
+    session.video_info(id, &path, &version)
+}
+
+#[tauri::command]
 async fn data_tables(
     session: State<'_, Session>,
     id: u32,
@@ -1784,6 +1794,7 @@ fn app_with_library<R: Runtime>(builder: Builder<R>, library: Option<LibraryStor
             material_users,
             audio_info,
             data_tables,
+            video_info,
             unity_conflict_table,
             resolve_unity_conflict,
             unity_post_merge_check,
@@ -1990,6 +2001,31 @@ mod tests {
             )
             .unwrap();
         assert_eq!(users, json!(["Assets/boat.fbx"]));
+    }
+
+    #[test]
+    fn video_info_reads_an_mp4() {
+        let repo = TestRepo::init();
+        std::fs::write(
+            repo.path().join("intro.mp4"),
+            gitgud_core::video::tiny_mp4(b"avc1", 1280, 720, 25, 4),
+        )
+        .unwrap();
+        repo.commit_all("one");
+        let ipc = Ipc::new();
+        let id = open(&ipc, &repo)["id"].clone();
+        let v = ipc
+            .call(
+                "video_info",
+                json!({ "id": id, "path": "intro.mp4", "version": "head" }),
+            )
+            .unwrap();
+        assert_eq!(v["codec"], "H.264");
+        assert_eq!(
+            (v["width"].clone(), v["height"].clone()),
+            (json!(1280), json!(720))
+        );
+        assert_eq!(v["fps"], 25.0);
     }
 
     #[test]

@@ -37,5 +37,6 @@ pub mod task;
 pub mod testing;
 pub mod unity;
 pub mod unity_yaml;
+pub mod video;
 pub mod watch;
 pub mod worktree;

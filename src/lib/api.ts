@@ -836,6 +836,19 @@ export interface UnityAssetInfo {
   size: number;
 }
 
+/** An MP4 / MOV's video track, read from its boxes. */
+export interface VideoInfo {
+  codec: string;
+  width: number;
+  height: number;
+  duration: number;
+  fps: number | null;
+  frames: number | null;
+  /** Whole-file bits per second. */
+  bitrate: number | null;
+  audioCodec: string | null;
+}
+
 /** The tables of a CSV / TSV / JSON file or ScriptableObject, compared across two versions. */
 export interface DataTables {
   /** "CSV", "JSON", "ScriptableObject · BoatDatabase"… */
@@ -1061,6 +1074,7 @@ export interface Commands {
   model_info: { args: { id: number; path: string; version: FileVersion }; result: ModelInfo };
   unity_asset_info: { args: { id: number; path: string; version: FileVersion }; result: UnityAssetInfo };
   open_version: { args: { id: number; path: string; version: FileVersion; label: string }; result: string };
+  video_info: { args: { id: number; path: string; version: FileVersion }; result: VideoInfo };
   data_tables: { args: { id: number; path: string; before?: FileVersion | null; after: FileVersion }; result: DataTables };
   audio_info: { args: { id: number; path: string; version: FileVersion }; result: AudioInfo };
   material_view: { args: { id: number; path: string; version: FileVersion }; result: MaterialView };
@@ -1363,7 +1377,8 @@ export const unityAssetInfo = (id: number, path: string, version: FileVersion) =
 /** Writes `path` at `version` to a temp copy, opens it in its default app, and returns where. */
 export const openVersion = (id: number, path: string, version: FileVersion, label: string) =>
   call("open_version", { id, path, version, label });
-export const dataTables = (id: number, path: string, before: FileVersion | null, after: FileVersion) =>
+export const videoInfo = (id: number, path: string, version: FileVersion) => call("video_info", { id, path, version });
+export const dataTables =(id: number, path: string, before: FileVersion | null, after: FileVersion) =>
   call("data_tables", { id, path, before, after });
 export const audioInfo =(id: number, path: string, version: FileVersion) => call("audio_info", { id, path, version });
 export const materialView =(id: number, path: string, version: FileVersion) => call("material_view", { id, path, version });
