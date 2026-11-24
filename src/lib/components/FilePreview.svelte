@@ -67,6 +67,14 @@
   });
 
   const binary = $derived(!!info && (info.before?.binary || info.after?.binary));
+  /** Scenes above this many objects open on a card first (R7 decision 10: a guess, to measure). */
+  const SCENE_3D_LIMIT = 20_000;
+  let sceneAnyway = $state(false);
+  const sceneObjects = $derived(Math.max(info?.before?.objects ?? 0, info?.after?.objects ?? 0));
+  $effect(() => {
+    void target;
+    sceneAnyway = false;
+  });
   const shown = $derived(kind === "asset" ? (info ? ASSET_VIEWS[info.after?.classId ?? info.before?.classId ?? 0] ?? null : "probing") : kind);
   const sizes = $derived(
     info ? [info.before?.size, info.after?.size].filter((s): s is number => s != null).map(formatSize).join(" → ") : "",
@@ -96,6 +104,19 @@
       ]}
       sides={openSides}
     />
+  {:else if shown === "scene" && sceneObjects > SCENE_3D_LIMIT && !sceneAnyway}
+    <div class="none">
+      <p>
+        <b>Large scene: {sceneObjects.toLocaleString("en-US")} objects.</b> Above {SCENE_3D_LIMIT.toLocaleString("en-US")} the 3D
+        view may take a while to build, so it opens on request.
+      </p>
+      <span class="actions">
+        <button type="button" onclick={() => (sceneAnyway = true)}>Open in 3D</button>
+        <button type="button" onclick={() => setViewMode(path, "structure")}>Show Structure</button>
+      </span>
+    </div>
+  {:else if shown === "scene"}
+    <ModelViewer {repoId} path={target} {before} {after} {bust} {meta} {onfetch} merged />
   {:else if shown === "model"}
     <ModelViewer {repoId} path={target} {before} {after} {bust} {meta} {onfetch} />
   {:else if shown === "material"}
@@ -158,5 +179,9 @@
   }
   .none p {
     margin: 0;
+  }
+  .actions {
+    display: flex;
+    gap: 6px;
   }
 </style>

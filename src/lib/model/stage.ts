@@ -28,7 +28,8 @@ import { type Comparison, compare, type Status } from "./compare";
 import type { LoadedModel } from "./load";
 import { ShadingKit } from "./materials";
 
-export type CompareMode = "side" | "swipe" | "onion";
+/** "merged": the newer version only, with the older one's changed objects as amber wire ghosts. */
+export type CompareMode = "side" | "swipe" | "onion" | "merged";
 export type Shading = "textured" | "changes";
 
 interface Side {
@@ -153,6 +154,12 @@ export class ModelStage {
   setShading(shading: Shading) {
     this.shading = shading;
     this.applyShading();
+  }
+
+  /** In the Changes shading, fades what didn't change ("Changed only"). */
+  setDimUnchanged(dim: boolean) {
+    this.kit.dimSame(dim);
+    this.dirty = true;
   }
 
   setOnion(opacity: number) {
@@ -372,6 +379,21 @@ export class ModelStage {
     side.helpers.visible = true;
   }
 
+  /** Draws only `side`'s changed or removed meshes, as amber wire ghosts. */
+  private overlayChanged(side: Side) {
+    const hidden: Object3D[] = [];
+    side.model.root.traverse((o) => {
+      if ((o as Mesh).isMesh && o.visible && (this.comparison.status.get(o) ?? "same") === "same") {
+        o.visible = false;
+        hidden.push(o);
+      }
+    });
+    this.overlay(side, this.kit.ghostWire);
+    for (const o of hidden) {
+      o.visible = true;
+    }
+  }
+
   private draw(side: Side, x: number, w: number) {
     const r = this.renderer;
     r.setViewport(x, 0, w, this.height);
@@ -412,6 +434,8 @@ export class ModelStage {
         this.draw(after, 0, w);
         if (before && this.mode === "onion") {
           this.overlay(before, this.kit.ghost);
+        } else if (before && this.mode === "merged") {
+          this.overlayChanged(before);
         }
       }
     }

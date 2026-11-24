@@ -9,6 +9,7 @@ describe("model sources", () => {
     expect(isModel("a.png")).toBe(false);
     expect(modelKind("x.GLTF")).toBe("gltf");
     expect(modelKind("x.mat")).toBeNull();
+    expect(modelKind("Scenes/Harbour.unity")).toBe("prefab");
     expect(meshFileKind("Meshes/Hull.asset")).toBe("asset");
   });
 

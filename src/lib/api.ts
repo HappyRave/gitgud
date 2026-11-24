@@ -834,6 +834,8 @@ export interface UnityAssetInfo {
   /** Unity class id of the first object: 114 MonoBehaviour, 43 Mesh, 21 Material… */
   classId: number | null;
   size: number;
+  /** GameObjects in the file. */
+  objects: number;
 }
 
 export interface CurveKey {

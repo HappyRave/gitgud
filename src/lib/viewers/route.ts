@@ -17,6 +17,7 @@ const BY_EXT: Record<string, ViewerKind> = {
   asset: "asset",
   mat: "material",
   anim: "curves",
+  unity: "scene",
   pdf: "pdf",
   mp4: "video",
   m4v: "video",

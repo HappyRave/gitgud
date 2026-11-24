@@ -85,6 +85,8 @@ pub struct UnityAssetInfo {
     /// Unity class id of the first object (114 MonoBehaviour, 43 Mesh, 21 Material…).
     pub class_id: Option<u32>,
     pub size: u64,
+    /// GameObjects in the file (a scene's or prefab's object count).
+    pub objects: u32,
 }
 
 impl UnityAssetInfo {
@@ -99,10 +101,18 @@ impl UnityAssetInfo {
                 .find_map(crate::unity_yaml::parse_doc_header)
                 .map(|(class, _, _)| class)
         };
+        let objects = if binary {
+            0
+        } else {
+            let marker = b"\n--- !u!1 &";
+            bytes.windows(marker.len()).filter(|w| *w == marker).count() as u32
+                + u32::from(bytes.starts_with(&marker[1..]))
+        };
         Self {
             binary,
             class_id,
             size: bytes.len() as u64,
+            objects,
         }
     }
 }
@@ -199,6 +209,14 @@ mod tests {
         assert_eq!((so.binary, so.class_id), (false, Some(114)));
         let bin = UnityAssetInfo::read(b"\0\0\0\0\x16\0\0\0unity binary");
         assert_eq!((bin.binary, bin.class_id), (true, None));
+        let scene = UnityAssetInfo::read(
+            b"--- !u!29 &1\nOcclusionCullingSettings:\n--- !u!1 &5\nGameObject:\n--- !u!4 &6\nTransform:\n--- !u!1 &7\nGameObject:\n--- !u!1001 &8\nPrefabInstance:\n",
+        );
+        assert_eq!(scene.objects, 2);
+        assert_eq!(
+            UnityAssetInfo::read(b"--- !u!1 &5\nGameObject:\n").objects,
+            1
+        );
     }
 
     #[test]

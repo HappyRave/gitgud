@@ -67,7 +67,7 @@ pub fn model_kind(path: &str) -> Option<ModelKind> {
         "obj" => ModelKind::Obj,
         "gltf" => ModelKind::Gltf,
         "glb" => ModelKind::Glb,
-        "prefab" => ModelKind::Prefab,
+        "prefab" | "unity" => ModelKind::Prefab,
         "asset" => ModelKind::UnityMesh,
         _ => return None,
     })

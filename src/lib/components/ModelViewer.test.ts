@@ -42,6 +42,10 @@ class FakeStage {
     this.shading = s;
   }
   setOnion() {}
+  dim = false;
+  setDimUnchanged(d: boolean) {
+    this.dim = d;
+  }
   setActive() {}
   invalidate() {}
   resize() {}
@@ -121,6 +125,29 @@ describe("ModelViewer", () => {
     expect(screen.queryByRole("radio", { name: "Changes" })).toBeNull();
     expect(screen.queryByText(/tris/)).toBeNull();
     expect(stages[0].shading).toBe("textured");
+  });
+
+  it("offers Merged for scenes, filters a long change list and fades what didn't change", async () => {
+    const many = (dx: number) => {
+      const root = new Group();
+      for (let i = 0; i < 10; i++) {
+        const m = Object.assign(new Mesh(new BoxGeometry(), new MeshStandardMaterial()), { name: `Buoy_${i}` });
+        m.position.x = i + (i < 9 ? dx : 0);
+        root.add(m);
+      }
+      return { root, clips: [], approximated: [], missing: [] } as LoadedModel;
+    };
+    opened.set("HEAD", { model: many(0), error: null });
+    opened.set("On disk", { model: many(1), error: null });
+    render(ModelViewer, { repoId: 1, path: "Scenes/Harbour.unity", before: HEAD, after: DISK, merged: true });
+    await screen.findByText("On disk");
+    await fireEvent.click(screen.getByRole("radio", { name: "Merged" }));
+    expect(stages[0].mode).toBe("merged");
+    await fireEvent.click(screen.getByRole("radio", { name: "Changes" }));
+    await fireEvent.input(screen.getByLabelText("Filter changes"), { target: { value: "buoy_3" } });
+    expect(screen.getAllByRole("button", { name: /Buoy_/ })).toHaveLength(1);
+    await fireEvent.click(screen.getByRole("button", { name: "Changed only" }));
+    expect(stages[0].dim).toBe(true);
   });
 
   it("shows an added file alone, with compare and Changes off", async () => {

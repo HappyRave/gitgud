@@ -91,20 +91,45 @@ export class ShadingKit {
     opacity: 0.22,
     depthFunc: LessEqualDepth,
   });
+  /** The older version's changed objects in the merged view. */
+  readonly ghostWire = new MeshBasicMaterial({
+    color: "#ff8c42",
+    wireframe: true,
+    transparent: true,
+    opacity: 0.7,
+    depthWrite: false,
+  });
   private readonly matcap = matcapTexture();
   private readonly clays = new Map<Status, MeshMatcapMaterial>();
+  private dim = false;
 
   clay(status: Status): MeshMatcapMaterial {
     let m = this.clays.get(status);
     if (!m) {
       m = new MeshMatcapMaterial({ matcap: this.matcap, color: TINT[status] });
       this.clays.set(status, m);
+      if (status === "same") {
+        this.dimSame(this.dim);
+      }
     }
     return m;
   }
 
+  /** Fades the "same" clay so only changes stand out. */
+  dimSame(dim: boolean) {
+    this.dim = dim;
+    const m = this.clays.get("same");
+    if (m) {
+      m.transparent = dim;
+      m.opacity = dim ? 0.12 : 1;
+      m.depthWrite = !dim;
+      m.needsUpdate = true;
+    }
+  }
+
   dispose() {
     this.ghost.dispose();
+    this.ghostWire.dispose();
     this.wire.dispose();
     this.matcap.dispose();
     for (const m of this.clays.values()) {

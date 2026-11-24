@@ -1,13 +1,18 @@
 import type { FileVersion, ModelKind } from "$lib/api";
 import { type ImageAt, protocolUrl } from "$lib/images";
 
-const MODEL = /\.(fbx|obj|gltf|glb|prefab)$/i;
+const MODEL = /\.(fbx|obj|gltf|glb|prefab|unity)$/i;
 
 export const isModel = (path: string) => MODEL.test(path);
 
+/** A scene is assembled like a prefab. */
 export function modelKind(path: string): ModelKind | null {
   const m = MODEL.exec(path);
-  return m ? (m[1].toLowerCase() as ModelKind) : null;
+  if (!m) {
+    return null;
+  }
+  const ext = m[1].toLowerCase();
+  return (ext === "unity" ? "prefab" : ext) as ModelKind;
 }
 
 /** The kind of a file a prefab draws a mesh from; Unity `Mesh` assets included. */

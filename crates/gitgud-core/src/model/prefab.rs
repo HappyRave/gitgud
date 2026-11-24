@@ -806,6 +806,29 @@ mod tests {
     }
 
     #[test]
+    fn assembles_a_scene_like_a_prefab() {
+        let repo = project();
+        let scene = [
+            HEADER.to_owned(),
+            "--- !u!29 &1\nOcclusionCullingSettings:\n  m_ObjectHideFlags: 0\n--- !u!104 &2\nRenderSettings:\n  m_Fog: 0\n".into(),
+            go(10, "Pier", &[11]),
+            tf(11, 10, 0, "{x: 3, y: 0, z: 0}", "{x: 0, y: 0, z: 0, w: 1}"),
+            format!("--- !u!1001 &7000\nPrefabInstance:\n  m_Modification:\n    m_TransformParent: {{fileID: 0}}\n    m_Modifications: []\n  m_SourcePrefab: {{fileID: 100100000, guid: {BOAT}, type: 3}}\n"),
+        ]
+        .concat();
+        repo.write("Assets/Harbour.unity", &scene)
+            .commit_all("scene");
+        let (scene, _) = build(&repo, "Assets/Harbour.unity");
+        assert_eq!(named(&scene, "Pier").1.position, [-3.0, 0.0, 0.0]);
+        assert_eq!(named(&scene, "Skiff").1.parent, None);
+        assert!(named(&scene, "Hull").1.parent.is_some());
+        assert_eq!(
+            super::super::model_kind("Assets/Harbour.unity"),
+            Some(super::super::ModelKind::Prefab)
+        );
+    }
+
+    #[test]
     fn applies_a_variants_overrides_and_nested_instances() {
         let repo = project();
         let (scene, mats) = build(&repo, "Assets/BoatNavy.prefab");

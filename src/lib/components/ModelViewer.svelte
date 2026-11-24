@@ -20,6 +20,7 @@
     opener,
     chrome,
     startClip = null,
+    merged = false,
   }: {
     repoId: number;
     path: string;
@@ -34,6 +35,8 @@
     chrome?: Snippet;
     /** The clip selected once the model loads, when it has one by that name. */
     startClip?: string | null;
+    /** Offers the Merged mode next to Side by side (scenes, R7 decision 10). */
+    merged?: boolean;
   } = $props();
 
   let canvas = $state<HTMLCanvasElement>();
@@ -56,6 +59,8 @@
   let split = $state(0.5);
   let onion = $state(0.45);
   let expanded = $state(false);
+  let changedOnly = $state(false);
+  let filter = $state("");
   let seq = 0;
 
   const BIG_MESH = 1_000_000;
@@ -143,12 +148,13 @@
     stage.split = split;
     stage.playing = prefs.modelPlaying && duration > 0;
     stage.setOnion(onion);
+    stage.setDimUnchanged(changedOnly && !single && !chrome && prefs.modelShading === "changes");
     stage.setShading(single || chrome ? "textured" : prefs.modelShading);
     stage.invalidate();
   }
 
   $effect(() => {
-    void [mode, wire, big, split, onion, prefs.modelShading, prefs.modelPlaying, single, duration];
+    void [mode, wire, big, split, onion, prefs.modelShading, prefs.modelPlaying, single, duration, changedOnly];
     sync();
   });
 
@@ -226,6 +232,9 @@
   }
 
   const shown = $derived(single || chrome ? "textured" : prefs.modelShading);
+  /** The change list gets a filter box past this many entries (a scene's hierarchy). */
+  const FILTER_FROM = 8;
+  const filtered = $derived(filter.trim() ? changes.filter((c) => c.name.toLowerCase().includes(filter.trim().toLowerCase())) : changes);
   const sym = { added: "+", removed: "−", modified: "~" } as const;
 </script>
 
@@ -233,7 +242,7 @@
 <div class="model" class:expanded role="application" aria-label="3D preview of {path}" tabindex="0" onkeydown={onkey}>
   <div class="bar">
     <div class="seg" role="radiogroup" aria-label="Compare mode">
-      {#each [["side", "Side by side"], ["swipe", "Swipe"], ["onion", "Onion"]] as [m, label] (m)}
+      {#each [["side", "Side by side"], ["swipe", "Swipe"], ["onion", "Onion"], ...(merged ? [["merged", "Merged"]] : [])] as [m, label] (m)}
         <button
           type="button"
           class="tbtn"
@@ -281,7 +290,10 @@
 
       {#if shown === "changes" && changes.length > 0}
         <div class="legend" aria-label="Changes">
-          {#each changes as c, i (i)}
+          {#if changes.length > FILTER_FROM}
+            <input class="filter" type="search" placeholder="Filter {changes.length} changes" aria-label="Filter changes" bind:value={filter} />
+          {/if}
+          {#each filtered as c, i (i)}
             <button type="button" title="Fly to {c.name}" onclick={() => stage?.frame(c.obj)}>
               <span class="dot" style:background={TINT[c.kind]}></span><b>{sym[c.kind]}</b>{c.name}<span class="why">{c.note}</span>
             </button>
@@ -321,6 +333,16 @@
           title={big ? "Wireframe is off for models this large" : undefined}
           onclick={() => (wire = !wire)}>Wire</button
         >
+        {#if shown === "changes"}
+          <button
+            type="button"
+            class="tbtn solo"
+            class:on={changedOnly}
+            aria-pressed={changedOnly}
+            title="Fade everything that didn't change"
+            onclick={() => (changedOnly = !changedOnly)}>Changed only</button
+          >
+        {/if}
         {/if}
       </div>
 
@@ -563,6 +585,17 @@
     gap: 4px;
     justify-items: start;
     max-width: calc(50% - 20px);
+    max-height: calc(100% - 80px);
+    overflow-y: auto;
+  }
+  .legend .filter {
+    width: 180px;
+    font-size: 10.5px;
+    padding: 2px 6px;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    background: color-mix(in srgb, var(--panel) 92%, transparent);
+    color: var(--fg);
   }
   .legend button {
     all: unset;
