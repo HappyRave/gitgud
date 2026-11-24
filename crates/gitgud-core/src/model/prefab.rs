@@ -25,6 +25,7 @@ const ANIMATOR: u32 = 95;
 const SKINNED_MESH_RENDERER: u32 = 137;
 const PREFAB_INSTANCE: u32 = 1001;
 const MESH: u32 = 43;
+const LOD_GROUP: u32 = 205;
 
 /// The file being read and its documents, for meshes stored inside it.
 struct Local<'d> {
@@ -335,6 +336,38 @@ impl<'a, 'g> PrefabBuilder<'a, 'g> {
                     if let Some(g) = controller {
                         tree.nodes[ix].out.controller = self.guids.path(&g)?;
                     }
+                }
+            }
+        }
+
+        // Only a LOD Group's most detailed level is drawn: the others would stack on it.
+        for d in docs
+            .iter()
+            .filter(|d| d.class_id == LOD_GROUP && !d.stripped)
+        {
+            let renderers = |lod: &yaml_rust2::Yaml| -> Vec<i64> {
+                lod["renderers"]
+                    .as_vec()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|r| obj_ref(&r["renderer"]))
+                    .map(|r| resolve(id(&r.file_id)))
+                    .collect()
+            };
+            let Some(lods) = d.body["m_LODs"].as_vec() else {
+                continue;
+            };
+            let Some((first, rest)) = lods.split_first() else {
+                continue;
+            };
+            let keep = renderers(first);
+            for r in rest.iter().flat_map(renderers) {
+                if keep.contains(&r) {
+                    continue;
+                }
+                if let Some(ix) = tree.find(|n| n.renderer == Some(r)) {
+                    tree.nodes[ix].out.mesh = None;
+                    tree.nodes[ix].out.materials.clear();
                 }
             }
         }
@@ -832,6 +865,40 @@ mod tests {
         assert_eq!(
             scene.missing,
             vec!["Lost › MeshFilter.m_Mesh → guid dead…007 (not in this version)".to_owned()]
+        );
+    }
+
+    #[test]
+    fn draws_only_the_first_level_of_a_lod_group() {
+        let repo = project();
+        let lod = |go_id: u32, name: &str, renderer: u32| {
+            [
+                go(go_id, name, &[go_id + 300, go_id + 3300, renderer]),
+                tf(go_id + 300, go_id, 400, "{x: 0, y: 0, z: 0}", "{x: 0, y: 0, z: 0, w: 1}"),
+                format!("--- !u!33 &{}\nMeshFilter:\n  m_GameObject: {{fileID: {go_id}}}\n  m_Mesh: {{fileID: 10202, guid: 0000000000000000e000000000000000, type: 0}}\n", go_id + 3300),
+                format!("--- !u!23 &{renderer}\nMeshRenderer:\n  m_GameObject: {{fileID: {go_id}}}\n  m_Materials: []\n"),
+            ]
+            .concat()
+        };
+        let text = [
+            HEADER.to_owned(),
+            go(100, "Pillar", &[400, 20500]),
+            tf(400, 100, 0, "{x: 0, y: 0, z: 0}", "{x: 0, y: 0, z: 0, w: 1}"),
+            lod(110, "Pillar_LOD0", 2310),
+            lod(120, "Pillar_LOD1", 2320),
+            lod(130, "Pillar_LOD2", 2330),
+            "--- !u!205 &20500\nLODGroup:\n  m_GameObject: {fileID: 100}\n  m_LODs:\n  - screenRelativeHeight: 0.5\n    renderers:\n    - renderer: {fileID: 2310}\n  - screenRelativeHeight: 0.2\n    renderers:\n    - renderer: {fileID: 2320}\n  - screenRelativeHeight: 0.05\n    renderers:\n    - renderer: {fileID: 2330}\n".into(),
+        ]
+        .concat();
+        repo.write("Assets/Pillar.prefab", &text).commit_all("lod");
+        let (scene, _) = build(&repo, "Assets/Pillar.prefab");
+        assert!(named(&scene, "Pillar_LOD0").1.mesh.is_some());
+        assert_eq!(named(&scene, "Pillar_LOD1").1.mesh, None);
+        assert_eq!(named(&scene, "Pillar_LOD2").1.mesh, None);
+        assert_eq!(
+            scene.nodes.len(),
+            4,
+            "the objects stay, only their meshes go"
         );
     }
 
