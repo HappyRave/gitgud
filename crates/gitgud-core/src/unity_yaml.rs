@@ -2,12 +2,14 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
+use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 
 use crate::diff::is_binary;
 use crate::repo::{Error, Repo, read_err};
-use crate::unity::{UNITY_YAML_EXTENSIONS, collect_asset_guids, find_unity_root};
+use crate::unity::{UNITY_YAML_EXTENSIONS, find_unity_root, read_meta_guid};
 use crate::worktree::Side as WorktreeSide;
 
 const BUILTIN_GUIDS: [&str; 3] = [
@@ -47,26 +49,55 @@ pub fn is_unity_yaml_path(path: &str) -> bool {
 #[derive(Debug, Clone, Default)]
 pub struct GuidIndex {
     guid_to_path: HashMap<String, String>,
+    /// Every `.meta` file read, by path: its size, modified time and GUID.
+    metas: HashMap<String, MetaStamp>,
+}
+
+#[derive(Debug, Clone)]
+struct MetaStamp {
+    len: u64,
+    modified: Option<SystemTime>,
+    guid: Option<String>,
 }
 
 impl GuidIndex {
     /// Builds an in-memory GUID -> asset-path index by scanning `project_root/Assets`.
     #[must_use]
     pub fn build(project_root: &Path) -> Self {
-        let mut raw = HashMap::new();
+        Self::update(project_root, None)
+    }
+
+    /// Rescans `project_root/Assets`, re-reading only the `.meta` files whose size or
+    /// modified time differ from `previous`.
+    #[must_use]
+    pub(crate) fn update(project_root: &Path, previous: Option<&GuidIndex>) -> Self {
+        let mut metas = HashMap::new();
         let assets = project_root.join("Assets");
         if assets.is_dir() {
-            collect_asset_guids(project_root, &assets, &mut raw);
+            walk_metas(
+                project_root,
+                &assets,
+                previous.map(|p| &p.metas),
+                &mut metas,
+            );
+        }
+        let mut raw: HashMap<&str, Vec<&str>> = HashMap::new();
+        for (path, stamp) in &metas {
+            if let Some(g) = &stamp.guid {
+                raw.entry(g).or_default().push(path);
+            }
         }
         let mut guid_to_path = HashMap::with_capacity(raw.len());
         for (guid, mut paths) in raw {
-            paths.sort();
-            if let Some(first) = paths.into_iter().next() {
-                let asset = first.strip_suffix(".meta").unwrap_or(&first).to_owned();
-                guid_to_path.insert(guid, asset);
-            }
+            paths.sort_unstable();
+            let first = paths[0];
+            let asset = first.strip_suffix(".meta").unwrap_or(first).to_owned();
+            guid_to_path.insert(guid.to_owned(), asset);
         }
-        Self { guid_to_path }
+        Self {
+            guid_to_path,
+            metas,
+        }
     }
 
     /// Resolves a 32-hex Unity asset GUID (case-insensitive) to its project-relative asset path.
@@ -91,6 +122,58 @@ impl GuidIndex {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.guid_to_path.is_empty()
+    }
+}
+
+/// Collects the `.meta` files under `dir`; listing a folder gives each file's size and
+/// time without opening it, so only new or changed files are read.
+fn walk_metas(
+    root: &Path,
+    dir: &Path,
+    previous: Option<&HashMap<String, MetaStamp>>,
+    out: &mut HashMap<String, MetaStamp>,
+) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with('.') || name.ends_with('~') {
+            continue;
+        }
+        let path = entry.path();
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
+        if kind.is_dir() || (kind.is_symlink() && path.is_dir()) {
+            walk_metas(root, &path, previous, out);
+            continue;
+        }
+        if !name.ends_with(".meta") {
+            continue;
+        }
+        let Ok(rel) = path.strip_prefix(root) else {
+            continue;
+        };
+        let rel = rel.to_string_lossy().replace('\\', "/");
+        let (len, modified) = entry
+            .metadata()
+            .map_or((0, None), |m| (m.len(), m.modified().ok()));
+        let guid = match previous.and_then(|p| p.get(&rel)) {
+            Some(s) if s.len == len && s.modified == modified && modified.is_some() => {
+                s.guid.clone()
+            }
+            _ => read_meta_guid(&path),
+        };
+        out.insert(
+            rel,
+            MetaStamp {
+                len,
+                modified,
+                guid,
+            },
+        );
     }
 }
 
@@ -1101,22 +1184,27 @@ fn parse_serialization_mode(text: &str) -> Option<i32> {
     None
 }
 
-/// The repo's GUID index, scanned once and kept until [`forget_guid_index`].
+/// The repo's GUID index, scanned once and brought up to date after [`forget_guid_index`].
 pub(crate) fn repo_guid_index(repo: &Repo) -> Arc<GuidIndex> {
     let mut cached = repo.guid_index.lock().expect("guid index lock poisoned");
-    cached
-        .get_or_insert_with(|| {
-            Arc::new(
-                find_unity_root(repo.root())
-                    .map_or_else(GuidIndex::default, |p| GuidIndex::build(&p)),
-            )
-        })
-        .clone()
+    let stale = repo.guid_index_stale.swap(false, Ordering::AcqRel);
+    if let Some(index) = cached.as_ref()
+        && !stale
+    {
+        return index.clone();
+    }
+    let index = Arc::new(
+        find_unity_root(repo.root()).map_or_else(GuidIndex::default, |p| {
+            GuidIndex::update(&p, cached.as_deref())
+        }),
+    );
+    *cached = Some(index.clone());
+    index
 }
 
-/// Drops the cached GUID index, so the next structural diff rescans `.meta` files.
+/// Marks the GUID index out of date, so its next use re-reads the `.meta` files that changed.
 pub(crate) fn forget_guid_index(repo: &Repo) {
-    *repo.guid_index.lock().expect("guid index lock poisoned") = None;
+    repo.guid_index_stale.store(true, Ordering::Release);
 }
 
 pub(crate) fn parse_doc_header(line: &str) -> Option<(u32, String, bool)> {
@@ -1433,6 +1521,41 @@ fn class_name(id: u32) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn guid_index_catches_up_with_added_changed_and_deleted_metas() {
+        let repo = crate::testing::TestRepo::init();
+        let meta = |guid: &str| format!("fileFormatVersion: 2\nguid: {guid}\n");
+        let (a, b, c, d) = (
+            "aaaa0000000000000000000000000001",
+            "bbbb0000000000000000000000000002",
+            "cccc0000000000000000000000000003",
+            "dddd0000000000000000000000000004",
+        );
+        repo.write(
+            "ProjectSettings/ProjectVersion.txt",
+            "m_EditorVersion: 6000.0.1f1\n",
+        )
+        .write("Assets/a.png.meta", &meta(a))
+        .write("Assets/Old/d.png.meta", &meta(d));
+        let r = crate::repo::open(repo.path()).unwrap();
+        let first = repo_guid_index(&r);
+        assert_eq!(first.resolve_guid(a), Some("Assets/a.png"));
+        assert!(Arc::ptr_eq(&first, &repo_guid_index(&r)));
+
+        repo.write(
+            "Assets/a.png.meta",
+            &format!("{}TextureImporter:\n", meta(c)),
+        )
+        .write("Assets/New/b.png.meta", &meta(b));
+        std::fs::remove_dir_all(repo.path().join("Assets/Old")).unwrap();
+        forget_guid_index(&r);
+        let now = repo_guid_index(&r);
+        assert_eq!(now.resolve_guid(a), None);
+        assert_eq!(now.resolve_guid(c), Some("Assets/a.png"));
+        assert_eq!(now.resolve_guid(b), Some("Assets/New/b.png"));
+        assert_eq!(now.resolve_guid(d), None);
+    }
 
     fn sample_scene(player_speed: &str, guid: &str) -> String {
         format!(

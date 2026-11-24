@@ -15,12 +15,14 @@ pub(crate) struct Files<'a> {
     /// The version's tree when it is a commit, so what is read from it can be cached.
     pub tree: Option<gix::ObjectId>,
     paths: Vec<String>,
+    /// Each path's blob when the version is a commit, so reads skip the tree lookup.
+    blobs: Vec<gix::ObjectId>,
     by_name: HashMap<String, Vec<usize>>,
 }
 
 impl<'a> Files<'a> {
     pub fn new(repo: &'a Repo, version: &'a Version) -> Result<Self, Error> {
-        let (paths, tree) = paths_at(repo, version)?;
+        let Listing { paths, blobs, tree } = paths_at(repo, version)?;
         let mut by_name: HashMap<String, Vec<usize>> = HashMap::new();
         for (i, p) in paths.iter().enumerate() {
             by_name
@@ -34,6 +36,7 @@ impl<'a> Files<'a> {
             git: None,
             tree,
             paths,
+            blobs,
             by_name,
         })
     }
@@ -42,10 +45,21 @@ impl<'a> Files<'a> {
         &self.paths
     }
 
-    pub fn contains(&self, path: &str) -> bool {
+    /// The blob of `paths()[i]`, when the version is a commit.
+    pub fn blob(&self, i: usize) -> Option<gix::ObjectId> {
+        self.blobs.get(i).copied()
+    }
+
+    fn index_of(&self, path: &str) -> Option<usize> {
         self.by_name
-            .get(&base_name(path).to_ascii_lowercase())
-            .is_some_and(|ix| ix.iter().any(|&i| self.paths[i] == path))
+            .get(&base_name(path).to_ascii_lowercase())?
+            .iter()
+            .copied()
+            .find(|&i| self.paths[i] == path)
+    }
+
+    pub fn contains(&self, path: &str) -> bool {
+        self.index_of(path).is_some()
     }
 
     /// Lets LFS objects up to the auto-fetch limit be downloaded while reading.
@@ -60,7 +74,19 @@ impl<'a> Files<'a> {
     /// # Errors
     /// [`Error::Refused`] when the LFS object isn't downloaded and can't be fetched.
     pub fn read(&self, path: &str) -> Result<Option<Vec<u8>>, Error> {
-        let bytes = match self.repo.file_at(path, self.version) {
+        let blob = if self.blobs.is_empty() {
+            None
+        } else {
+            match self.index_of(path).and_then(|i| self.blob(i)) {
+                Some(id) => Some(id),
+                None => return Ok(None),
+            }
+        };
+        let read = match blob {
+            Some(id) => self.repo.blob(id),
+            None => self.repo.file_at(path, self.version),
+        };
+        let bytes = match read {
             Ok(b) => b,
             Err(Error::Refused(_)) => return Ok(None),
             Err(e) => return Err(e),
@@ -100,7 +126,7 @@ impl<'a> Files<'a> {
     }
 }
 
-fn paths_at(repo: &Repo, version: &Version) -> Result<(Vec<String>, Option<gix::ObjectId>), Error> {
+fn paths_at(repo: &Repo, version: &Version) -> Result<Listing, Error> {
     let gix_repo = repo.gix();
     let commit = match version {
         Version::Commit(id) | Version::Parent(id) => {
@@ -110,7 +136,7 @@ fn paths_at(repo: &Repo, version: &Version) -> Result<(Vec<String>, Option<gix::
             if matches!(version, Version::Parent(_)) {
                 match c.parent_ids().next() {
                     Some(p) => p.object().map_err(read_err)?.into_commit(),
-                    None => return Ok((Vec::new(), None)),
+                    None => return Ok(Listing::files(Vec::new())),
                 }
             } else {
                 c
@@ -118,7 +144,7 @@ fn paths_at(repo: &Repo, version: &Version) -> Result<(Vec<String>, Option<gix::
         }
         Version::Head => match gix_repo.head_commit() {
             Ok(c) => c,
-            Err(_) => return Ok((Vec::new(), None)),
+            Err(_) => return Ok(Listing::files(Vec::new())),
         },
         Version::Index | Version::Worktree | Version::Yours | Version::Theirs => {
             let index = gix_repo.index_or_empty().map_err(read_err)?;
@@ -128,20 +154,41 @@ fn paths_at(repo: &Repo, version: &Version) -> Result<(Vec<String>, Option<gix::
                 .map(|e| e.path(&index).to_string())
                 .collect();
             out.dedup();
-            return Ok((out, None));
+            return Ok(Listing::files(out));
         }
     };
     let tree = commit.tree().map_err(read_err)?;
     let id = tree.id;
     let mut rec = Recorder::default();
     tree.traverse().breadthfirst(&mut rec).map_err(read_err)?;
-    let paths = rec
+    let (paths, blobs) = rec
         .records
         .into_iter()
         .filter(|e| e.mode.is_blob())
-        .map(|e| e.filepath.to_string())
-        .collect();
-    Ok((paths, Some(id)))
+        .map(|e| (e.filepath.to_string(), e.oid))
+        .unzip();
+    Ok(Listing {
+        paths,
+        blobs,
+        tree: Some(id),
+    })
+}
+
+struct Listing {
+    paths: Vec<String>,
+    /// Each path's blob, for a commit's tree; empty otherwise.
+    blobs: Vec<gix::ObjectId>,
+    tree: Option<gix::ObjectId>,
+}
+
+impl Listing {
+    fn files(paths: Vec<String>) -> Self {
+        Self {
+            paths,
+            blobs: Vec::new(),
+            tree: None,
+        }
+    }
 }
 
 pub(crate) fn base_name(path: &str) -> &str {

@@ -743,7 +743,15 @@ fn find_yaml_merge_tools(preferred: Option<&str>) -> Vec<String> {
 }
 
 pub(crate) fn read_meta_guid(path: &Path) -> Option<String> {
-    let content = fs::read_to_string(path).ok()?;
+    use std::io::Read;
+    // The guid is on the second line; the rest of a `.meta` can be long.
+    let mut head = Vec::with_capacity(1024);
+    fs::File::open(path)
+        .ok()?
+        .take(1024)
+        .read_to_end(&mut head)
+        .ok()?;
+    let content = String::from_utf8_lossy(&head);
     for line in content.lines().take(12) {
         if let Some(rest) = line.trim().strip_prefix("guid:") {
             let g = rest.trim().to_ascii_lowercase();

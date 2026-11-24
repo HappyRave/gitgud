@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use super::meta::Meta;
 use super::tree::Files;
-use crate::repo::Error;
+use crate::repo::{Error, read_err};
 use crate::unity::find_unity_root;
 use crate::unity_yaml::{GuidIndex, repo_guid_index};
 
@@ -83,13 +83,30 @@ impl<'a> Guids<'a> {
 
     fn scan(&self) -> Result<HashMap<String, String>, Error> {
         let mut out = HashMap::new();
-        for p in self.files.paths() {
+        let repo = self.files.repo;
+        let gix = repo.gix();
+        let mut known = repo
+            .meta_blob_guids
+            .lock()
+            .expect("meta blob guids lock poisoned");
+        for (i, p) in self.files.paths().iter().enumerate() {
             let Some(asset) = p.strip_suffix(".meta") else {
                 continue;
             };
-            if let Some(text) = self.files.read_text(p)?
-                && let Some(g) = Meta::guid_only(&text)
-            {
+            let guid = match self.files.blob(i) {
+                Some(id) => match known.get(&id) {
+                    Some(g) => g.clone(),
+                    None => {
+                        let blob = gix.find_blob(id).map_err(read_err)?;
+                        let head = &blob.data[..blob.data.len().min(1024)];
+                        let g = Meta::guid_only(&String::from_utf8_lossy(head));
+                        known.insert(id, g.clone());
+                        g
+                    }
+                },
+                None => self.files.read_text(p)?.and_then(|t| Meta::guid_only(&t)),
+            };
+            if let Some(g) = guid {
                 out.entry(g).or_insert_with(|| asset.to_owned());
             }
         }

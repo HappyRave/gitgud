@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
 use gix::bstr::BStr;
@@ -18,8 +19,12 @@ pub struct Repo {
     root: PathBuf,
     /// Unity asset GUIDs -> paths, built on first use; see `unity_yaml::repo_guid_index`.
     pub(crate) guid_index: Mutex<Option<Arc<GuidIndex>>>,
+    /// Set when files may have changed; the index is then refreshed on next use.
+    pub(crate) guid_index_stale: AtomicBool,
     /// GUIDs -> paths from the `.meta` files of recently read commit trees, newest last.
     pub(crate) tree_guids: Mutex<Vec<(gix::ObjectId, TreeGuids)>>,
+    /// The GUID of each `.meta` blob read so far: most are the same in every commit.
+    pub(crate) meta_blob_guids: Mutex<HashMap<gix::ObjectId, Option<String>>>,
 }
 
 /// GUID -> asset path, from one tree's `.meta` files.
@@ -40,7 +45,9 @@ pub fn open(path: impl AsRef<Path>) -> Result<Repo, Error> {
         inner: repo.into_sync(),
         root,
         guid_index: Mutex::new(None),
+        guid_index_stale: AtomicBool::new(false),
         tree_guids: Mutex::new(Vec::new()),
+        meta_blob_guids: Mutex::new(HashMap::new()),
     })
 }
 
@@ -52,6 +59,13 @@ impl Repo {
 
     pub(crate) fn gix(&self) -> gix::Repository {
         self.inner.to_thread_local()
+    }
+
+    /// The contents of blob `id`.
+    pub(crate) fn blob(&self, id: gix::ObjectId) -> Result<Vec<u8>, Error> {
+        let repo = self.gix();
+        let mut blob = repo.find_blob(id).map_err(read_err)?;
+        Ok(std::mem::take(&mut blob.data))
     }
 
     /// The branch and file changes, like `git status --untracked-files=all --no-renames`.

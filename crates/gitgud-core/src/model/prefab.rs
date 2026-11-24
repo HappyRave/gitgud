@@ -85,6 +85,7 @@ struct Node {
     removed: bool,
 }
 
+#[derive(Clone)]
 struct Tree {
     nodes: Vec<Node>,
 }
@@ -117,6 +118,8 @@ pub(crate) struct PrefabBuilder<'a, 'g> {
     pub materials: Vec<Material>,
     material_ix: HashMap<String, usize>,
     pub missing: Vec<String>,
+    /// Nested prefabs already assembled, by path and depth: a prefab is often placed many times.
+    nested: HashMap<(String, usize), Tree>,
 }
 
 impl<'a, 'g> PrefabBuilder<'a, 'g> {
@@ -126,6 +129,7 @@ impl<'a, 'g> PrefabBuilder<'a, 'g> {
             materials: Vec::new(),
             material_ix: HashMap::new(),
             missing: Vec::new(),
+            nested: HashMap::new(),
         }
     }
 
@@ -337,10 +341,17 @@ impl<'a, 'g> PrefabBuilder<'a, 'g> {
         let mods = modifications(&m["m_Modifications"]);
         let mut tree = match model_kind(&src) {
             Some(ModelKind::Prefab) if depth < MAX_DEPTH => {
-                let Some(text) = self.guids.files.read_text(&src)? else {
-                    return Ok(None);
-                };
-                self.tree(&text, depth + 1)?
+                let key = (src.clone(), depth + 1);
+                if let Some(tree) = self.nested.get(&key) {
+                    tree.clone()
+                } else {
+                    let Some(text) = self.guids.files.read_text(&src)? else {
+                        return Ok(None);
+                    };
+                    let tree = self.tree(&text, depth + 1)?;
+                    self.nested.insert(key, tree.clone());
+                    tree
+                }
             }
             Some(ModelKind::Prefab) => return Ok(None),
             Some(_) => self.model_instance(&src)?,
@@ -816,6 +827,36 @@ mod tests {
                 id: None,
                 scale: 0.5
             })
+        );
+    }
+
+    #[test]
+    fn keeps_each_instance_of_a_nested_prefab_apart() {
+        let repo = project();
+        let instance = |id: u32, name: &str, x: &str| {
+            format!(
+                "--- !u!1001 &{id}\nPrefabInstance:\n  m_Modification:\n    m_TransformParent: {{fileID: 0}}\n    m_Modifications:\n    - target: {{fileID: 100, guid: {BOAT}, type: 3}}\n      propertyPath: m_Name\n      value: {name}\n      objectReference: {{fileID: 0}}\n    - target: {{fileID: 400, guid: {BOAT}, type: 3}}\n      propertyPath: m_LocalPosition.x\n      value: {x}\n      objectReference: {{fileID: 0}}\n    m_RemovedGameObjects:\n    - {{fileID: 103, guid: {BOAT}, type: 3}}\n  m_SourcePrefab: {{fileID: 100100000, guid: {BOAT}, type: 3}}\n"
+            )
+        };
+        let fleet = [
+            HEADER.to_owned(),
+            instance(7000, "Left", "5"),
+            instance(7001, "Right", "7"),
+        ]
+        .concat();
+        repo.write("Assets/Fleet.prefab", &fleet)
+            .commit_all("fleet");
+
+        let (scene, _) = build(&repo, "Assets/Fleet.prefab");
+        assert_eq!(named(&scene, "Left").1.position, [-5.0, 0.0, 0.0]);
+        assert_eq!(named(&scene, "Right").1.position, [-7.0, 0.0, 0.0]);
+        let hulls = scene.nodes.iter().filter(|n| n.name == "Hull").count();
+        assert_eq!(hulls, 2);
+        assert!(
+            !scene
+                .nodes
+                .iter()
+                .any(|n| n.name == "Lost" || n.name == "Skiff")
         );
     }
 
