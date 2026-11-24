@@ -146,8 +146,10 @@ replaying at most 255 rows (spike 4.3).
   objects via Unity's `(instance ^ id) & i64::MAX` ids, built-in primitives, missing references,
   Animator clips from `anim.rs`), mirrored into three.js's right-handed space. GUIDs resolve through
   the working copy's index, falling back to the version's `.meta` files (`guids.rs`). Unity YAML is
-  read per document with `yaml-rust2` (`model/yaml.rs`), not the diff parser. The frontend loads
-  three.js lazily; `stage.ts` draws both versions in one WebGL context with a shared camera and clock;
+  read per document with `yaml-rust2` (`model/yaml.rs`), not the diff parser. FBX goes through
+  `$lib/model/vendor/FBXLoader.js`, three r170's loader with two "gitgud:" fixes (empty normals
+  layer, geometry no model uses) still missing upstream in r187: re-copy and re-patch it when three is
+  upgraded. The frontend loads three.js lazily; `stage.ts` draws both versions in one WebGL context with a shared camera and clock;
   `compare.ts` matches objects by name path for the Changes tint and legend. FBX pivots are baked into
   prefab meshes as Unity's import does (`pivotOffset`).
 - **Viewers** (R7; `$lib/viewers/route.ts`, `FilePreview.svelte`, `ViewSwitch.svelte`, `preview.rs`):
