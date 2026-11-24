@@ -1328,6 +1328,16 @@ async fn model_info(
 }
 
 #[tauri::command]
+async fn audio_info(
+    session: State<'_, Session>,
+    id: u32,
+    path: String,
+    version: gitgud_core::image::Version,
+) -> Result<gitgud_core::audio::AudioInfo, Error> {
+    session.audio_info(id, &path, &version)
+}
+
+#[tauri::command]
 async fn material_view(
     session: State<'_, Session>,
     id: u32,
@@ -1761,6 +1771,7 @@ fn app_with_library<R: Runtime>(builder: Builder<R>, library: Option<LibraryStor
             font_info,
             material_view,
             material_users,
+            audio_info,
             unity_conflict_table,
             resolve_unity_conflict,
             unity_post_merge_check,
@@ -1967,6 +1978,30 @@ mod tests {
             )
             .unwrap();
         assert_eq!(users, json!(["Assets/boat.fbx"]));
+    }
+
+    #[test]
+    fn audio_info_reads_rate_length_and_loudness() {
+        let repo = TestRepo::init();
+        std::fs::write(
+            repo.path().join("horn.wav"),
+            gitgud_core::audio::sine_wav(48_000, 2, 1.0, 0.5),
+        )
+        .unwrap();
+        repo.commit_all("one");
+        let ipc = Ipc::new();
+        let id = open(&ipc, &repo)["id"].clone();
+        let info = ipc
+            .call(
+                "audio_info",
+                json!({ "id": id, "path": "horn.wav", "version": "head" }),
+            )
+            .unwrap();
+        assert_eq!(info["sampleRate"], 48_000);
+        assert_eq!(info["channels"], 2);
+        assert_eq!(info["frames"], 48_000);
+        assert!(info["loudnessLufs"].is_number());
+        assert_eq!(info["peaks"].as_array().unwrap().len(), 2);
     }
 
     #[test]

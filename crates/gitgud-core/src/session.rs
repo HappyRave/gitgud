@@ -1945,6 +1945,37 @@ impl Session {
         repo.model_info(git, path, version)
     }
 
+    /// Decodes sound file `path` at `version`; LFS objects up to the auto-fetch limit
+    /// are fetched first.
+    ///
+    /// # Errors
+    /// As [`Session::file_bytes`], or when the file can't be decoded.
+    pub fn audio_info(
+        &self,
+        id: u32,
+        path: &str,
+        version: &crate::image::Version,
+    ) -> Result<crate::audio::AudioInfo, Error> {
+        let bytes = self.file_bytes(id, path, version)?;
+        crate::audio::read_audio(bytes, extension(path))
+            .map_err(|e| Error::Refused(format!("{path}: {e}")))
+    }
+
+    /// Sound file `path` at `version` decoded to WAV, for formats the webview can't play.
+    ///
+    /// # Errors
+    /// As [`Session::audio_info`].
+    pub fn audio_wav(
+        &self,
+        id: u32,
+        path: &str,
+        version: &crate::image::Version,
+    ) -> Result<Vec<u8>, Error> {
+        let bytes = self.file_bytes(id, path, version)?;
+        crate::audio::to_wav(bytes, extension(path))
+            .map_err(|e| Error::Refused(format!("{path}: {e}")))
+    }
+
     /// See [`Repo::material_view`].
     ///
     /// # Errors
@@ -2138,6 +2169,10 @@ fn label_paths_meta(
     } else {
         format!("{verb} {} files (+ .meta)", expanded.len())
     }
+}
+
+fn extension(path: &str) -> &str {
+    path.rsplit_once('.').map_or("", |(_, e)| e)
 }
 
 /// Builds a Unity repo's GUID index in the background, so the first 3D preview

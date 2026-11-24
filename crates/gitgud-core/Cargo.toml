@@ -17,6 +17,8 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 tempfile = { version = "3.27.0", optional = true }
 thiserror = "2.0.21"
+symphonia = { version = "0.6.1", features = ["all"] }
+ebur128 = "0.1.11"
 ttf-parser = "0.25.1"
 woff2-patched = "0.4.0"
 flate2 = "1"

@@ -5,6 +5,7 @@
   import { formatSize } from "$lib/merge/resolve";
   import { setViewMode } from "$lib/prefs.svelte";
   import { metaTarget, viewerFor } from "$lib/viewers/route";
+  import AudioViewer from "./AudioViewer.svelte";
   import FontViewer from "./FontViewer.svelte";
   import LoadingBar from "./LoadingBar.svelte";
   import MaterialViewer from "./MaterialViewer.svelte";
@@ -96,6 +97,8 @@
     <ModelViewer {repoId} path={target} {before} {after} {bust} {meta} {onfetch} />
   {:else if shown === "material"}
     <MaterialViewer {repoId} path={target} {before} {after} {bust} {meta} {onfetch} />
+  {:else if shown === "audio"}
+    <AudioViewer {repoId} path={target} {before} {after} {bust} {meta} {onfetch} />
   {:else if shown === "font"}
     <FontViewer {repoId} path={target} {before} {after} {bust} {meta} {onfetch} />
   {:else}

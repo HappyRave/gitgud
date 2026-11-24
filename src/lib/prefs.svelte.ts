@@ -11,6 +11,7 @@ const MODEL_PLAYING_KEY = "gitgud.model.playing";
 const MODEL_VIEW_KEY = "gitgud.model.view";
 const VIEWS_KEY = "gitgud.views";
 const VIEWER_KEY = "gitgud.viewer";
+const VOLUME_KEY = "gitgud.media.volume";
 
 export type DiffLayout = "auto" | "unified" | "split";
 export type Density = "standard" | "compact";
@@ -95,6 +96,11 @@ function readViewer(): Record<string, string> {
   }
 }
 
+function readVolume(): number {
+  const v = Number(readStorage(VOLUME_KEY) ?? "0.8");
+  return Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0.8;
+}
+
 const initialSplit = readStorage(SPLIT_KEY) === "1";
 const storedLayout = readStorage(LAYOUT_KEY);
 const initialLayout: DiffLayout =
@@ -123,6 +129,8 @@ export const prefs = $state({
   views: readViews(),
   /** Choices inside a viewer (font Sample / All glyphs / Metrics…), per format (R7). */
   viewer: readViewer(),
+  /** One volume for every sound and video, 0–1 (R7). */
+  volume: readVolume(),
 });
 
 export type ModelShading = "textured" | "changes";
@@ -148,6 +156,11 @@ export function viewerChoice<T extends string>(path: string, name: string, optio
 export function setViewerChoice(path: string, name: string, value: string) {
   prefs.viewer[`${formatKey(path)}.${name}`] = value;
   writeStorage(VIEWER_KEY, JSON.stringify(prefs.viewer));
+}
+
+export function setVolume(volume: number) {
+  prefs.volume = Math.min(1, Math.max(0, volume));
+  writeStorage(VOLUME_KEY, String(prefs.volume));
 }
 
 export function setModelShading(shading: ModelShading) {

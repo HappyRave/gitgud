@@ -1,4 +1,5 @@
 pub mod ai;
+pub mod audio;
 pub mod blame;
 pub mod branches;
 pub mod caches;

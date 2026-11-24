@@ -12,7 +12,8 @@ use tauri::http::{Response, StatusCode, header};
 /// `index`, `worktree`, `yours`, `theirs`, or `commit` / `parent` with `commit=<id>`.
 /// `/model` serves a 3D model the same way; `/ref?path=<model>&ref=<name>`
 /// serves the file that model refers to as `ref` (a texture, a glTF buffer);
-/// `/file` serves any file as stored (audio, video, PDF, fonts, data).
+/// `/file` serves any file as stored (audio, video, PDF, fonts, data); `/audio`
+/// a sound file decoded to WAV, for formats the webview can't play (AIFF).
 pub fn respond(session: &Session, uri: &str) -> Response<Vec<u8>> {
     match read(session, uri) {
         Ok((bytes, mime)) => Response::builder()
@@ -63,6 +64,10 @@ fn read(session: &Session, uri: &str) -> Result<(Vec<u8>, &'static str), (Status
         "/file" => {
             let bytes = session.file_bytes(repo, &path, &version).map_err(fail)?;
             Ok((bytes, file_mime(&path)))
+        }
+        "/audio" => {
+            let bytes = session.audio_wav(repo, &path, &version).map_err(fail)?;
+            Ok((bytes, "audio/wav"))
         }
         "/ref" => {
             let reference = param("ref").ok_or_else(|| bad("missing ref"))?;
@@ -248,5 +253,28 @@ mod tests {
             assert_eq!(r.status(), status, "{query}: {}", body(&r));
             assert_eq!(r.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN], "*");
         }
+    }
+
+    #[test]
+    fn serves_a_sound_decoded_to_wav() {
+        let repo = TestRepo::init();
+        let wav = gitgud_core::audio::sine_wav(22_050, 1, 0.5, 0.5);
+        std::fs::write(repo.path().join("horn.wav"), &wav).unwrap();
+        repo.write("notes.wav", "not audio").commit_all("one");
+        let session = Session::default();
+        let id = session.open(repo.path()).unwrap().id;
+        let r = respond(
+            &session,
+            &format!("http://gitgud.localhost/audio?repo={id}&path=horn.wav&at=head"),
+        );
+        assert_eq!(r.status(), StatusCode::OK);
+        assert_eq!(r.headers()[header::CONTENT_TYPE], "audio/wav");
+        assert_eq!(r.body(), &wav);
+        let bad = respond(
+            &session,
+            &format!("http://gitgud.localhost/audio?repo={id}&path=notes.wav&at=head"),
+        );
+        assert_eq!(bad.status(), StatusCode::NOT_FOUND);
+        assert!(body(&bad).contains("not a sound file"));
     }
 }

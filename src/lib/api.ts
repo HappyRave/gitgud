@@ -836,6 +836,22 @@ export interface UnityAssetInfo {
   size: number;
 }
 
+/** One version of a sound file, decoded in Rust. */
+export interface AudioInfo {
+  format: string;
+  codec: string;
+  /** The file's own rate. */
+  sampleRate: number;
+  channels: number;
+  bitsPerSample: number | null;
+  frames: number;
+  duration: number;
+  peakDbfs: number | null;
+  loudnessLufs: number | null;
+  /** Per channel, `[min, max]` pairs across the whole file. */
+  peaks: [number, number][][];
+}
+
 /** Everything a `.mat` sets, for the material viewer. */
 export interface MaterialView {
   material: ModelMaterial;
@@ -1014,6 +1030,7 @@ export interface Commands {
   model_info: { args: { id: number; path: string; version: FileVersion }; result: ModelInfo };
   unity_asset_info: { args: { id: number; path: string; version: FileVersion }; result: UnityAssetInfo };
   open_version: { args: { id: number; path: string; version: FileVersion; label: string }; result: string };
+  audio_info: { args: { id: number; path: string; version: FileVersion }; result: AudioInfo };
   material_view: { args: { id: number; path: string; version: FileVersion }; result: MaterialView };
   material_users: { args: { id: number; path: string; version: FileVersion }; result: string[] };
   font_info: { args: { id: number; path: string; version: FileVersion; face?: number }; result: FontInfo };
@@ -1314,7 +1331,8 @@ export const unityAssetInfo = (id: number, path: string, version: FileVersion) =
 /** Writes `path` at `version` to a temp copy, opens it in its default app, and returns where. */
 export const openVersion = (id: number, path: string, version: FileVersion, label: string) =>
   call("open_version", { id, path, version, label });
-export const materialView = (id: number, path: string, version: FileVersion) => call("material_view", { id, path, version });
+export const audioInfo = (id: number, path: string, version: FileVersion) => call("audio_info", { id, path, version });
+export const materialView =(id: number, path: string, version: FileVersion) => call("material_view", { id, path, version });
 export const materialUsers = (id: number, path: string, version: FileVersion) => call("material_users", { id, path, version });
 export const fontInfo =(id: number, path: string, version: FileVersion) => call("font_info", { id, path, version });
 export const unityConflictTable = (id: number, path: string) => call("unity_conflict_table", { id, path });

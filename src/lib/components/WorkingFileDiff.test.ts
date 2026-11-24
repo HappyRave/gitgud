@@ -114,7 +114,7 @@ describe("WorkingFileDiff", () => {
     let hydrated = false;
     const calls = mockCommands({
       worktree_file_diff: () => ({
-        path: "Assets/Audio.wav",
+        path: "Assets/Data.bin",
         binary: true,
         hunks: [],
         binaryMeta: {
@@ -129,7 +129,7 @@ describe("WorkingFileDiff", () => {
     });
     render(WorkingFileDiff, {
       repoId: 3,
-      path: "Assets/Audio.wav",
+      path: "Assets/Data.bin",
       side: "staged",
       revision: 0,
       perHunk: false,
@@ -143,7 +143,7 @@ describe("WorkingFileDiff", () => {
       id: 3,
       oid,
       size: 4096,
-      path: "Assets/Audio.wav",
+      path: "Assets/Data.bin",
     });
     await waitFor(() => expect(screen.getAllByText("Hydrated")).toHaveLength(2));
   });
