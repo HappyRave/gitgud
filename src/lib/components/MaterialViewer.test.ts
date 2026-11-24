@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/svelte";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ModelSide } from "$lib/model/open";
-import { prefs, viewerChoice } from "$lib/prefs.svelte";
+import { prefs, shaderBase, viewerChoice } from "$lib/prefs.svelte";
 import { mockCommands } from "$lib/test/ipc";
 import { material } from "$lib/test/material";
 import { SHAPES } from "$lib/viewers/material";
@@ -48,6 +48,30 @@ describe("MaterialViewer", () => {
     expect(viewerChoice("Other.mat", "shape", SHAPES)).toBe("mesh");
     await fireEvent.change(screen.getByLabelText("Mesh that uses this material"), { target: { value: "Assets/Art/boat.fbx" } });
     expect(screen.getByTestId("stub")).toHaveAttribute("data-path", "Assets/Art/boat.fbx");
+  });
+
+  it("picks which texture of a custom shader shows as the base map, remembered per shader", async () => {
+    const slot = (property: string) => ({ property, path: `T/${property}.png`, key: null, tiling: [1, 1] as [number, number], offset: [0, 0] as [number, number] });
+    const mozaic = () => {
+      const v = material({ _Drawing: "drawing.png" }, []);
+      Object.assign(v.material, { shader: "Mozaic", approximated: true, baseProperty: "_Mask", textures: [slot("_Mask"), slot("_Drawing")] });
+      return v;
+    };
+    mockCommands({ material_view: mozaic, material_users: () => [] });
+    render(MaterialViewer, { repoId: 1, path: "M/Mozaic3.mat", before: HEAD, after: DISK });
+    const picker = (await screen.findByLabelText("Base map")) as HTMLSelectElement;
+    expect([...picker.options].map((o) => o.value)).toEqual(["_Mask", "_Drawing"]);
+    expect(picker.value).toBe("_Mask");
+    await fireEvent.change(picker, { target: { value: "_Drawing" } });
+    expect(shaderBase("Mozaic")).toBe("_Drawing");
+    expect((screen.getByLabelText("Base map") as HTMLSelectElement).value).toBe("_Drawing");
+  });
+
+  it("offers no picker for a standard shader", async () => {
+    mockCommands({ material_view: () => material({}, []), material_users: () => [] });
+    render(MaterialViewer, { repoId: 1, path: "M/hull.mat", before: HEAD, after: DISK });
+    await screen.findByText("Material · URP/Lit");
+    expect(screen.queryByLabelText("Base map")).toBeNull();
   });
 
   it("says why a material can't be read", async () => {

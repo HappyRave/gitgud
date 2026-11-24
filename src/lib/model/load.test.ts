@@ -2,7 +2,8 @@ import { type Mesh, MeshBasicMaterial, MeshStandardMaterial, Texture } from "thr
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ModelInfo, ModelMaterial } from "$lib/api";
 import { loadModel, ModelLoadError } from "./load";
-import { materialFrom } from "./materials";
+import { prefs, setShaderBase } from "$lib/prefs.svelte";
+import { materialFrom, withBase } from "./materials";
 
 const realFetch = globalThis.fetch;
 
@@ -69,6 +70,8 @@ const desc = (over: Partial<ModelMaterial> = {}): ModelMaterial => ({
   metallic: 0.25,
   smoothness: 0.75,
   missing: false,
+  textures: [],
+  baseProperty: null,
   ...over,
 });
 
@@ -139,5 +142,25 @@ describe("materialFrom", () => {
     expect((missing as MeshBasicMaterial).color.getHexString()).toBe("ff00ff");
     const unlit = materialFrom(desc({ unlit: true, baseMap: null }), (p) => p, () => new Texture());
     expect(unlit).toBeInstanceOf(MeshBasicMaterial);
+  });
+
+  it("shows the texture picked for an approximated shader as its base map", () => {
+    const slot = (property: string, path: string) => ({ property, path, key: `k:${path}`, tiling: [2, 2] as [number, number], offset: [0, 0] as [number, number] });
+    const mozaic = desc({
+      shader: "Mozaic",
+      baseMap: "mask.png",
+      baseProperty: "_Mask",
+      textures: [slot("_Mask", "mask.png"), slot("_Drawing", "drawing.png")],
+    });
+    prefs.viewer = {};
+    expect(withBase(mozaic)).toBe(mozaic);
+    setShaderBase("Mozaic", "_Drawing");
+    expect(withBase(mozaic)).toMatchObject({ baseMap: "drawing.png", baseMapKey: "k:drawing.png", tiling: [2, 2], baseProperty: "_Drawing" });
+    const loaded: string[] = [];
+    materialFrom(mozaic, (p) => p, (url) => (loaded.push(url), new Texture()));
+    expect(loaded[0]).toBe("drawing.png");
+    expect(withBase({ ...mozaic, approximated: false })).toMatchObject({ baseMap: "mask.png" });
+    setShaderBase("Mozaic", "_Gone");
+    expect(withBase(mozaic).baseMap).toBe("mask.png");
   });
 });

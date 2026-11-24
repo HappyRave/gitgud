@@ -351,6 +351,18 @@ export interface ModelMaterial {
   metallic: number;
   smoothness: number;
   missing: boolean;
+  /** An approximated shader's assigned textures, for picking the base map. */
+  textures: TextureSlot[];
+  /** The property `baseMap` came from. */
+  baseProperty: string | null;
+}
+
+export interface TextureSlot {
+  property: string;
+  path: string;
+  key: string | null;
+  tiling: [number, number];
+  offset: [number, number];
 }
 
 export type MeshRef =

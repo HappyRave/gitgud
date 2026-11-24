@@ -126,6 +126,8 @@ describe("materialKey", () => {
     metallic: 0,
     smoothness: 0.5,
     missing: false,
+    textures: [],
+    baseProperty: null,
     ...over,
   });
 

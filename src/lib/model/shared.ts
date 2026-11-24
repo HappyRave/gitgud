@@ -1,6 +1,7 @@
 import type { ModelMaterial } from "$lib/api";
 import { type ModelCache, modelCache } from "./cache";
 import { type LoadedModel, type LoadSource, loadModel } from "./load";
+import { withBase } from "./materials";
 
 /**
  * Loads a model file through `cache` when the backend named its content
@@ -11,7 +12,7 @@ export function loadShared(src: LoadSource, cache: ModelCache = modelCache): Pro
   if (!src.info?.key) {
     return loadModel(src);
   }
-  const key = `${src.kind}|${JSON.stringify(src.info)}`;
+  const key = `${src.kind}|${JSON.stringify({ ...src.info, materials: src.info.materials.map(withBase) })}`;
   return cache.model(key, () => loadModel(src)).then((m) => {
     src.onProgress?.({ phase: "done" });
     return m;
@@ -19,7 +20,8 @@ export function loadShared(src: LoadSource, cache: ModelCache = modelCache): Pro
 }
 
 /** A key for the material `desc` describes, when every texture it uses is named by content. */
-export function materialKey(desc: ModelMaterial): string | null {
+export function materialKey(given: ModelMaterial): string | null {
+  const desc = withBase(given);
   if ((desc.baseMap && !desc.baseMapKey) || (desc.normalMap && !desc.normalMapKey)) {
     return null;
   }

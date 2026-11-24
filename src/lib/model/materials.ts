@@ -13,6 +13,7 @@ import {
   TextureLoader,
 } from "three";
 import type { ModelMaterial } from "$lib/api";
+import { shaderBase } from "$lib/prefs.svelte";
 import { type Status, TINT } from "./compare";
 
 export const MISSING_COLOR = "#ff00ff";
@@ -23,10 +24,24 @@ export type LoadTexture = (url: string) => Texture;
 export const loadTexture: LoadTexture = (url) => new TextureLoader().load(url);
 
 /**
+ * `desc` with the base map taken from the texture property picked for its shader,
+ * when it is approximated and has that property.
+ */
+export function withBase(desc: ModelMaterial): ModelMaterial {
+  const pick = desc.approximated ? shaderBase(desc.shader) : null;
+  const slot = pick && pick !== desc.baseProperty ? desc.textures.find((t) => t.property === pick) : undefined;
+  if (!slot) {
+    return desc;
+  }
+  return { ...desc, baseMap: slot.path, baseMapKey: slot.key, tiling: slot.tiling, offset: slot.offset, baseProperty: slot.property };
+}
+
+/**
  * A three.js material for a Unity material. Smoothness becomes 1 - roughness;
  * missing materials are flat magenta, as in Unity.
  */
-export function materialFrom(desc: ModelMaterial, imageUrl: (path: string) => string, load: LoadTexture = loadTexture): Material {
+export function materialFrom(given: ModelMaterial, imageUrl: (path: string) => string, load: LoadTexture = loadTexture): Material {
+  const desc = withBase(given);
   if (desc.missing) {
     return Object.assign(new MeshBasicMaterial({ color: MISSING_COLOR }), { name: desc.name });
   }

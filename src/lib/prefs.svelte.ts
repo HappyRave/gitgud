@@ -158,6 +158,16 @@ export function setViewerChoice(path: string, name: string, value: string) {
   writeStorage(VIEWER_KEY, JSON.stringify(prefs.viewer));
 }
 
+/** The texture property picked as the base map for materials using `shader`, if any. */
+export function shaderBase(shader: string): string | null {
+  return prefs.viewer[`shader:${shader}.base`] ?? null;
+}
+
+export function setShaderBase(shader: string, property: string) {
+  prefs.viewer[`shader:${shader}.base`] = property;
+  writeStorage(VIEWER_KEY, JSON.stringify(prefs.viewer));
+}
+
 export function setVolume(volume: number) {
   prefs.volume = Math.min(1, Math.max(0, volume));
   writeStorage(VOLUME_KEY, String(prefs.volume));

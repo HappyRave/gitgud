@@ -57,6 +57,22 @@ pub struct Material {
     pub smoothness: f32,
     /// The referenced `.mat` or its shader couldn't be found.
     pub missing: bool,
+    /// For an approximated shader, every texture it assigns, so the viewer can
+    /// offer which one to show as the base map.
+    pub textures: Vec<TextureSlot>,
+    /// The property `base_map` came from.
+    pub base_property: Option<String>,
+}
+
+/// A texture property of a material and the image it holds.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TextureSlot {
+    pub property: String,
+    pub path: String,
+    pub key: Option<String>,
+    pub tiling: [f32; 2],
+    pub offset: [f32; 2],
 }
 
 impl Material {
@@ -77,6 +93,8 @@ impl Material {
             metallic: 0.0,
             smoothness: 0.0,
             missing: true,
+            textures: Vec::new(),
+            base_property: None,
         }
     }
 
@@ -113,25 +131,50 @@ impl Material {
             metallic: 0.0,
             smoothness: 0.5,
             missing: false,
+            textures: Vec::new(),
+            base_property: None,
         };
         for (key, tex) in keyed_list(&props["m_TexEnvs"]) {
-            let slot = match key.as_str() {
-                "_BaseMap" | "_MainTex" | "_BaseColorMap" => &mut m.base_map,
-                "_BumpMap" | "_NormalMap" => &mut m.normal_map,
-                _ => continue,
-            };
-            if slot.is_some() {
-                continue;
-            }
             let Some(guid) = obj_ref(&tex["m_Texture"]).and_then(|r| r.guid) else {
                 continue;
             };
-            if let Some(p) = guids.path(&guid)?.filter(|p| image_type(p).is_some()) {
-                *slot = Some(p);
-                if matches!(key.as_str(), "_BaseMap" | "_MainTex" | "_BaseColorMap") {
-                    m.tiling = vec2(&tex["m_Scale"], [1.0, 1.0]);
-                    m.offset = vec2(&tex["m_Offset"], [0.0, 0.0]);
+            let Some(p) = guids.path(&guid)?.filter(|p| image_type(p).is_some()) else {
+                continue;
+            };
+            let slot = TextureSlot {
+                key: guids.files.key(&p),
+                property: key.clone(),
+                path: p,
+                tiling: vec2(&tex["m_Scale"], [1.0, 1.0]),
+                offset: vec2(&tex["m_Offset"], [0.0, 0.0]),
+            };
+            match key.as_str() {
+                "_BaseMap" | "_MainTex" | "_BaseColorMap" if m.base_map.is_none() => {
+                    m.use_base(&slot)
                 }
+                "_BumpMap" | "_NormalMap" if m.normal_map.is_none() => {
+                    m.normal_map = Some(slot.path.clone());
+                }
+                _ => {}
+            }
+            if approximated {
+                m.textures.push(slot);
+            }
+        }
+        if m.base_map.is_none() && !m.textures.is_empty() {
+            let main = shader_properties(b, guids)?
+                .and_then(|props| props.into_iter().find(|p| p.main_texture))
+                .map(|p| p.name);
+            let pick = main
+                .and_then(|name| m.textures.iter().find(|t| t.property == name))
+                .or_else(|| {
+                    m.textures
+                        .iter()
+                        .find(|t| Some(&t.path) != m.normal_map.as_ref())
+                })
+                .cloned();
+            if let Some(slot) = pick {
+                m.use_base(&slot);
             }
         }
         for (key, v) in keyed_list(&props["m_Floats"]) {
@@ -148,9 +191,16 @@ impl Material {
                 break;
             }
         }
-        m.base_map_key = m.base_map.as_deref().and_then(|p| guids.files.key(p));
         m.normal_map_key = m.normal_map.as_deref().and_then(|p| guids.files.key(p));
         Ok(m)
+    }
+
+    fn use_base(&mut self, slot: &TextureSlot) {
+        self.base_map = Some(slot.path.clone());
+        self.base_map_key.clone_from(&slot.key);
+        self.tiling = slot.tiling;
+        self.offset = slot.offset;
+        self.base_property = Some(slot.property.clone());
     }
 }
 
@@ -232,11 +282,12 @@ impl MaterialView {
             .ok_or_else(not_found)?;
         let material = Material::load(path, guids)?;
         let b = &doc.body;
-        let known = material
+        let known: Option<Vec<String>> = material
             .approximated
-            .then(|| declared(b, guids))
+            .then(|| shader_properties(b, guids))
             .transpose()?
-            .flatten();
+            .flatten()
+            .map(|props| props.into_iter().map(|p| p.name).collect());
         let props = &b["m_SavedProperties"];
         let mut properties = Vec::new();
         let mut add = |key: String, value: String, color: Option<[f32; 4]>| {
@@ -312,8 +363,18 @@ fn hex(c: [f32; 4]) -> String {
     }
 }
 
-/// The property names a custom shader's source declares, when its source is in the repo.
-fn declared(material: &yaml_rust2::Yaml, guids: &Guids<'_>) -> Result<Option<Vec<String>>, Error> {
+/// A property a shader's `Properties` block declares.
+struct ShaderProperty {
+    name: String,
+    /// Marked `[MainTexture]`: what Unity treats as the material's main texture.
+    main_texture: bool,
+}
+
+/// The properties a custom shader's source declares, when its source is in the repo.
+fn shader_properties(
+    material: &yaml_rust2::Yaml,
+    guids: &Guids<'_>,
+) -> Result<Option<Vec<ShaderProperty>>, Error> {
     let Some(guid) = obj_ref(&material["m_Shader"]).and_then(|r| r.guid) else {
         return Ok(None);
     };
@@ -345,21 +406,25 @@ fn declared(material: &yaml_rust2::Yaml, guids: &Guids<'_>) -> Result<Option<Vec
             _ => {}
         }
     }
-    let names = block[open + 1..end]
+    let props = block[open + 1..end]
         .lines()
         .filter_map(|l| {
             let mut l = l.trim();
+            let mut main_texture = false;
             while let Some(rest) = l.strip_prefix('[') {
-                l = rest.split_once(']').map_or("", |(_, r)| r).trim_start();
+                let (attr, after) = rest.split_once(']').unwrap_or(("", ""));
+                main_texture |= attr.trim() == "MainTexture";
+                l = after.trim_start();
             }
             let name: String = l
                 .chars()
                 .take_while(|c| c.is_alphanumeric() || *c == '_')
                 .collect();
-            (!name.is_empty() && l[name.len()..].trim_start().starts_with('(')).then_some(name)
+            (!name.is_empty() && l[name.len()..].trim_start().starts_with('('))
+                .then_some(ShaderProperty { name, main_texture })
         })
         .collect();
-    Ok(Some(names))
+    Ok(Some(props))
 }
 
 fn shader_name(material: &yaml_rust2::Yaml, guids: &Guids<'_>) -> Result<(String, bool), Error> {
@@ -461,6 +526,52 @@ mod tests {
         let gone = Material::load("Assets/M/gone.mat", &g).unwrap();
         assert!(gone.missing);
         assert_eq!(gone.name, "gone");
+    }
+
+    #[test]
+    fn a_custom_shader_without_a_standard_slot_offers_its_textures() {
+        const MASK: &str = "3333cccc000000000000000000000000";
+        let mat = format!(
+            "--- !u!21 &2100000\nMaterial:\n  m_Name: Mozaic\n  m_Shader: {{fileID: 4800000, guid: {SHADER}, type: 3}}\n  m_SavedProperties:\n    m_TexEnvs:\n    - _Mask:\n        m_Texture: {{fileID: 2800000, guid: {MASK}, type: 3}}\n        m_Scale: {{x: 1, y: 1}}\n        m_Offset: {{x: 0, y: 0}}\n    - _Drawing:\n        m_Texture: {{fileID: 2800000, guid: {TEX}, type: 3}}\n        m_Scale: {{x: 2, y: 2}}\n        m_Offset: {{x: 0, y: 0}}\n    - _MainTex:\n        m_Texture: {{fileID: 0}}\n"
+        );
+        let shader = |drawing_attr: &str| {
+            format!(
+                "Shader \"Mozaic\"\n{{\n  Properties\n  {{\n    _Mask(\"Mask\", 2D) = \"white\" {{}}\n    {drawing_attr}_Drawing(\"Drawing\", 2D) = \"white\" {{}}\n  }}\n}}\n"
+            )
+        };
+        let repo = TestRepo::init();
+        repo.write("Assets/T/drawing.png", "x")
+            .write("Assets/T/drawing.png.meta", &format!("guid: {TEX}\n"))
+            .write("Assets/T/mask.png", "x")
+            .write("Assets/T/mask.png.meta", &format!("guid: {MASK}\n"))
+            .write("Assets/S/Mozaic.shader", &shader(""))
+            .write("Assets/S/Mozaic.shader.meta", &format!("guid: {SHADER}\n"))
+            .write("Assets/M/mozaic.mat", &mat)
+            .commit_all("one");
+        repo.write("Assets/S/Mozaic.shader", &shader("[MainTexture] "));
+        let r = crate::repo::open(repo.path()).unwrap();
+        let load = |v: Version| {
+            let files = Files::new(&r, &v).unwrap();
+            Material::load("Assets/M/mozaic.mat", &Guids::new(&files)).unwrap()
+        };
+
+        let head = load(Version::Head);
+        let props: Vec<_> = head.textures.iter().map(|t| t.property.as_str()).collect();
+        assert_eq!(props, ["_Mask", "_Drawing"]);
+        assert_eq!(
+            head.base_property.as_deref(),
+            Some("_Mask"),
+            "first assigned"
+        );
+        assert_eq!(head.base_map.as_deref(), Some("Assets/T/mask.png"));
+
+        let marked = load(Version::Worktree);
+        assert_eq!(
+            marked.base_property.as_deref(),
+            Some("_Drawing"),
+            "[MainTexture] wins"
+        );
+        assert_eq!(marked.tiling, [2.0, 2.0]);
     }
 
     #[test]

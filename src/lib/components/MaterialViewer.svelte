@@ -4,7 +4,7 @@
   import { imageUrl } from "$lib/images";
   import type { ModelSide, Opened } from "$lib/model/open";
   import { toVersion } from "$lib/model/source";
-  import { setViewerChoice, viewerChoice } from "$lib/prefs.svelte";
+  import { setShaderBase, setViewerChoice, shaderBase, viewerChoice } from "$lib/prefs.svelte";
   import { diffMaterial, type MaterialShape, materialPill, SHAPE_LABEL, SHAPES } from "$lib/viewers/material";
   import LoadingBar from "./LoadingBar.svelte";
   import ModelViewer from "./ModelViewer.svelte";
@@ -60,6 +60,17 @@
   });
 
   const diff = $derived(views ? diffMaterial(views.before, views.after) : null);
+  /** An approximated shader's texture properties, either version's, for the Base map picker. */
+  const baseSlots = $derived(
+    views?.after?.material.approximated
+      ? [...new Set([...(views.before?.material.textures ?? []), ...views.after.material.textures].map((t) => t.property))]
+      : [],
+  );
+  const shaderName = $derived(views?.after?.material.shader ?? "");
+  const baseChoice = $derived.by(() => {
+    const picked = shaderBase(shaderName);
+    return picked && baseSlots.includes(picked) ? picked : (views?.after?.material.baseProperty ?? baseSlots[0] ?? "");
+  });
   const shown = $derived(shape === "mesh" && !user ? "sphere" : shape);
   const rows = $derived(diff ? (showAll || !views?.before ? diff.rows : diff.rows.filter((r) => r.changed)) : []);
   const hidden = $derived(diff && views?.before ? diff.rows.length - diff.changed : 0);
@@ -101,6 +112,19 @@
       >
     {/each}
   </div>
+  {#if baseSlots.length}
+    <label class="base"
+      >Base map
+      <select
+        aria-label="Base map"
+        title="Which texture of {shaderName} is shown as the colour; remembered for every material using it"
+        value={baseChoice}
+        onchange={(e) => setShaderBase(shaderName, e.currentTarget.value)}
+      >
+        {#each baseSlots as p (p)}<option value={p}>{p}</option>{/each}
+      </select></label
+    >
+  {/if}
   {#if shown === "mesh" && users.length > 1}
     <select class="users" aria-label="Mesh that uses this material" bind:value={user}>
       {#each users as u (u)}<option value={u}>{u.slice(u.lastIndexOf("/") + 1)}</option>{/each}
@@ -116,11 +140,11 @@
   {:else}
     <div class="stage">
       {#if shown === "mesh" && user}
-        {#key user}
+        {#key `${user}|${baseChoice}`}
           <ModelViewer {repoId} path={user} {before} {after} {bust} chrome={shapes} />
         {/key}
       {:else}
-        {#key shown}
+        {#key `${shown}|${baseChoice}`}
           <ModelViewer {repoId} {path} {before} {after} {bust} {meta} {onfetch} {opener} chrome={shapes} />
         {/key}
       {/if}
@@ -311,5 +335,16 @@
   .users {
     font-size: 10.5px;
     max-width: 180px;
+  }
+  .base {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 10.5px;
+    color: #c9d0da;
+  }
+  .base select {
+    font-size: 10.5px;
+    max-width: 140px;
   }
 </style>
