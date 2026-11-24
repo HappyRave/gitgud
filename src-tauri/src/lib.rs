@@ -1328,6 +1328,27 @@ async fn model_info(
 }
 
 #[tauri::command]
+async fn clip_curves(
+    session: State<'_, Session>,
+    id: u32,
+    path: String,
+    before: Option<gitgud_core::image::Version>,
+    after: gitgud_core::image::Version,
+) -> Result<gitgud_core::model::ClipCurves, Error> {
+    session.clip_curves(id, &path, before.as_ref(), &after)
+}
+
+#[tauri::command]
+async fn clip_users(
+    session: State<'_, Session>,
+    id: u32,
+    path: String,
+    version: gitgud_core::image::Version,
+) -> Result<Vec<String>, Error> {
+    session.clip_users(id, &path, &version)
+}
+
+#[tauri::command]
 async fn sprite_sheet(
     session: State<'_, Session>,
     id: u32,
@@ -1807,6 +1828,8 @@ fn app_with_library<R: Runtime>(builder: Builder<R>, library: Option<LibraryStor
             data_tables,
             video_info,
             sprite_sheet,
+            clip_curves,
+            clip_users,
             unity_conflict_table,
             resolve_unity_conflict,
             unity_post_merge_check,
@@ -2013,6 +2036,38 @@ mod tests {
             )
             .unwrap();
         assert_eq!(users, json!(["Assets/boat.fbx"]));
+    }
+
+    #[test]
+    fn clip_curves_compares_keys_and_finds_users() {
+        let anim = |y: &str| {
+            format!(
+                "--- !u!74 &7400000\nAnimationClip:\n  m_Name: Bob\n  m_EditorCurves:\n  - curve:\n      m_Curve:\n      - time: 0\n        value: {y}\n        inSlope: 0\n        outSlope: 0\n    attribute: m_LocalPosition.y\n    path: Hull\n"
+            )
+        };
+        let repo = TestRepo::init();
+        repo.write("Bob.anim", &anim("0"))
+            .write("Bob.anim.meta", "guid: a0000000000000000000000000000001\n")
+            .commit_all("one");
+        repo.write("Bob.anim", &anim("0.5"));
+        let ipc = Ipc::new();
+        let id = open(&ipc, &repo)["id"].clone();
+        let c = ipc
+            .call(
+                "clip_curves",
+                json!({ "id": id, "path": "Bob.anim", "before": "head", "after": "worktree" }),
+            )
+            .unwrap();
+        assert_eq!(c["tracks"][0]["label"], "Position.y");
+        assert_eq!(c["tracks"][0]["state"], "changed");
+        assert_eq!(c["tracks"][0]["after"][0]["value"], 0.5);
+        let users = ipc
+            .call(
+                "clip_users",
+                json!({ "id": id, "path": "Bob.anim", "version": "worktree" }),
+            )
+            .unwrap();
+        assert_eq!(users, json!([]));
     }
 
     #[test]

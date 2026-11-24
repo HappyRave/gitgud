@@ -6,6 +6,7 @@
   import { setViewMode } from "$lib/prefs.svelte";
   import { metaTarget, type ViewerKind, viewerFor } from "$lib/viewers/route";
   import AudioViewer from "./AudioViewer.svelte";
+  import CurveViewer from "./CurveViewer.svelte";
   import DataViewer from "./DataViewer.svelte";
   import FontViewer from "./FontViewer.svelte";
   import LoadingBar from "./LoadingBar.svelte";
@@ -99,6 +100,8 @@
     <ModelViewer {repoId} path={target} {before} {after} {bust} {meta} {onfetch} />
   {:else if shown === "material"}
     <MaterialViewer {repoId} path={target} {before} {after} {bust} {meta} {onfetch} />
+  {:else if shown === "curves"}
+    <CurveViewer {repoId} path={target} {before} {after} {bust} />
   {:else if shown === "atlas"}
     <SpriteViewer {repoId} path={target} {before} {after} {bust} />
   {:else if shown === "video"}

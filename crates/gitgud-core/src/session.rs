@@ -1991,6 +1991,35 @@ impl Session {
             .map_err(|e| Error::Refused(format!("{path}: {e}")))
     }
 
+    /// See [`Repo::clip_curves`].
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`], or as [`Repo::clip_curves`].
+    pub fn clip_curves(
+        &self,
+        id: u32,
+        path: &str,
+        before: Option<&crate::image::Version>,
+        after: &crate::image::Version,
+    ) -> Result<crate::model::ClipCurves, Error> {
+        let repo = self.get(id)?.repo.clone();
+        repo.clip_curves(self.git().ok(), path, before, after)
+    }
+
+    /// See [`Repo::clip_users`].
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`], or as [`Repo::clip_users`].
+    pub fn clip_users(
+        &self,
+        id: u32,
+        path: &str,
+        version: &crate::image::Version,
+    ) -> Result<Vec<String>, Error> {
+        let repo = self.get(id)?.repo.clone();
+        repo.clip_users(self.git()?, path, version)
+    }
+
     /// See [`Repo::sprite_sheet`].
     ///
     /// # Errors

@@ -16,6 +16,7 @@ const BY_EXT: Record<string, ViewerKind> = {
   glb: "model",
   asset: "asset",
   mat: "material",
+  anim: "curves",
   pdf: "pdf",
   mp4: "video",
   m4v: "video",

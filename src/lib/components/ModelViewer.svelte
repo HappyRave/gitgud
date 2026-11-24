@@ -19,6 +19,7 @@
     onfetch,
     opener,
     chrome,
+    startClip = null,
   }: {
     repoId: number;
     path: string;
@@ -31,6 +32,8 @@
     opener?: (side: ModelSide) => Promise<Opened>;
     /** Replaces the view's own controls; shading stays Textured and the counts are hidden. */
     chrome?: Snippet;
+    /** The clip selected once the model loads, when it has one by that name. */
+    startClip?: string | null;
   } = $props();
 
   let canvas = $state<HTMLCanvasElement>();
@@ -113,6 +116,10 @@
     notes = [...new Set(found)];
     clips = stage.clips().map((c) => ({ name: c.name, duration: c.duration }));
     clip = stage.clip;
+    if (startClip && startClip !== clip && clips.some((c) => c.name === startClip)) {
+      stage.setClip(startClip);
+      clip = startClip;
+    }
     time = 0;
     sync();
     loading = false;

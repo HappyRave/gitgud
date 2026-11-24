@@ -836,6 +836,46 @@ export interface UnityAssetInfo {
   size: number;
 }
 
+export interface CurveKey {
+  time: number;
+  value: number;
+  /** null: an infinite slope, the curve holds then steps. */
+  inSlope: number | null;
+  outSlope: number | null;
+}
+
+export type TrackState = "same" | "changed" | "added" | "removed";
+
+export interface CurveTrack {
+  path: string;
+  label: string;
+  before: CurveKey[] | null;
+  after: CurveKey[] | null;
+  state: TrackState;
+  /** Quaternion rotation shown as Euler angles at its keys, joined by lines. */
+  approximated: boolean;
+}
+
+export interface FlipbookTrack {
+  path: string;
+  label: string;
+  before: [number, string][] | null;
+  after: [number, string][] | null;
+  state: TrackState;
+}
+
+/** A `.anim` clip's curves compared across two versions. */
+export interface ClipCurves {
+  name: string;
+  duration: number;
+  looping: boolean;
+  sampleRate: number;
+  tracks: CurveTrack[];
+  flipbooks: FlipbookTrack[];
+  keysBefore: number | null;
+  keysAfter: number;
+}
+
 /** One sprite of a texture, in Unity pixels (origin bottom-left). */
 export interface Sprite {
   name: string;
@@ -1098,6 +1138,8 @@ export interface Commands {
   model_info: { args: { id: number; path: string; version: FileVersion }; result: ModelInfo };
   unity_asset_info: { args: { id: number; path: string; version: FileVersion }; result: UnityAssetInfo };
   open_version: { args: { id: number; path: string; version: FileVersion; label: string }; result: string };
+  clip_curves: { args: { id: number; path: string; before?: FileVersion | null; after: FileVersion }; result: ClipCurves };
+  clip_users: { args: { id: number; path: string; version: FileVersion }; result: string[] };
   sprite_sheet: { args: { id: number; texture: string; before?: FileVersion | null; after: FileVersion }; result: SpriteSheet };
   video_info: { args: { id: number; path: string; version: FileVersion }; result: VideoInfo };
   data_tables: { args: { id: number; path: string; before?: FileVersion | null; after: FileVersion }; result: DataTables };
@@ -1402,7 +1444,10 @@ export const unityAssetInfo = (id: number, path: string, version: FileVersion) =
 /** Writes `path` at `version` to a temp copy, opens it in its default app, and returns where. */
 export const openVersion = (id: number, path: string, version: FileVersion, label: string) =>
   call("open_version", { id, path, version, label });
-export const spriteSheet = (id: number, texture: string, before: FileVersion | null, after: FileVersion) =>
+export const clipCurves = (id: number, path: string, before: FileVersion | null, after: FileVersion) =>
+  call("clip_curves", { id, path, before, after });
+export const clipUsers = (id: number, path: string, version: FileVersion) => call("clip_users", { id, path, version });
+export const spriteSheet =(id: number, texture: string, before: FileVersion | null, after: FileVersion) =>
   call("sprite_sheet", { id, texture, before, after });
 export const videoInfo =(id: number, path: string, version: FileVersion) => call("video_info", { id, path, version });
 export const dataTables =(id: number, path: string, before: FileVersion | null, after: FileVersion) =>

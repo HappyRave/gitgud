@@ -1,5 +1,6 @@
 mod anim;
 pub(crate) mod cache;
+mod curves;
 mod guids;
 mod material;
 mod mesh_asset;
@@ -17,6 +18,7 @@ use std::sync::Arc;
 use serde::Serialize;
 
 pub use anim::{ClipSource, SceneClip, Track};
+pub use curves::{ClipCurves, CurveKey, CurveTrack, FlipbookTrack};
 pub use material::{Material, MaterialProperty, MaterialView};
 pub use prefab::{MeshRef, ModelNode, ModelScene};
 pub use sprites::{Sprite, SpriteChange, SpriteSheet};
@@ -171,6 +173,114 @@ impl Repo {
         Ok(info)
     }
 
+    /// The curves of the `.anim` at `path`, compared between `before` (when the file
+    /// is there) and `after`.
+    ///
+    /// # Errors
+    /// [`Error::Refused`] when `after` has no such clip.
+    pub fn clip_curves(
+        &self,
+        git: Option<&GitCli>,
+        path: &str,
+        before: Option<&Version>,
+        after: &Version,
+    ) -> Result<ClipCurves, Error> {
+        let missing = || Error::Refused(format!("{path} isn't in that version"));
+        let after_files = Files::new(self, after)?.with_git(git);
+        let after_text = after_files.read_text(path)?.ok_or_else(missing)?;
+        let before_files = match before {
+            Some(v) => Some(Files::new(self, v)?.with_git(git)),
+            None => None,
+        };
+        let before_text = match &before_files {
+            Some(f) => f.read_text(path)?,
+            None => None,
+        };
+        let before_guids = before_files.as_ref().map(Guids::new);
+        curves::clip_curves(
+            before_text.as_deref().zip(before_guids.as_ref()),
+            (&after_text, &Guids::new(&after_files)),
+            path,
+        )
+    }
+
+    /// Prefabs whose Animator plays the clip at `path` in `version`: controllers (and
+    /// override controllers) naming its GUID, then prefabs naming theirs; prefabs
+    /// first found first, at most [`MAX_USERS`].
+    ///
+    /// # Errors
+    /// As [`Repo::material_users`].
+    pub fn clip_users(
+        &self,
+        git: &GitCli,
+        path: &str,
+        version: &Version,
+    ) -> Result<Vec<String>, Error> {
+        let files = Files::new(self, version)?;
+        let mut users = Vec::new();
+        for controller in self.files_naming(
+            git,
+            &files,
+            path,
+            version,
+            &["*.controller", "*.overrideController"],
+        )? {
+            for prefab in self.files_naming(git, &files, &controller, version, &["*.prefab"])? {
+                if !users.contains(&prefab) {
+                    users.push(prefab);
+                }
+            }
+        }
+        users.truncate(MAX_USERS);
+        Ok(users)
+    }
+
+    /// Files matching `globs` in `version` whose text names the GUID of `asset`
+    /// (read from its `.meta`), found with `git grep`.
+    fn files_naming(
+        &self,
+        git: &GitCli,
+        files: &Files<'_>,
+        asset: &str,
+        version: &Version,
+        globs: &[&str],
+    ) -> Result<Vec<String>, Error> {
+        let Some(guid) = files
+            .read_text(&format!("{asset}.meta"))?
+            .as_deref()
+            .and_then(Meta::guid_only)
+        else {
+            return Ok(Vec::new());
+        };
+        let rev = match version {
+            Version::Head => Some("HEAD".to_owned()),
+            Version::Commit(id) => Some(id.clone()),
+            Version::Parent(id) => Some(format!("{id}^")),
+            _ => None,
+        };
+        let mut args = vec!["grep", "-l", "-F", "-e", guid.as_str()];
+        if matches!(version, Version::Index) {
+            args.push("--cached");
+        }
+        if let Some(r) = &rev {
+            args.push(r);
+        }
+        args.push("--");
+        args.extend(globs);
+        let (code, out, err) = git.run_status(self.root(), &args, None)?;
+        if code > 1 {
+            return Err(Error::Command {
+                command: "git grep".into(),
+                message: err.trim().to_owned(),
+            });
+        }
+        let prefix = rev.map(|r| format!("{r}:")).unwrap_or_default();
+        Ok(out
+            .lines()
+            .map(|l| l.strip_prefix(&prefix).unwrap_or(l).to_owned())
+            .collect())
+    }
+
     /// The sprites of `texture` (an image path) from its `.meta` at `after`, compared
     /// with `before` when that version has the `.meta`.
     ///
@@ -269,46 +379,17 @@ impl Repo {
         version: &Version,
     ) -> Result<Vec<String>, Error> {
         let files = Files::new(self, version)?;
-        let Some(guid) = files
-            .read_text(&format!("{path}.meta"))?
-            .as_deref()
-            .and_then(Meta::guid_only)
-        else {
-            return Ok(Vec::new());
-        };
-        let rev = match version {
-            Version::Head => Some("HEAD".to_owned()),
-            Version::Commit(id) => Some(id.clone()),
-            Version::Parent(id) => Some(format!("{id}^")),
-            _ => None,
-        };
-        let mut args = vec!["grep", "-l", "-F", "-e", guid.as_str()];
-        if matches!(version, Version::Index) {
-            args.push("--cached");
-        }
-        if let Some(r) = &rev {
-            args.push(r);
-        }
-        args.extend([
-            "--",
+        let globs = [
             "*.prefab",
             "*.fbx.meta",
             "*.obj.meta",
             "*.gltf.meta",
             "*.glb.meta",
-        ]);
-        let (code, out, err) = git.run_status(self.root(), &args, None)?;
-        if code > 1 {
-            return Err(Error::Command {
-                command: "git grep".into(),
-                message: err.trim().to_owned(),
-            });
-        }
-        let prefix = rev.map(|r| format!("{r}:")).unwrap_or_default();
-        let mut users: Vec<String> = out
-            .lines()
-            .map(|l| l.strip_prefix(&prefix).unwrap_or(l))
-            .map(|l| l.strip_suffix(".meta").unwrap_or(l).to_owned())
+        ];
+        let mut users: Vec<String> = self
+            .files_naming(git, &files, path, version, &globs)?
+            .into_iter()
+            .map(|l| l.strip_suffix(".meta").map_or(l.clone(), str::to_owned))
             .collect();
         users.sort_by_key(|p| (!p.ends_with(".prefab"), p.clone()));
         users.truncate(MAX_USERS);
@@ -524,6 +605,47 @@ mod tests {
             .data_tables(None, "Assets/Hull.asset", None, &Version::Worktree)
             .unwrap_err();
         assert!(err.to_string().contains("isn't a ScriptableObject"));
+    }
+
+    #[test]
+    fn finds_prefabs_that_play_a_clip_through_their_controller() {
+        let (clip, ctrl) = (
+            "a0000000000000000000000000000001",
+            "c0000000000000000000000000000002",
+        );
+        let repo = TestRepo::init();
+        repo.write(
+            "Assets/Bob.anim",
+            "--- !u!74 &7400000\nAnimationClip:\n  m_Name: Bob\n",
+        )
+        .write("Assets/Bob.anim.meta", &format!("guid: {clip}\n"))
+        .write(
+            "Assets/Boat.controller",
+            &format!("m_Motion: {{fileID: 7400000, guid: {clip}, type: 2}}\n"),
+        )
+        .write("Assets/Boat.controller.meta", &format!("guid: {ctrl}\n"))
+        .write(
+            "Assets/Skiff.prefab",
+            &format!("m_Controller: {{fileID: 9100000, guid: {ctrl}, type: 2}}\n"),
+        )
+        .write("Assets/Other.prefab", "m_Controller: {fileID: 0}\n")
+        .commit_all("one");
+        let r = crate::repo::open(repo.path()).unwrap();
+        let git = GitCli::new(&crate::git::locate().unwrap());
+        assert_eq!(
+            r.clip_users(&git, "Assets/Bob.anim", &Version::Head)
+                .unwrap(),
+            ["Assets/Skiff.prefab"]
+        );
+        let c = r
+            .clip_curves(
+                None,
+                "Assets/Bob.anim",
+                Some(&Version::Head),
+                &Version::Worktree,
+            )
+            .unwrap();
+        assert_eq!((c.name.as_str(), c.keys_before), ("Bob", Some(0)));
     }
 
     #[test]
