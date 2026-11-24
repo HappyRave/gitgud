@@ -139,6 +139,16 @@ export function compare(before: Object3D, after: Object3D): Comparison {
       status.set(o, status.get(q) === "modified" ? "modified" : "same");
     }
   }
+  // What sits under a modified object moved or changed with it, so it is tinted too.
+  for (const [o, s] of [...status]) {
+    if (s === "modified") {
+      o.traverse((d) => {
+        if (status.get(d) === "same") {
+          status.set(d, "modified");
+        }
+      });
+    }
+  }
   return { status, changes };
 }
 

@@ -54,10 +54,30 @@ describe("compare", () => {
       Mast: "removed: with 1 child",
     });
     const find = (root: Object3D, name: string) => root.getObjectByName(name)!;
-    expect(status.get(find(after, "Windshield"))).toBe("same");
+    expect(status.get(find(after, "Windshield"))).toBe("modified");
+    expect(status.get(find(before, "Windshield"))).toBe("modified");
+    expect(status.get(find(after, "Hull"))).toBe("modified");
     expect(status.get(find(after, "Bar"))).toBe("added");
     expect(status.get(find(before, "Flag"))).toBe("removed");
     expect(status.get(find(before, "Cabin"))).toBe("modified");
+  });
+
+  it("tints a moved object's mesh child but leaves its unmoved siblings", () => {
+    const version = (x: number) => {
+      const root = new Group();
+      const crane = Object.assign(new Group(), { name: "Crane" });
+      crane.position.x = x;
+      crane.add(mesh("Crane_Mesh"));
+      const pier = Object.assign(new Group(), { name: "Pier" });
+      pier.add(mesh("Pier_Mesh"));
+      root.add(crane, pier);
+      return root;
+    };
+    const after = version(5);
+    const { status, changes } = compare(version(3), after);
+    expect(changes.map((c) => c.name)).toEqual(["Crane"]);
+    expect(status.get(after.getObjectByName("Crane_Mesh")!)).toBe("modified");
+    expect(status.get(after.getObjectByName("Pier_Mesh")!)).toBe("same");
   });
 
   it("finds nothing between identical versions", () => {

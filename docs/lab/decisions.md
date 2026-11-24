@@ -49,6 +49,9 @@ texture viewer); `.svg` already opens in the image diff.
   picker with sides named Yours / Theirs (Parent / Commit in a commit).
 - **Not applied yet:** nothing is built. The frames on the page that break rule 1 (A1, AC1, D1, P1,
   M1 / SP1 pill position, U1) aren't redrawn.
+- **Decided (2026-11-24):** in the 3D Changes shading, everything under a modified object (a moved
+  GameObject's mesh child) is tinted amber too; before, only the object itself counted and its mesh
+  stayed grey. Max: "Yes, tint it".
 
 ## R6 · 3D preview (2026-11-23)
 
