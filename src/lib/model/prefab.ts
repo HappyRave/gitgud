@@ -15,6 +15,7 @@ import {
   PlaneGeometry,
   QuaternionKeyframeTrack,
   SphereGeometry,
+  Vector3,
   VectorKeyframeTrack,
 } from "three";
 import type { MeshRef, ModelInfo, ModelMaterial, ModelScene, SceneClip } from "$lib/api";
@@ -56,6 +57,29 @@ function missingMesh(): Object3D {
   const box = new LineSegments(new EdgesGeometry(new BoxGeometry(1, 1, 1)), new LineBasicMaterial({ color: MISSING_COLOR }));
   box.userData.missing = true;
   return box;
+}
+
+interface FbxTransform {
+  scale?: number[];
+  rotationPivot?: number[];
+  scalingPivot?: number[];
+  scalingOffset?: number[];
+}
+
+/**
+ * Unity bakes an FBX node's pivots into its mesh, so the mesh's origin is the
+ * rotation pivot; three.js keeps them in the node's transform instead. With
+ * FBX's T·Roff·Rp·R·Rp⁻¹·Soff·Sp·S·Sp⁻¹, the part Unity's transform doesn't
+ * carry is a translation of the geometry by (Soff + Sp − Rp) / S − Sp.
+ */
+export function pivotOffset(t: FbxTransform | undefined): Vector3 {
+  const at = (v: number[] | undefined, i: number) => v?.[i] ?? 0;
+  const out = new Vector3();
+  for (let i = 0; i < 3; i++) {
+    const s = at(t?.scale, i) || 1;
+    out.setComponent(i, (at(t?.scalingOffset, i) + at(t?.scalingPivot, i) - at(t?.rotationPivot, i)) / s - at(t?.scalingPivot, i));
+  }
+  return out;
 }
 
 /** The mesh a Unity reference means: by name from the importer table, else by hashed fileID. */
@@ -155,6 +179,7 @@ export async function assemblePrefab(scene: ModelScene, materials: ModelMaterial
     const fileScale = loaded.root.children[0]?.scale.x ?? 1;
     const mesh = new Mesh(src.geometry, pick(src.geometry.groups.length));
     mesh.scale.setScalar(fileScale);
+    mesh.position.copy(pivotOffset(src.userData.transformData)).multiplyScalar(fileScale);
     return mesh;
   };
 

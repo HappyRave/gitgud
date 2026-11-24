@@ -11,7 +11,7 @@ import {
 } from "three";
 import { describe, expect, it, vi } from "vitest";
 import type { ModelInfo, ModelMaterial, ModelNode, ModelScene } from "$lib/api";
-import { assemblePrefab, builtinGeometry } from "./prefab";
+import { assemblePrefab, builtinGeometry, pivotOffset } from "./prefab";
 import { unityFileId } from "./unityId";
 
 vi.mock("./load", async (orig) => ({
@@ -25,6 +25,7 @@ vi.mock("./load", async (orig) => ({
     const geo = new BufferGeometry();
     geo.setAttribute("position", new BufferAttribute(new Float32Array([0, 0, 0, 100, 0, 0, 0, 100, 0]), 3));
     const hull = Object.assign(new Mesh(geo), { name: "Hull_Mesh" });
+    hull.userData.transformData = { rotationPivot: [1, 2, 3], scalingPivot: [1, 2, 3] };
     file.add(hull);
     const wrapper = new Group();
     wrapper.add(file);
@@ -111,6 +112,7 @@ describe("assemblePrefab", () => {
     expect(hull.isMesh).toBe(true);
     expect((hull.material as MeshStandardMaterial).name).toBe("Red");
     expect(hull.scale.x).toBeCloseTo(0.01);
+    expect(hull.position.toArray().map((v) => +v.toFixed(4))).toEqual([-0.01, -0.02, -0.03]);
     const crate = skiff.getObjectByName("Crate")!;
     expect(crate.visible).toBe(false);
     expect((crate.children[0] as Mesh).geometry.type).toBe("BoxGeometry");
@@ -128,6 +130,16 @@ describe("assemblePrefab", () => {
     expect(bob.tracks.map((t) => t.name)).toEqual([`${skiff.getObjectByName("Hull")!.uuid}.position`]);
     expect(run.name).toBe("Run");
     expect(run.tracks[0].name).toBe("Hull_Mesh.position");
+  });
+
+  it("moves FBX geometry so its pivot is the origin, as Unity's import does", () => {
+    const round = (v: { toArray(): number[] }) => v.toArray().map((n) => +n.toFixed(3) + 0);
+    const crystal = [-15.447, 33.963, -34.239];
+    expect(round(pivotOffset({ rotationPivot: crystal, scalingPivot: crystal }))).toEqual([15.447, -33.963, 34.239]);
+    expect(round(pivotOffset({ scale: [2, 2, 2], scalingPivot: [4, 0, 0], scalingOffset: [2, 0, 0], rotationPivot: [0, 6, 0] }))).toEqual([
+      -1, -3, 0,
+    ]);
+    expect(round(pivotOffset(undefined))).toEqual([0, 0, 0]);
   });
 
   it("sizes Unity's primitives like Unity does", () => {
