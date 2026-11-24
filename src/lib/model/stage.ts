@@ -102,7 +102,11 @@ export class ModelStage {
         this.release(s);
       }
     }
-    this.sides = [before ? this.side(before) : null, this.side(after)];
+    const box = new Box3().setFromObject(after.root);
+    if (before) {
+      box.union(new Box3().setFromObject(before.root));
+    }
+    this.sides = [before ? this.side(before, box) : null, this.side(after, box)];
     this.comparison = before ? compare(before.root, after.root) : { status: new Map(), changes: [] };
     this.applyShading();
     this.frameAll();
@@ -275,11 +279,11 @@ export class ModelStage {
     }
   }
 
-  private side(model: LoadedModel): Side {
+  /** One version's scene; `box` spans both versions, so floor, grid and light match across sides. */
+  private side(model: LoadedModel, box: Box3): Side {
     const scene = new Scene();
     scene.environment = this.env;
     scene.environmentIntensity = 0.55;
-    const box = new Box3().setFromObject(model.root);
     const size = box.isEmpty() ? 1 : box.getSize(new Vector3()).length();
     const floorY = box.isEmpty() ? 0 : box.min.y;
     const hemi = new HemisphereLight("#ffffff", "#5a6070", 0.5);
