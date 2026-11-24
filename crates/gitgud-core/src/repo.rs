@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -18,7 +18,12 @@ pub struct Repo {
     root: PathBuf,
     /// Unity asset GUIDs -> paths, built on first use; see `unity_yaml::repo_guid_index`.
     pub(crate) guid_index: Mutex<Option<Arc<GuidIndex>>>,
+    /// GUIDs -> paths from the `.meta` files of recently read commit trees, newest last.
+    pub(crate) tree_guids: Mutex<Vec<(gix::ObjectId, TreeGuids)>>,
 }
+
+/// GUID -> asset path, from one tree's `.meta` files.
+pub(crate) type TreeGuids = Arc<HashMap<String, String>>;
 
 /// Opens the repository containing `path`, walking up from a subfolder.
 ///
@@ -35,6 +40,7 @@ pub fn open(path: impl AsRef<Path>) -> Result<Repo, Error> {
         inner: repo.into_sync(),
         root,
         guid_index: Mutex::new(None),
+        tree_guids: Mutex::new(Vec::new()),
     })
 }
 

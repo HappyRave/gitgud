@@ -15,8 +15,11 @@ pub(crate) struct Guids<'a> {
     pub files: &'a Files<'a>,
     index: Arc<GuidIndex>,
     prefix: String,
-    at_version: OnceCell<HashMap<String, String>>,
+    at_version: OnceCell<Arc<HashMap<String, String>>>,
 }
+
+/// How many commit trees' `.meta` scans a repo keeps.
+const KEPT_TREES: usize = 8;
 
 impl<'a> Guids<'a> {
     pub fn new(files: &'a Files<'a>) -> Self {
@@ -47,10 +50,35 @@ impl<'a> Guids<'a> {
             }
         }
         if self.at_version.get().is_none() {
-            let built = self.scan()?;
+            let built = self.at_version_guids()?;
             let _ = self.at_version.set(built);
         }
         Ok(self.at_version.get().and_then(|m| m.get(&guid)).cloned())
+    }
+
+    /// The version's `.meta` GUIDs; a commit's are kept on the repo, since its files never change.
+    fn at_version_guids(&self) -> Result<Arc<HashMap<String, String>>, Error> {
+        let Some(tree) = self.files.tree else {
+            return Ok(Arc::new(self.scan()?));
+        };
+        let cache = &self.files.repo.tree_guids;
+        if let Some((_, found)) = cache
+            .lock()
+            .expect("tree guids lock poisoned")
+            .iter()
+            .find(|(id, _)| *id == tree)
+        {
+            return Ok(found.clone());
+        }
+        let built = Arc::new(self.scan()?);
+        let mut kept = cache.lock().expect("tree guids lock poisoned");
+        if !kept.iter().any(|(id, _)| *id == tree) {
+            if kept.len() == KEPT_TREES {
+                kept.remove(0);
+            }
+            kept.push((tree, built.clone()));
+        }
+        Ok(built)
     }
 
     fn scan(&self) -> Result<HashMap<String, String>, Error> {
@@ -127,5 +155,44 @@ mod tests {
             Some("Game/Assets/Old/hull.png")
         );
         assert_eq!(g.path(B).unwrap(), None);
+    }
+
+    #[test]
+    fn keeps_a_commits_meta_scan_for_the_next_lookup() {
+        let repo = TestRepo::init();
+        repo.write("Assets/hull.png.meta", &format!("guid: {A}\n"))
+            .commit_all("one");
+        let head = repo.git(&["rev-parse", "HEAD"]).trim().to_owned();
+        let r = crate::repo::open(repo.path()).unwrap();
+        let scans = || {
+            r.tree_guids
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|(_, m)| m.clone())
+                .collect::<Vec<_>>()
+        };
+
+        let now = Version::Worktree;
+        let files = Files::new(&r, &now).unwrap();
+        assert_eq!(Guids::new(&files).path(B).unwrap(), None);
+        assert!(
+            scans().is_empty(),
+            "the working copy can change, so it isn't kept"
+        );
+
+        let at = Version::Commit(head);
+        let files = Files::new(&r, &at).unwrap();
+        assert_eq!(Guids::new(&files).path(B).unwrap(), None);
+        let first = scans();
+        assert_eq!(first.len(), 1);
+        let files = Files::new(&r, &Version::Head).unwrap();
+        assert_eq!(
+            Guids::new(&files).path(A).unwrap().as_deref(),
+            Some("Assets/hull.png")
+        );
+        let again = scans();
+        assert_eq!(again.len(), 1);
+        assert!(Arc::ptr_eq(&first[0], &again[0]));
     }
 }

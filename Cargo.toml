@@ -2,6 +2,11 @@
 members = ["crates/gitgud-core", "crates/gitgud-cli", "src-tauri"]
 resolver = "3"
 
+# Dependencies (gix, YAML, image decoding) run optimized in dev builds; our own crates stay
+# quick to rebuild and debuggable.
+[profile.dev.package."*"]
+opt-level = 2
+
 [profile.release]
 codegen-units = 1
 lto = true

@@ -12,13 +12,15 @@ pub(crate) struct Files<'a> {
     pub repo: &'a Repo,
     pub version: &'a Version,
     git: Option<&'a GitCli>,
+    /// The version's tree when it is a commit, so what is read from it can be cached.
+    pub tree: Option<gix::ObjectId>,
     paths: Vec<String>,
     by_name: HashMap<String, Vec<usize>>,
 }
 
 impl<'a> Files<'a> {
     pub fn new(repo: &'a Repo, version: &'a Version) -> Result<Self, Error> {
-        let paths = paths_at(repo, version)?;
+        let (paths, tree) = paths_at(repo, version)?;
         let mut by_name: HashMap<String, Vec<usize>> = HashMap::new();
         for (i, p) in paths.iter().enumerate() {
             by_name
@@ -30,6 +32,7 @@ impl<'a> Files<'a> {
             repo,
             version,
             git: None,
+            tree,
             paths,
             by_name,
         })
@@ -97,7 +100,7 @@ impl<'a> Files<'a> {
     }
 }
 
-fn paths_at(repo: &Repo, version: &Version) -> Result<Vec<String>, Error> {
+fn paths_at(repo: &Repo, version: &Version) -> Result<(Vec<String>, Option<gix::ObjectId>), Error> {
     let gix_repo = repo.gix();
     let commit = match version {
         Version::Commit(id) | Version::Parent(id) => {
@@ -107,7 +110,7 @@ fn paths_at(repo: &Repo, version: &Version) -> Result<Vec<String>, Error> {
             if matches!(version, Version::Parent(_)) {
                 match c.parent_ids().next() {
                     Some(p) => p.object().map_err(read_err)?.into_commit(),
-                    None => return Ok(Vec::new()),
+                    None => return Ok((Vec::new(), None)),
                 }
             } else {
                 c
@@ -115,7 +118,7 @@ fn paths_at(repo: &Repo, version: &Version) -> Result<Vec<String>, Error> {
         }
         Version::Head => match gix_repo.head_commit() {
             Ok(c) => c,
-            Err(_) => return Ok(Vec::new()),
+            Err(_) => return Ok((Vec::new(), None)),
         },
         Version::Index | Version::Worktree | Version::Yours | Version::Theirs => {
             let index = gix_repo.index_or_empty().map_err(read_err)?;
@@ -125,22 +128,20 @@ fn paths_at(repo: &Repo, version: &Version) -> Result<Vec<String>, Error> {
                 .map(|e| e.path(&index).to_string())
                 .collect();
             out.dedup();
-            return Ok(out);
+            return Ok((out, None));
         }
     };
+    let tree = commit.tree().map_err(read_err)?;
+    let id = tree.id;
     let mut rec = Recorder::default();
-    commit
-        .tree()
-        .map_err(read_err)?
-        .traverse()
-        .breadthfirst(&mut rec)
-        .map_err(read_err)?;
-    Ok(rec
+    tree.traverse().breadthfirst(&mut rec).map_err(read_err)?;
+    let paths = rec
         .records
         .into_iter()
         .filter(|e| e.mode.is_blob())
         .map(|e| e.filepath.to_string())
-        .collect())
+        .collect();
+    Ok((paths, Some(id)))
 }
 
 pub(crate) fn base_name(path: &str) -> &str {
