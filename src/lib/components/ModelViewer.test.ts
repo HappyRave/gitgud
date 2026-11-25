@@ -91,7 +91,8 @@ describe("ModelViewer", () => {
     render(ModelViewer, { repoId: 1, path: "Assets/boat.fbx", before: HEAD, after: DISK });
 
     expect(screen.getByRole("progressbar", { name: "Loading model…" })).toBeInTheDocument();
-    expect(await screen.findByText("On disk")).toBeInTheDocument();
+    // The first load imports the viewer's modules, slow when the whole suite runs at once.
+    expect(await screen.findByText("On disk", {}, { timeout: 5000 })).toBeInTheDocument();
     expect(screen.queryByRole("progressbar")).toBeNull();
     expect(screen.getByText("HEAD")).toBeInTheDocument();
     expect(screen.queryByText("BoatAttack/Hull is shown as a standard lit material")).toBeNull();

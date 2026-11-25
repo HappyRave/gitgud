@@ -127,6 +127,18 @@ describe("loadModel", () => {
     expect(model.clips).toEqual([]);
   });
 
+  it("reads only the geometry of a Unity mesh, in the worker pool", async () => {
+    serve({ "m://Room.unity?mesh=7": gltf });
+    const model = await loadModel({ kind: "asset", url: "m://Room.unity?mesh=7", refUrl: (r) => r, imageUrl: (p) => p, info: null, geometryOnly: true });
+    const mesh = model.root.getObjectByName("Tri") as Mesh;
+    expect(mesh.geometry.getAttribute("position").count).toBe(3);
+    expect((mesh.material as MeshBasicMaterial).name).toBe("");
+
+    const gone = loadModel({ kind: "asset", url: "m://Room.unity?mesh=8", refUrl: (r) => r, imageUrl: (p) => p, info: null, geometryOnly: true });
+    await expect(gone).rejects.toBeInstanceOf(ModelLoadError);
+    await expect(gone).rejects.toThrow("x.fbx is not in that version");
+  });
+
   it("reports the backend's reason when the file can't be served", async () => {
     serve({});
     const load = loadModel({ kind: "fbx", url: "m://x.fbx", refUrl: (r) => r, imageUrl: (p) => p, info: null });

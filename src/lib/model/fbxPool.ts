@@ -1,26 +1,43 @@
+import { ModelLoadError } from "./load";
 import type { PackedModel } from "./packFbx";
+import { type GeometryKind, readGeometry } from "./readGeometry";
 
-type Pending = { resolve: (p: PackedModel) => void; reject: (e: Error) => void };
+interface Job {
+  id: number;
+  url: string;
+  kind: GeometryKind;
+  resolve: (p: PackedModel) => void;
+  reject: (e: Error) => void;
+}
+
+/**
+ * Jobs one worker holds at a time: enough that it stays busy while the main thread is
+ * slow to hand out more, few enough that a scene's thousand files don't all hit the
+ * backend at once and come back out of the order asked (nearest the camera first).
+ */
+const PER_WORKER = 8;
 
 let workers: { worker: Worker; busy: number }[] | null = null;
-const pending = new Map<number, Pending>();
+const waiting: Job[] = [];
+const running = new Map<number, Job>();
 let next = 0;
 
 function pool() {
   if (!workers) {
-    const count = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 1));
+    const count = Math.max(1, Math.min(6, (navigator.hardwareConcurrency || 2) - 2));
     workers = Array.from({ length: count }, () => {
       const worker = new Worker(new URL("./fbx.worker.ts", import.meta.url), { type: "module" });
       const slot = { worker, busy: 0 };
       worker.onmessage = (e: MessageEvent<{ id: number; packed?: PackedModel; error?: string }>) => {
         slot.busy--;
-        const p = pending.get(e.data.id);
-        pending.delete(e.data.id);
+        const job = running.get(e.data.id);
+        running.delete(e.data.id);
         if (e.data.packed) {
-          p?.resolve(e.data.packed);
+          job?.resolve(e.data.packed);
         } else {
-          p?.reject(new Error(e.data.error ?? "the FBX worker failed"));
+          job?.reject(new ModelLoadError(e.data.error ?? "the model worker failed"));
         }
+        dispatch();
       };
       return slot;
     });
@@ -28,25 +45,32 @@ function pool() {
   return workers;
 }
 
-/**
- * Parses an FBX's geometry and clips on the least busy of a few workers, so a
- * scene's hundreds of meshes parse in parallel and off the main thread. Without
- * workers (tests), parses in place.
- */
-export async function parseFbxGeometry(bytes: ArrayBuffer): Promise<PackedModel> {
-  if (typeof Worker === "undefined") {
-    const [{ FBXLoader }, { packFbx }] = await Promise.all([import("./vendor/FBXLoader.js"), import("./packFbx")]);
-    const loader = new FBXLoader() as InstanceType<typeof FBXLoader> & { geometryOnly: boolean };
-    loader.geometryOnly = true;
-    const group = loader.parse(bytes, "");
-    const units = (group.userData.unitScaleFactor as number | undefined) ?? 1;
-    return packFbx(group, units / 100, group.animations).packed;
+/** Hands waiting jobs, oldest first, to workers with room. */
+function dispatch() {
+  for (const slot of pool()) {
+    while (slot.busy < PER_WORKER && waiting.length > 0) {
+      const job = waiting.shift()!;
+      slot.busy++;
+      running.set(job.id, job);
+      slot.worker.postMessage({ id: job.id, url: job.url, kind: job.kind });
+    }
   }
-  const slot = pool().reduce((a, b) => (b.busy < a.busy ? b : a));
-  const id = next++;
-  slot.busy++;
+}
+
+/**
+ * Fetches and parses a model file's geometry and clips in a few workers, off the main
+ * thread, in the order asked. Without workers (tests), does it in place.
+ */
+export async function loadGeometry(url: string, kind: GeometryKind): Promise<PackedModel> {
+  if (typeof Worker === "undefined") {
+    const res = await fetch(url);
+    if (!res.ok) {
+      throw new ModelLoadError((await res.text()) || `${res.status} ${res.statusText}`);
+    }
+    return (await readGeometry(await res.arrayBuffer(), kind)).packed;
+  }
   return new Promise((resolve, reject) => {
-    pending.set(id, { resolve, reject });
-    slot.worker.postMessage({ id, bytes }, [bytes]);
+    waiting.push({ id: next++, url, kind, resolve, reject });
+    dispatch();
   });
 }

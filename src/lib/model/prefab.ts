@@ -176,7 +176,15 @@ export function buildPrefab(scene: ModelScene, materials: ModelMaterial[], ctx: 
     const key = `${path}#${id}`;
     let p = models.get(key);
     if (!p) {
-      p = loadModel({ kind: "asset", url: ctx.meshUrl(path, id), refUrl: () => "", imageUrl: ctx.imageUrl, info: null, loadTexture });
+      p = loadModel({
+        kind: "asset",
+        url: ctx.meshUrl(path, id),
+        refUrl: () => "",
+        imageUrl: ctx.imageUrl,
+        info: null,
+        loadTexture,
+        geometryOnly: true,
+      });
       models.set(key, p);
     }
     return p;
@@ -291,23 +299,27 @@ export function buildPrefab(scene: ModelScene, materials: ModelMaterial[], ctx: 
   }
 
   let loading: Promise<LoadedModel> | null = null;
-  const load = () =>
-    (loading ??= Promise.all(
-      order.map(async (i) => {
-        const n = scene.nodes[i];
-        const body = await drawn(n.mesh!, n.materials);
-        objects[i].remove(dots.get(i)!);
-        if (body) {
-          body.name = n.name;
-          objects[i].add(body);
-          ctx.onPiece?.(body);
-        }
-      }),
-    ).then(async () => {
+  const load = () => {
+    if (loading) {
+      return loading;
+    }
+    const pieces = order.map(async (i) => {
+      const n = scene.nodes[i];
+      const body = await drawn(n.mesh!, n.materials);
+      objects[i].remove(dots.get(i)!);
+      if (body) {
+        body.name = n.name;
+        objects[i].add(body);
+        ctx.onPiece?.(body);
+      }
+    });
+    // Clips from model files load alongside the meshes, not one after another once they're in.
+    const read = scene.clips.map((c) => sceneClip(c, objects[c.node], model));
+    loading = Promise.all(pieces).then(async () => {
       const clips: AnimationClip[] = [];
       const clipRoots = new Map<AnimationClip, Object3D>();
-      for (const c of scene.clips) {
-        const clip = await sceneClip(c, objects[c.node], model);
+      for (const [k, clip] of (await Promise.all(read)).entries()) {
+        const c = scene.clips[k];
         if (clip instanceof AnimationClip) {
           clips.push(clip);
           clipRoots.set(clip, objects[c.node]);
@@ -319,7 +331,9 @@ export function buildPrefab(scene: ModelScene, materials: ModelMaterial[], ctx: 
       ctx.progress?.("textures")({ phase: "done" });
       Object.assign(building, { clips, clipRoots, approximated: [...approximated], missing });
       return building;
-    }));
+    });
+    return loading;
+  };
 
   const building: BuildingModel = { root, clips: [], approximated: [], missing: [], clipRoots: new Map(), load };
   return building;

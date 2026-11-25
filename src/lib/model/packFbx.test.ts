@@ -1,6 +1,6 @@
 import { AnimationClip, BufferAttribute, BufferGeometry, Group, Mesh, VectorKeyframeTrack } from "three";
 import { describe, expect, it } from "vitest";
-import { parseFbxGeometry } from "./fbxPool";
+import { readGeometry } from "./readGeometry";
 import { packFbx, unpackFbx } from "./packFbx";
 
 const tri = (name: string) => {
@@ -67,8 +67,27 @@ Connections:  {
 	C: "OO",100,300
 }
 `;
-    const packed = await parseFbxGeometry(new TextEncoder().encode(fbx).buffer);
+    const { packed } = await readGeometry(new TextEncoder().encode(fbx).buffer, "fbx");
     expect(packed.meshes.map((m) => m.name)).toEqual(["Tri"]);
     expect(packed.scale).toBeCloseTo(0.01);
+  });
+
+  it("reads the GLB the backend makes of a Unity mesh", async () => {
+    const positions = Buffer.from(new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]).buffer).toString("base64");
+    const gltf = JSON.stringify({
+      asset: { version: "2.0" },
+      scene: 0,
+      scenes: [{ nodes: [0] }],
+      nodes: [{ name: "Wall", mesh: 0 }],
+      meshes: [{ name: "Wall", primitives: [{ attributes: { POSITION: 0 } }] }],
+      buffers: [{ byteLength: 36, uri: `data:application/octet-stream;base64,${positions}` }],
+      bufferViews: [{ buffer: 0, byteLength: 36 }],
+      accessors: [{ bufferView: 0, componentType: 5126, count: 3, type: "VEC3", min: [0, 0, 0], max: [1, 1, 0] }],
+    });
+    const { packed, transfer } = await readGeometry(await new Response(gltf).arrayBuffer(), "glb");
+    expect(packed.scale).toBe(1);
+    expect(packed.meshes).toHaveLength(1);
+    expect(packed.meshes[0].attributes.map((a) => a.name)).toEqual(["position"]);
+    expect(transfer.length).toBeGreaterThan(0);
   });
 });

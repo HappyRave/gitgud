@@ -140,15 +140,16 @@ function remap(root: Object3D, src: LoadSource, approximated: Set<string>, load:
 export async function loadModel(src: LoadSource): Promise<LoadedModel> {
   const report = src.onProgress ?? (() => {});
   const approximated = new Set<string>();
-  const bytes = await fetchBytes(src.url, src.name ?? "model", report);
-  if (src.kind === "fbx" && src.geometryOnly) {
-    report({ phase: "parse" });
-    const { parseFbxGeometry } = await import("./fbxPool");
-    const { unpackFbx } = await import("./packFbx");
-    const model = unpackFbx(await parseFbxGeometry(bytes.buffer as ArrayBuffer), src.info?.scale ?? 1);
+  const workerKind = !src.geometryOnly ? null : src.kind === "fbx" ? "fbx" : src.kind === "glb" || src.kind === "asset" ? "glb" : null;
+  if (workerKind) {
+    // Fetched and parsed in a worker: the main thread only gets the finished buffers.
+    report({ phase: "request", name: src.name ?? "model" });
+    const [{ loadGeometry }, { unpackFbx }] = await Promise.all([import("./fbxPool"), import("./packFbx")]);
+    const model = unpackFbx(await loadGeometry(src.url, workerKind), workerKind === "fbx" ? (src.info?.scale ?? 1) : 1);
     report({ phase: "done" });
     return model;
   }
+  const bytes = await fetchBytes(src.url, src.name ?? "model", report);
   const files = new TrackedFiles(src.refUrl, report);
   const manager = files.manager;
   const text = () => new TextDecoder().decode(bytes);
