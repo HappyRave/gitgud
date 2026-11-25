@@ -130,7 +130,9 @@ fn hanging_remote(local: &TestRepo) -> std::path::PathBuf {
     pids
 }
 
-fn wait_for(path: &Path, lines: usize) -> Vec<String> {
+/// Waits for the hanging remote's PIDs; on timeout calls `stop` first, so the
+/// test's scope can join the fetch instead of hanging on it.
+fn wait_for(path: &Path, lines: usize, stop: impl Fn()) -> Vec<String> {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         let found: Vec<String> = std::fs::read_to_string(path)
@@ -142,10 +144,10 @@ fn wait_for(path: &Path, lines: usize) -> Vec<String> {
         if found.len() >= lines {
             return found;
         }
-        assert!(
-            Instant::now() < deadline,
-            "the hanging remote never started"
-        );
+        if Instant::now() >= deadline {
+            stop();
+            panic!("the hanging remote never started");
+        }
         std::thread::sleep(Duration::from_millis(50));
     }
 }
@@ -160,7 +162,7 @@ fn cancel_kills_git_and_everything_it_started() {
 
     let result = std::thread::scope(|s| {
         let running = s.spawn(|| r.fetch(&cli(), &mut |_| {}, &cancel));
-        let pids = wait_for(&pids_file, 2);
+        let pids = wait_for(&pids_file, 2, || cancel.cancel());
         assert!(
             pids.iter().all(|p| alive(p)),
             "helpers are running: {pids:?}"
@@ -225,7 +227,9 @@ fn session_refuses_a_second_fetch_while_one_runs() {
 
     std::thread::scope(|s| {
         let running = s.spawn(|| session.fetch(id, |_| {}));
-        wait_for(&pids_file, 2);
+        wait_for(&pids_file, 2, || {
+            session.cancel(id);
+        });
         let second = session.fetch(id, |_| {});
         assert!(matches!(second, Err(Error::Refused(_))), "{second:?}");
         assert!(session.cancel(id));
