@@ -57,7 +57,16 @@ fn read(session: &Session, uri: &str) -> Result<(Vec<u8>, &'static str), (Status
         _ => return Err(bad("unknown version")),
     };
     let max = param("max").and_then(|m| m.parse::<u32>().ok());
+    let bc = param("gpu").as_deref() == Some("bc");
     match url.path() {
+        "/model" if param("meshes").is_some() => {
+            let ids = param("meshes").unwrap_or_default();
+            let ids: Vec<&str> = ids.split(',').filter(|s| !s.is_empty()).collect();
+            let bytes = session
+                .inline_meshes(repo, &path, &version, &ids)
+                .map_err(fail)?;
+            Ok((bytes, "application/octet-stream"))
+        }
         "/model" if param("mesh").is_some() => {
             let mesh = param("mesh").unwrap_or_default();
             let bytes = session
@@ -84,7 +93,7 @@ fn read(session: &Session, uri: &str) -> Result<(Vec<u8>, &'static str), (Status
             let bytes = session
                 .model_ref_bytes(repo, &path, &reference, &version)
                 .map_err(fail)?;
-            shrunk(session, repo, bytes, mime, max)
+            shrunk(session, repo, bytes, mime, max, bc)
         }
         _ => {
             let mime = image_type(&path).ok_or_else(|| bad("not an image"))?;
@@ -92,22 +101,31 @@ fn read(session: &Session, uri: &str) -> Result<(Vec<u8>, &'static str), (Status
             let bytes = session
                 .image_bytes(repo, &path, &version, auto_fetch)
                 .map_err(fail)?;
-            shrunk(session, repo, bytes, mime, max)
+            shrunk(session, repo, bytes, mime, max, bc)
         }
     }
 }
 
-/// With `max=<px>` (3D previews), an image bigger than that comes back shrunk, as PNG.
+/// With `max=<px>` (3D previews), an image bigger than that comes back shrunk, as PNG;
+/// with `gpu=bc` too, GPU-compressed as DDS when it can be.
 fn shrunk(
     session: &Session,
     repo: u32,
     bytes: Vec<u8>,
     mime: &'static str,
     max: Option<u32>,
+    bc: bool,
 ) -> Result<(Vec<u8>, &'static str), (StatusCode, String)> {
     let Some(max) = max else {
         return Ok((bytes, mime));
     };
+    if bc
+        && let Some(dds) = session
+            .compressed_texture(repo, &bytes, max)
+            .map_err(fail)?
+    {
+        return Ok((dds, "image/vnd-ms.dds"));
+    }
     Ok(
         match session.shrink_texture(repo, &bytes, max).map_err(fail)? {
             Some(small) => (small, "image/png"),
@@ -240,6 +258,61 @@ mod tests {
     }
 
     #[test]
+    fn serves_several_inline_meshes_in_one_answer() {
+        let repo = TestRepo::init();
+        repo.write(
+            "Assets/Room.unity",
+            "%YAML 1.1\n--- !u!1 &1\nGameObject:\n  m_Name: A\n",
+        )
+        .commit_all("one");
+        let session = Session::default();
+        let id = session.open(repo.path()).unwrap().id;
+        let r = respond(
+            &session,
+            &format!(
+                "http://gitgud.localhost/model?repo={id}&path=Assets%2FRoom.unity&at=head&meshes=7,-8"
+            ),
+        );
+        assert_eq!(r.status(), StatusCode::OK);
+        let b = r.body();
+        let mut at = 0;
+        let mut entries = Vec::new();
+        while at < b.len() {
+            let ok = b[at];
+            at += 1;
+            let mut field = || {
+                let len = u32::from_le_bytes(b[at..at + 4].try_into().unwrap()) as usize;
+                at += 4 + len;
+                String::from_utf8_lossy(&b[at - len..at]).into_owned()
+            };
+            let mesh = field();
+            entries.push((ok, mesh, field()));
+        }
+        assert_eq!(
+            entries,
+            [
+                (
+                    0,
+                    "7".to_owned(),
+                    "Assets/Room.unity has no Mesh &7".to_owned()
+                ),
+                (
+                    0,
+                    "-8".to_owned(),
+                    "Assets/Room.unity has no Mesh &-8".to_owned()
+                ),
+            ]
+        );
+        let gone = respond(
+            &session,
+            &format!(
+                "http://gitgud.localhost/model?repo={id}&path=Assets%2FGone.unity&at=head&meshes=7"
+            ),
+        );
+        assert_eq!(gone.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[test]
     fn decodes_paths_and_reports_what_is_wrong() {
         let repo = TestRepo::init();
         std::fs::create_dir_all(repo.path().join("a b")).unwrap();
@@ -305,6 +378,16 @@ mod tests {
         assert_eq!(small.headers()[header::CONTENT_TYPE], "image/png");
         let back = image::load_from_memory(small.body()).unwrap();
         assert_eq!((back.width(), back.height()), (1024, 512));
+
+        let bc = get("&max=1024&gpu=bc");
+        assert_eq!(bc.headers()[header::CONTENT_TYPE], "image/vnd-ms.dds");
+        assert_eq!(&bc.body()[0..4], b"DDS ");
+        let ignored = get("&gpu=bc");
+        assert_eq!(
+            ignored.body(),
+            png.get_ref(),
+            "only 3D previews (max) are compressed"
+        );
     }
 
     #[test]

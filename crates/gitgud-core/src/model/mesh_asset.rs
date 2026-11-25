@@ -1,9 +1,38 @@
+use std::collections::HashMap;
+use std::ops::Range;
+
 use serde_json::json;
 
 use super::yaml::{docs, num, scalar};
 use crate::repo::Error;
 
 pub(crate) const MESH_CLASS: u32 = 43;
+
+/// Where each Mesh document of Unity YAML `text` is, by `fileID`.
+pub(crate) fn mesh_documents(text: &str) -> HashMap<String, Range<usize>> {
+    let starts: Vec<usize> = text
+        .starts_with("--- !u!")
+        .then_some(0)
+        .into_iter()
+        .chain(text.match_indices("\n--- !u!").map(|(i, _)| i + 1))
+        .collect();
+    let mut meshes = HashMap::new();
+    for (k, &start) in starts.iter().enumerate() {
+        let end = starts.get(k + 1).copied().unwrap_or(text.len());
+        let line = text[start..end].lines().next().unwrap_or_default();
+        if let Some((MESH_CLASS, id, _)) = crate::unity_yaml::parse_doc_header(line) {
+            meshes.entry(id).or_insert(start..end);
+        }
+    }
+    meshes
+}
+
+/// A name for a Mesh document's content, the same wherever the same mesh is stored:
+/// its text without the header line (which holds the `fileID`).
+pub(crate) fn mesh_key(doc: &str) -> String {
+    let body = doc.split_once('\n').map_or("", |(_, b)| b);
+    format!("{:016x}", xxhash_rust::xxh64::xxh64(body.as_bytes(), 0))
+}
 const POSITION: usize = 0;
 const NORMAL: usize = 1;
 const TEXCOORD0: usize = 4;

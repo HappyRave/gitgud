@@ -1,3 +1,4 @@
+import { supportsBc } from "$lib/model/gpuFormats";
 import { formatKey, type ViewMode, viewModes } from "$lib/viewers/route";
 
 const SPLIT_KEY = "gitgud.diff.split";
@@ -198,9 +199,15 @@ export function setTextureMax(max: TextureMax) {
   writeStorage(TEXTURE_MAX_KEY, String(prefs.textureMax));
 }
 
-/** `url` of a texture for a 3D preview, asking the backend to shrink it per the setting. */
+/**
+ * `url` of a texture for a 3D preview, asking the backend to shrink it per the setting,
+ * and to GPU-compress it when the GPU takes that.
+ */
 export function previewTexture(url: string): string {
-  return prefs.textureMax ? `${url}&max=${prefs.textureMax}` : url;
+  if (!prefs.textureMax) {
+    return url;
+  }
+  return `${url}&max=${prefs.textureMax}${supportsBc() ? "&gpu=bc" : ""}`;
 }
 
 export function setAuto3dLimit(limit: number) {

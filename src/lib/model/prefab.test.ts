@@ -12,7 +12,7 @@ import {
 } from "three";
 import { describe, expect, it, vi } from "vitest";
 import type { ModelInfo, ModelMaterial, ModelNode, ModelScene } from "$lib/api";
-import { loadModel } from "./load";
+import { loadMeshBundle } from "./fbxPool";
 import { assemblePrefab, buildPrefab, builtinGeometry, pivotOffset } from "./prefab";
 import { unityFileId } from "./unityId";
 
@@ -33,6 +33,32 @@ vi.mock("./load", async (orig) => ({
     wrapper.add(file);
     const take = new AnimationClip("Take 001", 1, [new VectorKeyframeTrack("Hull_Mesh.position", [0, 1], [0, 0, 0, 1, 0, 0])]);
     return { root: wrapper, clips: [take], approximated: [], missing: [] };
+  }),
+}));
+
+vi.mock("./fbxPool", () => ({
+  loadMeshBundle: vi.fn(async (url: string) => {
+    const [path, ids] = url.slice("m://".length).split("?meshes=");
+    if (path.includes("gone")) {
+      throw new Error(`${path} is not in that version`);
+    }
+    return ids.split(",").map((id) => ({
+      id,
+      packed: {
+        scale: 1,
+        clips: [],
+        meshes: [
+          {
+            name: "Mesh",
+            originalName: null,
+            transformData: null,
+            attributes: [{ name: "position", array: new Float32Array(9), itemSize: 3, normalized: false }],
+            index: null,
+            groups: [],
+          },
+        ],
+      },
+    }));
   }),
 }));
 
@@ -73,7 +99,7 @@ const node = (name: string, over: Partial<ModelNode> = {}): ModelNode => ({
 
 const ctx = {
   modelUrl: (p: string) => `m://${p}`,
-  meshUrl: (p: string, id: string) => `m://${p}?mesh=${id}`,
+  meshesUrl: (p: string, ids: string[]) => `m://${p}?meshes=${ids.join(",")}`,
   refUrl: () => (r: string) => r,
   imageUrl: (p: string) => p,
   info: async (): Promise<ModelInfo> => ({ kind: "fbx", key: null, materials: [], remaps: {}, scale: 1, scene: null, fromDisk: 0 }),
@@ -84,31 +110,44 @@ describe("buildPrefab", () => {
   it("shows dots at once, loads on request nearest the camera first, and swaps each dot for its mesh", async () => {
     const scene: ModelScene = {
       nodes: [
-        node("Far", { position: [-10, 0, -10], mesh: { type: "inline", path: "Assets/Room.unity", id: "1" } }),
-        node("Near", { position: [10, 0, 10], mesh: { type: "inline", path: "Assets/Room.unity", id: "2" } }),
+        node("Far", { position: [-10, 0, -10], mesh: { type: "inline", path: "Assets/Room.unity", id: "1", key: "far" } }),
+        node("Near", { position: [10, 0, 10], mesh: { type: "inline", path: "Assets/Room.unity", id: "2", key: "near" } }),
         node("Empty", { position: [0, 5, 0] }),
       ],
       missing: [],
       clips: [],
     };
-    vi.mocked(loadModel).mockClear();
+    vi.mocked(loadMeshBundle).mockClear();
     const pieces: string[] = [];
     const built = buildPrefab(scene, [], { ...ctx, onPiece: (o) => pieces.push(o.name) });
 
     const dots = (name: string) => built.root.getObjectByName(name)!.children.filter((c) => c.userData.placeholder).length;
     expect([dots("Far"), dots("Near"), dots("Empty")]).toEqual([1, 1, 0]);
-    expect(loadModel).not.toHaveBeenCalled();
+    await new Promise((r) => setTimeout(r, 5));
+    expect(loadMeshBundle).not.toHaveBeenCalled();
 
     const loading = built.load();
     expect(built.load()).toBe(loading);
-    expect(vi.mocked(loadModel).mock.calls.map(([src]) => src.url)).toEqual([
-      "m://Assets/Room.unity?mesh=2",
-      "m://Assets/Room.unity?mesh=1",
-    ]);
     expect(await loading).toBe(built);
+    expect(vi.mocked(loadMeshBundle).mock.calls.map(([url]) => url)).toEqual(["m://Assets/Room.unity?meshes=2,1"]);
     expect([dots("Far"), dots("Near")]).toEqual([0, 0]);
     expect(pieces.sort()).toEqual(["Far", "Near"]);
     expect((built.root.getObjectByName("Near")!.children[0] as Mesh).isMesh).toBe(true);
+
+    // The other side of a compare: the same contents under other fileIDs come from the first.
+    const other = buildPrefab(
+      {
+        ...scene,
+        nodes: [
+          node("Near", { position: [10, 0, 10], mesh: { type: "inline", path: "Assets/Room.unity", id: "20", key: "near" } }),
+          node("New", { mesh: { type: "inline", path: "Assets/Room.unity", id: "30", key: "new" } }),
+        ],
+      },
+      [],
+      ctx,
+    );
+    await other.load();
+    expect(vi.mocked(loadMeshBundle).mock.calls.map(([url]) => url).slice(1)).toEqual(["m://Assets/Room.unity?meshes=30"]);
   });
 });
 
@@ -141,14 +180,12 @@ describe("assemblePrefab", () => {
   });
 
   it("draws meshes stored inside the scene, loading each one once", async () => {
-    const { loadModel } = await import("./load");
-    const calls = () => vi.mocked(loadModel).mock.calls.filter(([s]) => s.url.includes("mesh=")).map(([s]) => s.url);
-    const before = calls().length;
+    vi.mocked(loadMeshBundle).mockClear();
     const scene: ModelScene = {
       nodes: [
-        node("Wall_A", { mesh: { type: "inline", path: "Assets/Room.unity", id: "1234" }, materials: [0] }),
-        node("Wall_B", { mesh: { type: "inline", path: "Assets/Room.unity", id: "1234" }, materials: [0] }),
-        node("Floor", { mesh: { type: "inline", path: "Assets/gone.unity", id: "9" } }),
+        node("Wall_A", { mesh: { type: "inline", path: "Assets/Room.unity", id: "1234", key: "wall" }, materials: [0] }),
+        node("Wall_B", { mesh: { type: "inline", path: "Assets/Room.unity", id: "1234", key: "wall" }, materials: [0] }),
+        node("Floor", { mesh: { type: "inline", path: "Assets/gone.unity", id: "9", key: "floor" } }),
       ],
       missing: [],
       clips: [],
@@ -157,8 +194,11 @@ describe("assemblePrefab", () => {
     const wall = model.root.getObjectByName("Wall_A")!.children[0] as Mesh;
     expect(wall.isMesh).toBe(true);
     expect((wall.material as MeshStandardMaterial).name).toBe("Wall");
-    expect(calls().slice(before)).toEqual(["m://Assets/Room.unity?mesh=1234", "m://Assets/gone.unity?mesh=9"]);
-    expect(model.missing).toEqual(["Assets/gone.unity › Mesh &9: Assets/gone.fbx is not in that version"]);
+    expect(vi.mocked(loadMeshBundle).mock.calls.map(([url]) => url).sort()).toEqual([
+      "m://Assets/Room.unity?meshes=1234",
+      "m://Assets/gone.unity?meshes=9",
+    ]);
+    expect(model.missing).toEqual(["Assets/gone.unity › Mesh &9: Assets/gone.unity is not in that version"]);
   });
 
   it("builds the hierarchy with FBX meshes, primitives and Unity materials", async () => {

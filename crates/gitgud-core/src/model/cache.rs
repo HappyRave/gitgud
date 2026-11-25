@@ -80,6 +80,7 @@ mod tests {
             scale,
             scene: None,
             from_disk: 0,
+            models: BTreeMap::new(),
         })
     }
 

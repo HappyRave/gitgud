@@ -59,23 +59,36 @@ const SHRUNK_BUDGET: usize = 256 * 1024 * 1024;
 /// `None` when it is already small enough or can't be decoded, so the original is used.
 #[must_use]
 pub fn shrink_image(bytes: &[u8], max: u32) -> Option<Vec<u8>> {
-    shrink_through(bytes, max, None)
+    prepare_through(bytes, max, Prepared::Png, None)
 }
 
-/// [`shrink_image`], with `disk` checked after memory and kept up to date.
-fn shrink_through(
+/// What a 3D preview texture is turned into.
+#[derive(Clone, Copy)]
+enum Prepared {
+    /// Shrunk, as PNG ([`shrink_image`]).
+    Png,
+    /// GPU-compressed, as DDS ([`crate::gpu_texture::bc_dds`]).
+    Bc,
+}
+
+/// Prepares a texture as `kind`, through the memory cache, then `disk`, kept up to date.
+fn prepare_through(
     bytes: &[u8],
     max: u32,
+    kind: Prepared,
     disk: Option<&crate::disk_cache::DiskCache>,
 ) -> Option<Vec<u8>> {
-    let key = xxhash_rust::xxh64::xxh64(bytes, u64::from(max));
+    let key = xxhash_rust::xxh64::xxh64(bytes, u64::from(max) | ((kind as u64) << 32));
     if let Some(hit) = SHRUNK.lock().expect("shrunk lock poisoned").1.get(&key) {
         return hit.clone();
     }
     let out = match disk.and_then(|d| d.texture(key)) {
         Some(hit) => hit,
         None => {
-            let out = shrink_uncached(bytes, max);
+            let out = match kind {
+                Prepared::Png => shrink_uncached(bytes, max),
+                Prepared::Bc => crate::gpu_texture::bc_dds(bytes, max),
+            };
             if let Some(d) = disk {
                 d.put_texture(key, out.as_deref());
             }
@@ -129,7 +142,15 @@ impl Repo {
     /// work after a restart.
     #[must_use]
     pub fn shrink_texture(&self, bytes: &[u8], max: u32) -> Option<Vec<u8>> {
-        shrink_through(bytes, max, Some(&crate::disk_cache::DiskCache::new(self)))
+        let disk = crate::disk_cache::DiskCache::new(self);
+        prepare_through(bytes, max, Prepared::Png, Some(&disk))
+    }
+
+    /// [`crate::gpu_texture::bc_dds`], kept in memory and in the repo's disk cache.
+    #[must_use]
+    pub fn compressed_texture(&self, bytes: &[u8], max: u32) -> Option<Vec<u8>> {
+        let disk = crate::disk_cache::DiskCache::new(self);
+        prepare_through(bytes, max, Prepared::Bc, Some(&disk))
     }
 
     /// The bytes of image `path` at `version`; an LFS pointer is swapped for its

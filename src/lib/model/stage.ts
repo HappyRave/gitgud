@@ -26,6 +26,7 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { type Comparison, compare, type Status } from "./compare";
 import type { LoadedModel } from "./load";
+import { type Instanced, instance } from "./instancing";
 import { ShadingKit, textureEvents } from "./materials";
 import { FOV, framingCamera } from "./view";
 
@@ -42,6 +43,8 @@ interface Side {
   /** Lights, floor and grid, sized to the models. */
   rig: Group;
   helpers: Group;
+  /** The unchanged static meshes drawn instanced, once the model is complete. */
+  instanced: Instanced | null;
   model: LoadedModel;
   mixer: AnimationMixer;
 }
@@ -85,6 +88,8 @@ export class ModelStage {
   private last = 0;
   private active = true;
   private compiling: Promise<void> | null = null;
+  /** The models finished loading (`refresh`), so their static meshes can be instanced. */
+  private complete = false;
   /** Pieces of a loading model arrived since the last frame. */
   private trickled = false;
   /** The models changed or moved since the shadow maps were drawn. */
@@ -130,6 +135,7 @@ export class ModelStage {
       box.union(new Box3().setFromObject(before.root));
     }
     this.sides = [before ? this.side(before, box) : null, this.side(after, box)];
+    this.complete = false;
     this.comparison = before ? compare(before.root, after.root) : { status: new Map(), changes: [] };
     this.applyShading();
     this.frameAll();
@@ -173,6 +179,7 @@ export class ModelStage {
       }
     }
     this.comparison = before ? compare(before.model.root, after.model.root) : { status: new Map(), changes: [] };
+    this.complete = true;
     this.applyShading();
     const keep = this.clips().some((c) => c.name === this.clip);
     this.setClip(keep ? this.clip : (this.clips()[0]?.name ?? null));
@@ -354,6 +361,7 @@ export class ModelStage {
   /** Frees a side's GPU resources; the shading kit's materials and what the model cache holds stay. */
   private release(side: Side) {
     side.mixer.stopAllAction();
+    side.instanced?.undo();
     const textures = new Set<{ dispose(): void }>();
     side.scene.traverse((o) => {
       const mesh = o as Mesh;
@@ -383,7 +391,7 @@ export class ModelStage {
     const scene = new Scene();
     scene.environment = this.env;
     scene.environmentIntensity = 0.55;
-    const side: Side = { scene, rig: new Group(), helpers: new Group(), model, mixer: new AnimationMixer(model.root) };
+    const side: Side = { scene, rig: new Group(), helpers: new Group(), instanced: null, model, mixer: new AnimationMixer(model.root) };
     scene.add(side.rig, model.root);
     this.fit(side, box);
     return side;
@@ -437,7 +445,35 @@ export class ModelStage {
         mesh.material = this.shading === "textured" || o.userData.missing ? o.userData.lit : this.kit.clay(status);
       });
     }
+    this.reinstance();
     this.dirty = true;
+  }
+
+  /**
+   * Draws each complete side's unchanged, unanimated meshes instanced, with the
+   * materials they show now: thousands of draw calls become one per kind of mesh.
+   */
+  private reinstance() {
+    for (const s of this.sides) {
+      if (!s) {
+        continue;
+      }
+      s.instanced?.undo();
+      s.instanced = null;
+      if (!this.complete) {
+        continue;
+      }
+      const animated = new Set<Object3D>();
+      for (const root of s.model.clipRoots?.values() ?? []) {
+        root.traverse((o) => animated.add(o));
+      }
+      s.instanced = instance(
+        s.model.root,
+        (m) => !animated.has(m) && !m.userData.missing && (this.comparison.status.get(m) ?? "same") === "same",
+      );
+      s.scene.add(s.instanced.group);
+    }
+    this.shadowsStale = true;
   }
 
   private loop(now: number) {
@@ -500,7 +536,15 @@ export class ModelStage {
         hidden.push(o);
       }
     });
+    // Instanced meshes are all unchanged ones.
+    const instanced = side.instanced?.group;
+    if (instanced) {
+      instanced.visible = false;
+    }
     this.overlay(side, this.kit.ghostWire);
+    if (instanced) {
+      instanced.visible = true;
+    }
     for (const o of hidden) {
       o.visible = true;
     }

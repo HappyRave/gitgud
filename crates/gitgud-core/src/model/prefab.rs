@@ -5,6 +5,7 @@ use yaml_rust2::Yaml;
 
 use super::guids::Guids;
 use super::material::Material;
+use super::mesh_asset;
 use super::meta::Meta;
 use super::tree::base_name;
 use super::yaml::{Doc, ObjRef, docs_reading, num, obj_ref, quat, scalar, vec3};
@@ -43,6 +44,8 @@ const READ: [u32; 9] = [
 struct Local<'d> {
     path: &'d str,
     docs: &'d HashMap<i64, &'d Doc>,
+    /// Content keys of the file's Mesh documents, by `fileID`.
+    mesh_keys: HashMap<String, String>,
 }
 
 /// The mesh a node draws.
@@ -62,8 +65,13 @@ pub enum MeshRef {
     /// One of Unity's built-in primitives: Cube, Sphere, Capsule, Cylinder, Plane, Quad.
     Builtin { name: String },
     /// A Mesh stored inside the scene or prefab file itself (ProBuilder, combined
-    /// meshes), served as GLB by its `fileID`.
-    Inline { path: String, id: String },
+    /// meshes), served as GLB by its `fileID`; `key` names its content, the same in
+    /// every version that has the same mesh.
+    Inline {
+        path: String,
+        id: String,
+        key: String,
+    },
     /// The referenced mesh isn't in this version.
     Missing,
 }
@@ -190,7 +198,19 @@ impl<'a, 'g> PrefabBuilder<'a, 'g> {
     fn tree(&mut self, path: &str, text: &str, depth: usize) -> Result<Tree, Error> {
         let docs = docs_reading(text, |class, stripped| stripped || READ.contains(&class));
         let by_id: HashMap<i64, &Doc> = docs.iter().map(|d| (id(&d.file_id), d)).collect();
-        let local = Local { path, docs: &by_id };
+        let mesh_keys = if docs.iter().any(|d| d.class_id == MESH) {
+            mesh_asset::mesh_documents(text)
+                .into_iter()
+                .map(|(id, range)| (id, mesh_asset::mesh_key(&text[range])))
+                .collect()
+        } else {
+            HashMap::new()
+        };
+        let local = Local {
+            path,
+            docs: &by_id,
+            mesh_keys,
+        };
         let mut tree = Tree { nodes: Vec::new() };
 
         for d in docs
@@ -571,8 +591,15 @@ impl<'a, 'g> PrefabBuilder<'a, 'g> {
                 .get(&id(&r.file_id))
                 .is_some_and(|d| d.class_id == MESH)
         {
+            let Some(key) = local.mesh_keys.get(&r.file_id) else {
+                return Err(Error::Read(format!(
+                    "{}: Mesh &{} wasn't indexed",
+                    local.path, r.file_id
+                )));
+            };
             return Ok(Some(MeshRef::Inline {
                 path: local.path.to_owned(),
+                key: key.clone(),
                 id: r.file_id,
             }));
         }

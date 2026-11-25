@@ -1,12 +1,16 @@
 import { ModelLoadError } from "./load";
+import { type BundledMesh, readMeshBundle } from "./meshBundle";
 import type { PackedModel } from "./packFbx";
 import { type GeometryKind, readGeometry } from "./readGeometry";
+
+type Kind = GeometryKind | "bundle";
+type Answer = { packed?: PackedModel; meshes?: BundledMesh[] };
 
 interface Job {
   id: number;
   url: string;
-  kind: GeometryKind;
-  resolve: (p: PackedModel) => void;
+  kind: Kind;
+  resolve: (a: Answer) => void;
   reject: (e: Error) => void;
 }
 
@@ -28,14 +32,14 @@ function pool() {
     workers = Array.from({ length: count }, () => {
       const worker = new Worker(new URL("./fbx.worker.ts", import.meta.url), { type: "module" });
       const slot = { worker, busy: 0 };
-      worker.onmessage = (e: MessageEvent<{ id: number; packed?: PackedModel; error?: string }>) => {
+      worker.onmessage = (e: MessageEvent<{ id: number; error?: string } & Answer>) => {
         slot.busy--;
         const job = running.get(e.data.id);
         running.delete(e.data.id);
-        if (e.data.packed) {
-          job?.resolve(e.data.packed);
+        if (e.data.error === undefined) {
+          job?.resolve(e.data);
         } else {
-          job?.reject(new ModelLoadError(e.data.error ?? "the model worker failed"));
+          job?.reject(new ModelLoadError(e.data.error));
         }
         dispatch();
       };
@@ -57,20 +61,36 @@ function dispatch() {
   }
 }
 
-/**
- * Fetches and parses a model file's geometry and clips in a few workers, off the main
- * thread, in the order asked. Without workers (tests), does it in place.
- */
-export async function loadGeometry(url: string, kind: GeometryKind): Promise<PackedModel> {
+/** Runs a job in the workers, in the order asked; without workers (tests), in place. */
+async function run(url: string, kind: Kind): Promise<Answer> {
   if (typeof Worker === "undefined") {
     const res = await fetch(url);
     if (!res.ok) {
       throw new ModelLoadError((await res.text()) || `${res.status} ${res.statusText}`);
     }
-    return (await readGeometry(await res.arrayBuffer(), kind)).packed;
+    const bytes = await res.arrayBuffer();
+    return kind === "bundle" ? { meshes: (await readMeshBundle(bytes)).meshes } : { packed: (await readGeometry(bytes, kind)).packed };
   }
   return new Promise((resolve, reject) => {
     waiting.push({ id: next++, url, kind, resolve, reject });
     dispatch();
   });
+}
+
+/** Fetches and parses a model file's geometry and clips off the main thread. */
+export async function loadGeometry(url: string, kind: GeometryKind): Promise<PackedModel> {
+  const { packed } = await run(url, kind);
+  if (!packed) {
+    throw new ModelLoadError(`no geometry came back for ${url}`);
+  }
+  return packed;
+}
+
+/** Fetches and parses several of a scene's own meshes in one request, off the main thread. */
+export async function loadMeshBundle(url: string): Promise<BundledMesh[]> {
+  const { meshes } = await run(url, "bundle");
+  if (!meshes) {
+    throw new ModelLoadError(`no meshes came back for ${url}`);
+  }
+  return meshes;
 }

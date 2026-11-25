@@ -11,6 +11,9 @@ use crate::repo::Repo;
 /// How much the preview cache keeps on disk; past it, the least recently used files go.
 pub const BUDGET: u64 = 1024 * 1024 * 1024;
 
+/// Bumped whenever what is kept changes shape or meaning, so older files aren't read.
+const FORMAT: u32 = 2;
+
 /// Slow 3D preview results kept on disk across restarts, in `.git/gitgud/cache`:
 /// scene and prefab infos at commits (a commit never changes) and shrunk textures
 /// (by content). Keys include the app version, so a new build never reads an old
@@ -62,15 +65,17 @@ impl DiskCache {
 
     fn model_file(&self, tree: &str, path: &str) -> PathBuf {
         let key = xxhash_rust::xxh64::xxh64(
-            format!("{}\0{tree}\0{path}", env!("CARGO_PKG_VERSION")).as_bytes(),
+            format!("{}\0{FORMAT}\0{tree}\0{path}", env!("CARGO_PKG_VERSION")).as_bytes(),
             0,
         );
         self.models().join(format!("{key:016x}.json"))
     }
 
     fn texture_file(&self, key: u64) -> PathBuf {
-        self.textures()
-            .join(format!("{}-{key:016x}.png", env!("CARGO_PKG_VERSION")))
+        self.textures().join(format!(
+            "{}-{FORMAT}-{key:016x}.tex",
+            env!("CARGO_PKG_VERSION")
+        ))
     }
 
     /// The info of the model `path` in commit tree `tree`, when it was kept.
@@ -94,8 +99,8 @@ impl DiskCache {
         }
     }
 
-    /// A shrunk texture by its content key: `Some(None)` when it was found small
-    /// enough (or unreadable) to use as is.
+    /// A prepared texture (shrunk PNG or compressed DDS) by its key: `Some(None)` when
+    /// it was found to be best used as is.
     pub fn texture(&self, key: u64) -> Option<Option<Vec<u8>>> {
         read(&self.texture_file(key)).map(|b| (!b.is_empty()).then_some(b))
     }
@@ -214,6 +219,7 @@ mod tests {
             scale: 1.0,
             scene: Some(ModelScene::default()),
             from_disk: 2,
+            models: BTreeMap::new(),
         }
     }
 

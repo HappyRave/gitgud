@@ -150,8 +150,13 @@ replaying at most 255 rows (spike 4.3).
   `$lib/model/vendor/FBXLoader.js`, three r170's loader with "gitgud:" changes (fixes for an empty
   normals layer and a geometry no model uses, still missing upstream in r187; a `geometryOnly` mode
   without images or textures; no `window` for camera aspect): re-copy and re-apply them when three is
-  upgraded. Prefabs and scenes load FBX `geometryOnly`, parsed on a pool of workers
-  (`fbxPool.ts`, `fbx.worker.ts`) and handed back as transferable buffers (`packFbx.ts`). The frontend loads three.js lazily; `stage.ts` draws both versions in one WebGL context with a shared camera and clock;
+  upgraded. Prefabs and scenes load FBX and Unity meshes `geometryOnly`: fetched and parsed on a pool
+  of six workers (`fbxPool.ts` queues jobs in the order asked, at most eight per worker;
+  `fbx.worker.ts`, `readGeometry.ts`) and handed back as transferable buffers (`packFbx.ts`).
+  `buildPrefab` shows the hierarchy at once with a dot per mesh and `load()` streams the meshes in,
+  nearest the default camera first (`view.ts`); the viewer shows a scene before its meshes and
+  `stage.refresh()` compares, fits floor / light and draws unchanged static meshes instanced
+  (`instancing.ts`) once both sides are in. Shadow maps redraw only when models change or move. The frontend loads three.js lazily; `stage.ts` draws both versions in one WebGL context with a shared camera and clock;
   `compare.ts` matches objects by name path for the Changes tint and legend. FBX pivots are baked into
   prefab meshes as Unity's import does (`pivotOffset`).
 - **Viewers** (R7; `$lib/viewers/route.ts`, `FilePreview.svelte`, `ViewSwitch.svelte`, `preview.rs`):
@@ -216,10 +221,15 @@ replaying at most 255 rows (spike 4.3).
   ("Open in 3D" / "Show Structure"). Textures in 3D come through `previewTexture()`: the protocol's
   `/image` and `/ref` take `max=<px>` and return the image shrunk (`image::shrink_image`, fast PNG,
   cached by content hash) per Settings › Previews' "Texture size in 3D" (`prefs.textureMax`: Native /
-  4096 / 2048 / 1024, default 1024); model and material cache keys include it. Only LOD0 of a LOD
-  Group is drawn. Meshes stored inside a scene or prefab (`MeshRef::Inline`) are
-  served as GLB by `fileID` through the protocol's `/model?…&mesh=` (`Repo::inline_mesh`, the source
-  file cached for the burst of requests).
+  4096 / 2048 / 1024, default 1024); model and material cache keys include it. With `gpu=bc` (sent
+  when the GPU has S3TC + sRGB, `gpuFormats.ts`) they come GPU-compressed as DDS (BC1 / BC3 with
+  mips, flipped, `gpu_texture.rs` via `image_dds` encode), uploaded as is by
+  `BitmapTextureLoader`; other images still decode with `createImageBitmap`. Only LOD0 of a LOD
+  Group is drawn. Meshes stored inside a scene or prefab (`MeshRef::Inline`, with a content `key`
+  so both sides and reopenings share them) are served as GLB by `fileID` through the protocol's
+  `/model?…&mesh=`, or several per answer with `&meshes=a,b` (`Repo::inline_meshes`,
+  `meshBundle.ts`; `inlineBatch.ts` asks 32 at a time). A scene's or prefab's `model_info`
+  carries its model files' infos (`models`), so the viewer doesn't ask for each.
   Gitignored assets (asset packs kept out of git): `Repo::file_at` reads them from disk in every
   version when a version lacks them (`Repo::ignored_on_disk`, cached per path and per ignored folder,
   cleared on refresh); `Files::has` lets GUIDs resolve to them, `Files::key` gives them the same disk

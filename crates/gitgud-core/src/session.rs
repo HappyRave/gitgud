@@ -1555,6 +1555,19 @@ impl Session {
         Ok(self.get(id)?.repo.shrink_texture(bytes, max))
     }
 
+    /// See [`Repo::compressed_texture`].
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`].
+    pub fn compressed_texture(
+        &self,
+        id: u32,
+        bytes: &[u8],
+        max: u32,
+    ) -> Result<Option<Vec<u8>>, Error> {
+        Ok(self.get(id)?.repo.compressed_texture(bytes, max))
+    }
+
     /// Structural property diff of a working-copy Unity YAML file (staged or unstaged).
     ///
     /// # Errors
@@ -2047,6 +2060,21 @@ impl Session {
     ) -> Result<Vec<u8>, Error> {
         let repo = self.get(id)?.repo.clone();
         repo.inline_mesh(self.git().ok(), path, version, mesh)
+    }
+
+    /// See [`Repo::inline_meshes`].
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`], or as [`Repo::inline_meshes`].
+    pub fn inline_meshes(
+        &self,
+        id: u32,
+        path: &str,
+        version: &crate::image::Version,
+        meshes: &[&str],
+    ) -> Result<Vec<u8>, Error> {
+        let repo = self.get(id)?.repo.clone();
+        repo.inline_meshes(self.git().ok(), path, version, meshes)
     }
 
     /// See [`Repo::clip_curves`].

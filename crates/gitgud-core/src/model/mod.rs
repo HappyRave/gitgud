@@ -103,6 +103,10 @@ pub struct ModelInfo {
     pub scene: Option<ModelScene>,
     /// Gitignored files used from disk (asset packs kept out of git): the same in every version.
     pub from_disk: usize,
+    /// For a scene or prefab, the infos of the model files it draws, by path, so the
+    /// viewer doesn't ask for each; a file that can't be read is left out.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub models: BTreeMap<String, ModelInfo>,
 }
 
 /// How many scenes or prefabs `Repo::inline_mesh` keeps: both sides of a compare.
@@ -118,27 +122,22 @@ impl InlineSource {
     fn new(bytes: Vec<u8>) -> Self {
         let text = String::from_utf8(bytes)
             .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned());
-        let starts: Vec<usize> = text
-            .starts_with("--- !u!")
-            .then_some(0)
-            .into_iter()
-            .chain(text.match_indices("\n--- !u!").map(|(i, _)| i + 1))
-            .collect();
-        let mut meshes = HashMap::new();
-        for (k, &start) in starts.iter().enumerate() {
-            let end = starts.get(k + 1).copied().unwrap_or(text.len());
-            let line = text[start..end].lines().next().unwrap_or_default();
-            if let Some((mesh_asset::MESH_CLASS, id, _)) = crate::unity_yaml::parse_doc_header(line)
-            {
-                meshes.entry(id).or_insert(start..end);
-            }
-        }
+        let meshes = mesh_asset::mesh_documents(&text);
         Self { text, meshes }
     }
 
     /// The Mesh document with `fileID` `id`.
     fn mesh(&self, id: &str) -> Option<&str> {
         self.meshes.get(id).map(|r| &self.text[r.clone()])
+    }
+
+    /// Mesh `id` of this file (`path`) as GLB.
+    fn glb(&self, path: &str, id: &str) -> Result<Vec<u8>, Error> {
+        let doc = self
+            .mesh(id)
+            .ok_or_else(|| Error::Refused(format!("{path} has no Mesh &{id}")))?;
+        mesh_asset::mesh_asset_to_glb(doc)
+            .map_err(|e| Error::Read(format!("{path} › Mesh &{id}: {e}")))
     }
 }
 
@@ -181,37 +180,68 @@ impl Repo {
         version: &Version,
         id: &str,
     ) -> Result<Vec<u8>, Error> {
+        self.inline_source(git, path, version)?.glb(path, id)
+    }
+
+    /// Several Mesh documents of the scene or prefab `path` at `version` in one
+    /// answer, in the order of `ids`: per mesh a status byte (1: GLB, 0: why it
+    /// couldn't be read), then the `fileID` and the GLB or the reason, each as a
+    /// little-endian `u32` length and its bytes.
+    ///
+    /// # Errors
+    /// [`Error::Refused`] when the file isn't in that version.
+    pub fn inline_meshes(
+        &self,
+        git: Option<&GitCli>,
+        path: &str,
+        version: &Version,
+        ids: &[&str],
+    ) -> Result<Vec<u8>, Error> {
+        fn put(out: &mut Vec<u8>, bytes: &[u8]) {
+            let len = u32::try_from(bytes.len()).expect("a mesh is under 4 GiB");
+            out.extend_from_slice(&len.to_le_bytes());
+            out.extend_from_slice(bytes);
+        }
+        let source = self.inline_source(git, path, version)?;
+        let mut out = Vec::new();
+        for id in ids {
+            let (ok, payload) = match source.glb(path, id) {
+                Ok(glb) => (1u8, glb),
+                Err(e) => (0u8, e.to_string().into_bytes()),
+            };
+            out.push(ok);
+            put(&mut out, id.as_bytes());
+            put(&mut out, &payload);
+        }
+        Ok(out)
+    }
+
+    /// The scene or prefab `path` at `version`, indexed for its meshes; kept for both
+    /// sides of a compare, since a scene's meshes are requested all at once.
+    fn inline_source(
+        &self,
+        git: Option<&GitCli>,
+        path: &str,
+        version: &Version,
+    ) -> Result<Arc<InlineSource>, Error> {
         let key = format!("{path}@{version:?}");
-        let source = {
-            // Held while loading: a scene's meshes are requested all at once.
-            let mut kept = self
-                .inline_sources
-                .lock()
-                .expect("inline source lock poisoned");
-            match kept.iter().find(|(k, _)| *k == key) {
-                Some((_, s)) => s.clone(),
-                None => {
-                    let raw = self.file_at(path, version)?;
-                    let bytes = self.lfs_resolve_with_fetch(
-                        git,
-                        path,
-                        raw,
-                        crate::lfs::AUTO_FETCH_MAX_BYTES,
-                    )?;
-                    let s = Arc::new(InlineSource::new(bytes));
-                    if kept.len() >= KEPT_INLINE_SOURCES {
-                        kept.remove(0);
-                    }
-                    kept.push((key, s.clone()));
-                    s
-                }
-            }
-        };
-        let doc = source
-            .mesh(id)
-            .ok_or_else(|| Error::Refused(format!("{path} has no Mesh &{id}")))?;
-        mesh_asset::mesh_asset_to_glb(doc)
-            .map_err(|e| Error::Read(format!("{path} › Mesh &{id}: {e}")))
+        // Held while loading, so the burst of requests reads the file once.
+        let mut kept = self
+            .inline_sources
+            .lock()
+            .expect("inline source lock poisoned");
+        if let Some((_, s)) = kept.iter().find(|(k, _)| *k == key) {
+            return Ok(s.clone());
+        }
+        let raw = self.file_at(path, version)?;
+        let bytes =
+            self.lfs_resolve_with_fetch(git, path, raw, crate::lfs::AUTO_FETCH_MAX_BYTES)?;
+        let s = Arc::new(InlineSource::new(bytes));
+        if kept.len() >= KEPT_INLINE_SOURCES {
+            kept.remove(0);
+        }
+        kept.push((key, s.clone()));
+        Ok(s)
     }
 
     /// The repo path of the file model `near` refers to as `reference` at `version`.
@@ -498,6 +528,53 @@ impl Repo {
         Ok(users)
     }
 
+    /// The infos of the model files `scene` draws or takes clips from, read on a few
+    /// threads; files that can't be read are left out (the viewer asks and shows why).
+    fn used_model_infos(
+        &self,
+        git: Option<&GitCli>,
+        scene: &ModelScene,
+        version: &Version,
+    ) -> BTreeMap<String, ModelInfo> {
+        let mut paths: Vec<&str> = scene
+            .nodes
+            .iter()
+            .filter_map(|n| match &n.mesh {
+                Some(MeshRef::Asset { path, .. }) => Some(path.as_str()),
+                _ => None,
+            })
+            .chain(scene.clips.iter().filter_map(|c| match &c.source {
+                ClipSource::Model { path, .. } => Some(path.as_str()),
+                ClipSource::Curves { .. } => None,
+            }))
+            .filter(|p| model_kind(p).is_some_and(|k| k != ModelKind::Prefab))
+            .collect();
+        paths.sort_unstable();
+        paths.dedup();
+        let threads = std::thread::available_parallelism()
+            .map_or(1, std::num::NonZero::get)
+            .min(8);
+        let chunk = paths.len().div_ceil(threads).max(1);
+        std::thread::scope(|s| {
+            let handles: Vec<_> = paths
+                .chunks(chunk)
+                .map(|part| {
+                    s.spawn(move || {
+                        part.iter()
+                            .filter_map(|p| {
+                                Some(((*p).to_owned(), self.model_info(git, p, version).ok()?))
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .flat_map(|h| h.join().expect("model info thread panicked"))
+                .collect()
+        })
+    }
+
     fn read_model_info(
         &self,
         git: Option<&GitCli>,
@@ -515,6 +592,7 @@ impl Repo {
             scale: 1.0,
             scene: None,
             from_disk: 0,
+            models: BTreeMap::new(),
         };
         if kind == ModelKind::Prefab {
             let (mut scene, materials) = prefab::PrefabBuilder::new(&guids).build(path)?;
@@ -529,6 +607,7 @@ impl Repo {
                     scene.clips.push(SceneClip { node, name, source });
                 }
             }
+            info.models = self.used_model_infos(git, &scene, version);
             info.scene = Some(scene);
             info.materials = materials;
             info.from_disk = files.disk_reads();
@@ -668,12 +747,19 @@ mod tests {
             .unwrap();
         let scene = info.scene.unwrap();
         assert!(scene.missing.is_empty(), "{:?}", scene.missing);
+        let key = mesh_asset::mesh_key(&mesh_asset::tri_mesh("1234"));
         assert_eq!(
             scene.nodes[0].mesh,
             Some(MeshRef::Inline {
                 path: "Assets/Room.unity".into(),
-                id: "1234".into()
+                id: "1234".into(),
+                key: key.clone(),
             })
+        );
+        assert_eq!(
+            mesh_asset::mesh_key(&mesh_asset::tri_mesh("5678")),
+            key,
+            "the same mesh under another fileID"
         );
         let glb = r
             .inline_mesh(None, "Assets/Room.unity", &Version::Head, "1234")
@@ -685,6 +771,31 @@ mod tests {
                 .to_string(),
             "Assets/Room.unity has no Mesh &123"
         );
+        let bundle = r
+            .inline_meshes(None, "Assets/Room.unity", &Version::Head, &["1234", "123"])
+            .unwrap();
+        let mut at = 0;
+        let mut read = || {
+            let ok = bundle[at];
+            let field = |at: &mut usize| {
+                let len = u32::from_le_bytes(bundle[*at..*at + 4].try_into().unwrap()) as usize;
+                *at += 4 + len;
+                &bundle[*at - len..*at]
+            };
+            at += 1;
+            let id = String::from_utf8(field(&mut at).to_vec()).unwrap();
+            let payload = field(&mut at).to_vec();
+            (ok, id, payload)
+        };
+        let (ok, id, glb) = read();
+        assert_eq!((ok, id.as_str(), &glb[0..4]), (1, "1234", &b"glTF"[..]));
+        let (ok, id, why) = read();
+        assert_eq!((ok, id.as_str()), (0, "123"));
+        assert_eq!(
+            String::from_utf8(why).unwrap(),
+            "Assets/Room.unity has no Mesh &123"
+        );
+        assert_eq!(at, bundle.len());
 
         repo.write(
             "Assets/Room.unity",
@@ -704,6 +815,33 @@ mod tests {
             r.inline_sources.lock().unwrap().len(),
             2,
             "both sides of the compare are kept"
+        );
+    }
+
+    #[test]
+    fn a_prefab_carries_the_infos_of_the_models_it_draws() {
+        let repo = TestRepo::init();
+        repo.write("Assets/boat.fbx", "fbx")
+            .write(
+                "Assets/boat.fbx.meta",
+                "guid: 5555eeee000000000000000000000000\nModelImporter:\n  meshes:\n    globalScale: 2\n",
+            )
+            .write(
+                "Assets/Boat.prefab",
+                "%YAML 1.1\n--- !u!1 &1\nGameObject:\n  m_Name: Boat\n  m_Component:\n  - component: {fileID: 2}\n  - component: {fileID: 3}\n--- !u!4 &2\nTransform:\n  m_GameObject: {fileID: 1}\n  m_Father: {fileID: 0}\n--- !u!33 &3\nMeshFilter:\n  m_GameObject: {fileID: 1}\n  m_Mesh: {fileID: 4300000, guid: 5555eeee000000000000000000000000, type: 3}\n",
+            )
+            .commit_all("one");
+        let r = crate::repo::open(repo.path()).unwrap();
+        let info = r
+            .model_info(None, "Assets/Boat.prefab", &Version::Head)
+            .unwrap();
+        assert_eq!(info.models.keys().collect::<Vec<_>>(), ["Assets/boat.fbx"]);
+        assert_eq!(info.models["Assets/boat.fbx"].scale, 2.0);
+        assert!(
+            r.model_info(None, "Assets/boat.fbx", &Version::Head)
+                .unwrap()
+                .models
+                .is_empty()
         );
     }
 

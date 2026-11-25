@@ -54,10 +54,11 @@ export async function openSide(
     if (info.scene) {
       const model = buildPrefab(info.scene, info.materials, {
         modelUrl: (p) => modelUrl(repoId, p, side.at, bust),
-        meshUrl: (p, id) => `${modelUrl(repoId, p, side.at, bust)}&mesh=${encodeURIComponent(id)}`,
+        meshesUrl: (p, ids) => `${modelUrl(repoId, p, side.at, bust)}&meshes=${ids.map(encodeURIComponent).join(",")}`,
         refUrl: (near) => (ref) => previewTexture(refUrl(repoId, near, ref, side.at, bust)),
         imageUrl: (p) => previewTexture(imageUrl(repoId, p, side.at, bust)),
-        info: (p) => modelInfo(repoId, p, version),
+        // The scene's info carries its model files' infos; asking stays for anything it lacks.
+        info: (p) => (info.models?.[p] ? Promise.resolve(info.models[p]) : modelInfo(repoId, p, version)),
         progress: (p) => progress.reporter(key(p)),
         onPiece,
       });

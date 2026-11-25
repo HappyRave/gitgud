@@ -27,7 +27,8 @@ import type { MeshRef, ModelInfo, ModelMaterial, ModelScene, SceneClip } from "$
 import { clone as cloneSkinned } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { modelCache } from "./cache";
 import { loadShared, materialKey } from "./shared";
-import { type LoadedModel, loadModel, TrackedFiles } from "./load";
+import { inlineBatcher } from "./inlineBatch";
+import { type LoadedModel, TrackedFiles } from "./load";
 import type { Step } from "./progress";
 import { type LoadTexture, MISSING_COLOR, materialFrom } from "./materials";
 import { meshFileKind } from "./source";
@@ -36,8 +37,8 @@ import { framingCamera } from "./view";
 
 export interface PrefabContext {
   modelUrl: (path: string) => string;
-  /** A Mesh stored inside the scene or prefab `path`, as GLB. */
-  meshUrl: (path: string, id: string) => string;
+  /** Several Meshes stored inside the scene or prefab `path`, as one bundle (see `meshBundle.ts`). */
+  meshesUrl: (path: string, ids: string[]) => string;
   refUrl: (near: string) => (ref: string) => string;
   imageUrl: (path: string) => string;
   info: (path: string) => Promise<ModelInfo>;
@@ -172,23 +173,9 @@ export function buildPrefab(scene: ModelScene, materials: ModelMaterial[], ctx: 
   const textures = new TrackedFiles(null, ctx.progress?.("textures"));
   const loadTexture = ctx.loadTexture ?? textures.loadTexture;
 
-  const inline = (path: string, id: string) => {
-    const key = `${path}#${id}`;
-    let p = models.get(key);
-    if (!p) {
-      p = loadModel({
-        kind: "asset",
-        url: ctx.meshUrl(path, id),
-        refUrl: () => "",
-        imageUrl: ctx.imageUrl,
-        info: null,
-        loadTexture,
-        geometryOnly: true,
-      });
-      models.set(key, p);
-    }
-    return p;
-  };
+  const bundled = inlineBatcher(ctx.meshesUrl);
+  // By content: the other side of a compare, and a later reopening, reuse the same mesh.
+  const inline = (ref: { path: string; id: string; key: string }) => modelCache.model(`inline:${ref.key}`, () => bundled(ref.path, ref.id));
 
   const model = (path: string) => {
     let p = models.get(path);
@@ -246,7 +233,7 @@ export function buildPrefab(scene: ModelScene, materials: ModelMaterial[], ctx: 
     }
     if (ref.type === "inline") {
       try {
-        const src = firstMesh((await inline(ref.path, ref.id)).root);
+        const src = firstMesh((await inline(ref)).root);
         if (!src) {
           throw new Error("no mesh in it");
         }
