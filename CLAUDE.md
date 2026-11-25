@@ -224,7 +224,7 @@ replaying at most 255 rows (spike 4.3).
   prefabs above Settings › Previews' limit (`prefs.auto3dLimit`, default 2,000) open on a card
   ("Open in 3D" / "Show Structure"). Textures in 3D come through `previewTexture()`: the protocol's
   `/image` and `/ref` take `max=<px>` and return the image shrunk (`image::shrink_image`, fast PNG,
-  cached by content hash) per Settings › Previews' "Texture size in 3D" (`prefs.textureMax`: Native /
+  cached by a hash of the file as git stores it — content or LFS pointer — so a hit decodes nothing) per Settings › Previews' "Texture size in 3D" (`prefs.textureMax`: Native /
   4096 / 2048 / 1024, default 1024); model and material cache keys include it. With `gpu=bc` (sent
   when the GPU has S3TC + sRGB, `gpuFormats.ts`) they come GPU-compressed as DDS (BC1 / BC3 with
   mips, flipped, `gpu_texture.rs` via `image_dds` encode), uploaded as is by

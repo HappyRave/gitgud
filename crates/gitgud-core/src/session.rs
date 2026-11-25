@@ -1581,10 +1581,10 @@ impl Session {
                     let (repo, version) = (&repo, &version);
                     s.spawn(move || {
                         for p in part {
-                            if let Ok(bytes) = repo.image_bytes(p, version)
-                                && !(bc && repo.compressed_texture(&bytes, max).is_some())
-                            {
-                                let _ = repo.shrink_texture(&bytes, max);
+                            if let Ok(stored) = repo.stored_image(p, version) {
+                                let _ = repo.preview_texture(&stored, max, bc, || {
+                                    repo.image_bytes(p, version)
+                                });
                             }
                         }
                     });
@@ -1592,6 +1592,42 @@ impl Session {
             });
         });
         Ok(())
+    }
+
+    /// Image `path` at `version` as git stores it (its content, or its LFS pointer).
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`], or as [`Repo::stored_image`].
+    pub fn stored_image(
+        &self,
+        id: u32,
+        path: &str,
+        version: &crate::image::Version,
+    ) -> Result<Vec<u8>, Error> {
+        self.get(id)?.repo.stored_image(path, version)
+    }
+
+    /// Image `path` at `version` for 3D previews ([`Repo::preview_texture`]), `stored`
+    /// being what [`Session::stored_image`] read; on a miss the image is read as
+    /// [`Session::image_bytes`] does with `auto_fetch`.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`], or as [`Session::image_bytes`] on a miss.
+    #[allow(clippy::too_many_arguments)]
+    pub fn preview_texture(
+        &self,
+        id: u32,
+        path: &str,
+        version: &crate::image::Version,
+        stored: &[u8],
+        max: u32,
+        bc: bool,
+        auto_fetch: bool,
+    ) -> Result<crate::image::PreviewTexture, Error> {
+        let repo = self.get(id)?.repo.clone();
+        repo.preview_texture(stored, max, bc, || {
+            self.image_bytes(id, path, version, auto_fetch)
+        })
     }
 
     /// See [`Repo::compressed_texture`].

@@ -69,7 +69,18 @@ const SHRUNK_BUDGET: usize = 256 * 1024 * 1024;
 /// `None` when it is already small enough or can't be decoded, so the original is used.
 #[must_use]
 pub fn shrink_image(bytes: &[u8], max: u32) -> Option<Vec<u8>> {
-    prepare_through(bytes, max, Prepared::Png, None)
+    prepare_through(bytes, bytes, max, Prepared::Png, None)
+}
+
+/// A texture for 3D previews.
+#[derive(Debug, PartialEq, Eq)]
+pub enum PreviewTexture {
+    /// GPU-compressed, as DDS.
+    Dds(Vec<u8>),
+    /// Shrunk, as PNG.
+    Png(Vec<u8>),
+    /// The image as it is: small enough, or not something to compress or shrink.
+    Original(Vec<u8>),
 }
 
 /// What a 3D preview texture is turned into.
@@ -81,25 +92,64 @@ enum Prepared {
     Bc,
 }
 
-/// Prepares a texture as `kind`, through the memory cache, then `disk`, kept up to date.
+fn texture_key(source: &[u8], max: u32, kind: Prepared) -> u64 {
+    xxhash_rust::xxh64::xxh64(source, u64::from(max) | ((kind as u64) << 32))
+}
+
+type Slot = std::sync::Arc<std::sync::OnceLock<Option<Vec<u8>>>>;
+
+/// The memory cache's slot for `key`, and whether it was just made.
+fn slot(key: u64) -> (Slot, bool) {
+    let mut cache = SHRUNK.lock().expect("shrunk lock poisoned");
+    match cache.1.get(&key) {
+        Some(slot) => (slot.clone(), false),
+        None => {
+            let slot = Slot::default();
+            cache.1.insert(key, slot.clone());
+            (slot, true)
+        }
+    }
+}
+
+/// Counts a new slot's result against the memory budget.
+fn account(out: Option<&Vec<u8>>) {
+    let mut cache = SHRUNK.lock().expect("shrunk lock poisoned");
+    cache.0 += out.map_or(0, Vec::len);
+    if cache.0 > SHRUNK_BUDGET {
+        *cache = Default::default();
+    }
+}
+
+/// The texture kept for `source` as `kind`, in memory or on `disk`, without preparing it.
+fn kept(
+    source: &[u8],
+    max: u32,
+    kind: Prepared,
+    disk: &crate::disk_cache::DiskCache,
+) -> Option<Option<Vec<u8>>> {
+    let key = texture_key(source, max, kind);
+    let (slot, first) = slot(key);
+    if let Some(out) = slot.get() {
+        return Some(out.clone());
+    }
+    let hit = disk.texture(key)?;
+    if slot.set(hit.clone()).is_ok() && first {
+        account(hit.as_ref());
+    }
+    Some(hit)
+}
+
+/// Prepares `bytes` as `kind`, kept under `source` (what identifies them) in the memory
+/// cache, then `disk`, kept up to date.
 fn prepare_through(
+    source: &[u8],
     bytes: &[u8],
     max: u32,
     kind: Prepared,
     disk: Option<&crate::disk_cache::DiskCache>,
 ) -> Option<Vec<u8>> {
-    let key = xxhash_rust::xxh64::xxh64(bytes, u64::from(max) | ((kind as u64) << 32));
-    let (slot, first) = {
-        let mut cache = SHRUNK.lock().expect("shrunk lock poisoned");
-        match cache.1.get(&key) {
-            Some(slot) => (slot.clone(), false),
-            None => {
-                let slot = std::sync::Arc::new(std::sync::OnceLock::new());
-                cache.1.insert(key, slot.clone());
-                (slot, true)
-            }
-        }
-    };
+    let key = texture_key(source, max, kind);
+    let (slot, first) = slot(key);
     let out = slot
         .get_or_init(|| match disk.and_then(|d| d.texture(key)) {
             Some(hit) => hit,
@@ -120,11 +170,7 @@ fn prepare_through(
         })
         .clone();
     if first {
-        let mut cache = SHRUNK.lock().expect("shrunk lock poisoned");
-        cache.0 += out.as_ref().map_or(0, Vec::len);
-        if cache.0 > SHRUNK_BUDGET {
-            *cache = Default::default();
-        }
+        account(out.as_ref());
     }
     out
 }
@@ -167,14 +213,54 @@ impl Repo {
     #[must_use]
     pub fn shrink_texture(&self, bytes: &[u8], max: u32) -> Option<Vec<u8>> {
         let disk = crate::disk_cache::DiskCache::new(self);
-        prepare_through(bytes, max, Prepared::Png, Some(&disk))
+        prepare_through(bytes, bytes, max, Prepared::Png, Some(&disk))
     }
 
     /// [`crate::gpu_texture::bc_dds`], kept in memory and in the repo's disk cache.
     #[must_use]
     pub fn compressed_texture(&self, bytes: &[u8], max: u32) -> Option<Vec<u8>> {
         let disk = crate::disk_cache::DiskCache::new(self);
-        prepare_through(bytes, max, Prepared::Bc, Some(&disk))
+        prepare_through(bytes, bytes, max, Prepared::Bc, Some(&disk))
+    }
+
+    /// The image `decode` gives, for 3D previews: GPU-compressed when `bc` and it can be,
+    /// else shrunk to `max`, else as it is. Kept in memory and on disk under `stored`,
+    /// the file as git stores it (its content, or its LFS pointer), so a kept texture
+    /// is found without reading an LFS object or decoding a TGA / PSD.
+    ///
+    /// # Errors
+    /// What `decode` returns, when it has to run.
+    pub fn preview_texture(
+        &self,
+        stored: &[u8],
+        max: u32,
+        bc: bool,
+        decode: impl FnOnce() -> Result<Vec<u8>, Error>,
+    ) -> Result<PreviewTexture, Error> {
+        let disk = crate::disk_cache::DiskCache::new(self);
+        let kinds: &[Prepared] = if bc {
+            &[Prepared::Bc, Prepared::Png]
+        } else {
+            &[Prepared::Png]
+        };
+        let wrap = |kind: Prepared, out: Vec<u8>| match kind {
+            Prepared::Bc => PreviewTexture::Dds(out),
+            Prepared::Png => PreviewTexture::Png(out),
+        };
+        for &kind in kinds {
+            match kept(stored, max, kind, &disk) {
+                Some(Some(out)) => return Ok(wrap(kind, out)),
+                Some(None) => {}
+                None => break,
+            }
+        }
+        let bytes = decode()?;
+        for &kind in kinds {
+            if let Some(out) = prepare_through(stored, &bytes, max, kind, Some(&disk)) {
+                return Ok(wrap(kind, out));
+            }
+        }
+        Ok(PreviewTexture::Original(bytes))
     }
 
     /// The bytes of image `path` at `version`; an LFS pointer is swapped for its
@@ -234,6 +320,14 @@ impl Repo {
     ) -> Result<Option<(String, u64)>, Error> {
         let bytes = self.read_version_bytes(path, version)?;
         Ok(parse_lfs_pointer(&bytes))
+    }
+
+    /// Image `path` at `version` as git stores it: its content, or its LFS pointer.
+    ///
+    /// # Errors
+    /// As [`Repo::image_bytes`], short of reading the LFS object.
+    pub fn stored_image(&self, path: &str, version: &Version) -> Result<Vec<u8>, Error> {
+        self.read_version_bytes(path, version)
     }
 
     fn read_version_bytes(&self, path: &str, version: &Version) -> Result<Vec<u8>, Error> {
@@ -925,6 +1019,55 @@ mod tests {
             r.shrink_texture(&big, 512),
             Some(small),
             "read back from disk"
+        );
+    }
+
+    #[test]
+    fn a_kept_preview_texture_is_found_by_the_stored_file_without_decoding() {
+        let repo = crate::testing::TestRepo::init();
+        let r = crate::repo::open(repo.path()).unwrap();
+        let png = |w: u32, seed: u8| {
+            let mut out = Cursor::new(Vec::new());
+            image::RgbaImage::from_fn(w, 32, |x, y| image::Rgba([x as u8, y as u8, seed, 255]))
+                .write_to(&mut out, ImageFormat::Png)
+                .unwrap();
+            out.into_inner()
+        };
+        let (big, small) = (png(1500, 3), png(64, 4));
+        let stored = b"version https://git-lfs.github.com/spec/v1\noid sha256:aa\nsize 9\n";
+        let never = || -> Result<Vec<u8>, Error> { panic!("decoded although it was kept") };
+
+        let shrunk = r
+            .preview_texture(stored, 512, false, || Ok(big.clone()))
+            .unwrap();
+        assert!(matches!(&shrunk, PreviewTexture::Png(p) if p.starts_with(b"\x89PNG")));
+        assert_eq!(
+            r.preview_texture(stored, 512, false, never).unwrap(),
+            shrunk
+        );
+        forget_shrunk();
+        assert_eq!(
+            r.preview_texture(stored, 512, false, never).unwrap(),
+            shrunk,
+            "from disk"
+        );
+
+        let dds = r
+            .preview_texture(b"other pointer", 512, true, || Ok(big.clone()))
+            .unwrap();
+        assert!(matches!(dds, PreviewTexture::Dds(_)));
+        forget_shrunk();
+        assert_eq!(
+            r.preview_texture(b"other pointer", 512, true, never)
+                .unwrap(),
+            dds
+        );
+
+        assert_eq!(
+            r.preview_texture(b"small one", 512, false, || Ok(small.clone()))
+                .unwrap(),
+            PreviewTexture::Original(small.clone()),
+            "small enough: the image as it is"
         );
     }
 

@@ -1,4 +1,4 @@
-use gitgud_core::image::{Version, image_type};
+use gitgud_core::image::{PreviewTexture, Version, image_type};
 use gitgud_core::model::{model_kind, model_mime};
 use gitgud_core::preview::file_mime;
 use gitgud_core::repo::Error;
@@ -18,7 +18,8 @@ use tauri::http::{Response, StatusCode, header};
 /// a sound file decoded to WAV, for formats the webview can't play (AIFF).
 ///
 /// `arrived` is when the request came in; the `Server-Timing` header gives `queue`
-/// (waiting for a thread), `read` (the file's bytes), `shrink` (texture work) and `total`.
+/// (waiting for a thread), `read` (the file's bytes as stored), `shrink` (texture work,
+/// reading an LFS object and decoding included when the texture wasn't kept) and `total`.
 pub fn respond_timed(session: &Session, uri: &str, arrived: Instant) -> Response<Vec<u8>> {
     let started = Instant::now();
     let mut steps = Steps::default();
@@ -151,12 +152,26 @@ fn read(
         _ => {
             let mime = image_type(&path).ok_or_else(|| bad("not an image"))?;
             let auto_fetch = param("autofetch").as_deref() != Some("0");
-            let bytes = timed(&mut steps.read, || {
-                session.image_bytes(repo, &path, &version, auto_fetch)
+            let Some(max) = max else {
+                let bytes = timed(&mut steps.read, || {
+                    session.image_bytes(repo, &path, &version, auto_fetch)
+                })
+                .map_err(fail)?;
+                return Ok((bytes, mime));
+            };
+            // Kept textures are found by the file as stored, so a hit decodes nothing.
+            let stored = timed(&mut steps.read, || {
+                session.stored_image(repo, &path, &version)
             })
             .map_err(fail)?;
-            timed(&mut steps.shrink, || {
-                shrunk(session, repo, bytes, mime, max, bc)
+            let texture = timed(&mut steps.shrink, || {
+                session.preview_texture(repo, &path, &version, &stored, max, bc, auto_fetch)
+            })
+            .map_err(fail)?;
+            Ok(match texture {
+                PreviewTexture::Dds(dds) => (dds, "image/vnd-ms.dds"),
+                PreviewTexture::Png(png) => (png, "image/png"),
+                PreviewTexture::Original(bytes) => (bytes, mime),
             })
         }
     }
