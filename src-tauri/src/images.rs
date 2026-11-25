@@ -3,6 +3,7 @@ use gitgud_core::model::{model_kind, model_mime};
 use gitgud_core::preview::file_mime;
 use gitgud_core::repo::Error;
 use gitgud_core::session::Session;
+use std::time::{Duration, Instant};
 use tauri::Url;
 use tauri::http::{Response, StatusCode, header};
 
@@ -15,14 +16,31 @@ use tauri::http::{Response, StatusCode, header};
 /// serves the file that model refers to as `ref` (a texture, a glTF buffer);
 /// `/file` serves any file as stored (audio, video, PDF, fonts, data); `/audio`
 /// a sound file decoded to WAV, for formats the webview can't play (AIFF).
-pub fn respond(session: &Session, uri: &str) -> Response<Vec<u8>> {
-    match read(session, uri) {
+///
+/// `arrived` is when the request came in; the `Server-Timing` header gives `queue`
+/// (waiting for a thread), `read` (the file's bytes), `shrink` (texture work) and `total`.
+pub fn respond_timed(session: &Session, uri: &str, arrived: Instant) -> Response<Vec<u8>> {
+    let started = Instant::now();
+    let mut steps = Steps::default();
+    let answer = read(session, uri, &mut steps);
+    let timing = format!(
+        "queue;dur={:.1}, read;dur={:.1}, shrink;dur={:.1}, total;dur={:.1}",
+        ms(started - arrived),
+        ms(steps.read),
+        ms(steps.shrink),
+        ms(started.elapsed()),
+    );
+    match answer {
         Ok((bytes, mime)) => Response::builder()
             .header(header::CONTENT_TYPE, mime)
             .header(header::CONTENT_LENGTH, bytes.len())
             .header(header::CACHE_CONTROL, "no-store")
             .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
-            .header(header::ACCESS_CONTROL_EXPOSE_HEADERS, "Content-Length")
+            .header(
+                header::ACCESS_CONTROL_EXPOSE_HEADERS,
+                "Content-Length, Server-Timing",
+            )
+            .header("Server-Timing", timing)
             .body(bytes),
         Err((status, message)) => Response::builder()
             .status(status)
@@ -33,7 +51,34 @@ pub fn respond(session: &Session, uri: &str) -> Response<Vec<u8>> {
     .expect("static headers are valid")
 }
 
-fn read(session: &Session, uri: &str) -> Result<(Vec<u8>, &'static str), (StatusCode, String)> {
+#[cfg(test)]
+pub fn respond(session: &Session, uri: &str) -> Response<Vec<u8>> {
+    respond_timed(session, uri, Instant::now())
+}
+
+#[derive(Default)]
+struct Steps {
+    read: Duration,
+    shrink: Duration,
+}
+
+fn ms(d: Duration) -> f64 {
+    d.as_secs_f64() * 1000.0
+}
+
+/// Runs `f`, adding its time to `into`.
+fn timed<T>(into: &mut Duration, f: impl FnOnce() -> T) -> T {
+    let t = Instant::now();
+    let out = f();
+    *into += t.elapsed();
+    out
+}
+
+fn read(
+    session: &Session,
+    uri: &str,
+    steps: &mut Steps,
+) -> Result<(Vec<u8>, &'static str), (StatusCode, String)> {
     let bad = |m: &str| (StatusCode::BAD_REQUEST, m.to_owned());
     let url = Url::parse(uri).map_err(|e| bad(&e.to_string()))?;
     let param = |name: &str| {
@@ -62,21 +107,26 @@ fn read(session: &Session, uri: &str) -> Result<(Vec<u8>, &'static str), (Status
         "/model" if param("meshes").is_some() => {
             let ids = param("meshes").unwrap_or_default();
             let ids: Vec<&str> = ids.split(',').filter(|s| !s.is_empty()).collect();
-            let bytes = session
-                .inline_meshes(repo, &path, &version, &ids)
-                .map_err(fail)?;
+            let bytes = timed(&mut steps.read, || {
+                session.inline_meshes(repo, &path, &version, &ids)
+            })
+            .map_err(fail)?;
             Ok((bytes, "application/octet-stream"))
         }
         "/model" if param("mesh").is_some() => {
             let mesh = param("mesh").unwrap_or_default();
-            let bytes = session
-                .inline_mesh(repo, &path, &version, &mesh)
-                .map_err(fail)?;
+            let bytes = timed(&mut steps.read, || {
+                session.inline_mesh(repo, &path, &version, &mesh)
+            })
+            .map_err(fail)?;
             Ok((bytes, "model/gltf-binary"))
         }
         "/model" => {
             let kind = model_kind(&path).ok_or_else(|| bad("not a 3D model"))?;
-            let bytes = session.model_bytes(repo, &path, &version).map_err(fail)?;
+            let bytes = timed(&mut steps.read, || {
+                session.model_bytes(repo, &path, &version)
+            })
+            .map_err(fail)?;
             Ok((bytes, model_mime(kind)))
         }
         "/file" => {
@@ -90,18 +140,24 @@ fn read(session: &Session, uri: &str) -> Result<(Vec<u8>, &'static str), (Status
         "/ref" => {
             let reference = param("ref").ok_or_else(|| bad("missing ref"))?;
             let mime = image_type(&reference).unwrap_or("application/octet-stream");
-            let bytes = session
-                .model_ref_bytes(repo, &path, &reference, &version)
-                .map_err(fail)?;
-            shrunk(session, repo, bytes, mime, max, bc)
+            let bytes = timed(&mut steps.read, || {
+                session.model_ref_bytes(repo, &path, &reference, &version)
+            })
+            .map_err(fail)?;
+            timed(&mut steps.shrink, || {
+                shrunk(session, repo, bytes, mime, max, bc)
+            })
         }
         _ => {
             let mime = image_type(&path).ok_or_else(|| bad("not an image"))?;
             let auto_fetch = param("autofetch").as_deref() != Some("0");
-            let bytes = session
-                .image_bytes(repo, &path, &version, auto_fetch)
-                .map_err(fail)?;
-            shrunk(session, repo, bytes, mime, max, bc)
+            let bytes = timed(&mut steps.read, || {
+                session.image_bytes(repo, &path, &version, auto_fetch)
+            })
+            .map_err(fail)?;
+            timed(&mut steps.shrink, || {
+                shrunk(session, repo, bytes, mime, max, bc)
+            })
         }
     }
 }
@@ -169,6 +225,13 @@ mod tests {
         assert_eq!(r.headers()[header::CONTENT_TYPE], "image/png");
         assert_eq!(r.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN], "*");
         assert_eq!(r.body(), b"\x89PNG\0one");
+        let timing = r.headers()["Server-Timing"].to_str().unwrap();
+        assert!(
+            timing.starts_with("queue;dur=")
+                && timing.contains(", read;dur=")
+                && timing.contains(", total;dur="),
+            "{timing}"
+        );
 
         let r = respond(
             &session,

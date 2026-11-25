@@ -1704,8 +1704,13 @@ fn app_with_library<R: Runtime>(builder: Builder<R>, library: Option<LibraryStor
         .register_asynchronous_uri_scheme_protocol("gitgud", |ctx, request, responder| {
             let app = ctx.app_handle().clone();
             let uri = request.uri().to_string();
+            let arrived = std::time::Instant::now();
             std::thread::spawn(move || {
-                responder.respond(images::respond(&app.state::<Session>(), &uri));
+                responder.respond(images::respond_timed(
+                    &app.state::<Session>(),
+                    &uri,
+                    arrived,
+                ));
             });
         })
         .invoke_handler(tauri::generate_handler![
