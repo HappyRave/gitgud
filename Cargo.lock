@@ -1732,6 +1732,7 @@ dependencies = [
  "image_dds",
  "notify",
  "proptest",
+ "rayon",
  "serde",
  "serde_json",
  "symphonia",

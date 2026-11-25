@@ -244,7 +244,9 @@ replaying at most 255 rows (spike 4.3).
   and marked stale (not dropped) on refresh; `.meta` GUIDs are kept per blob and per commit tree;
   `model_info` results per (path, commit tree), the index's / work tree's until the next refresh
   (`model/cache.rs`, 2,048 entries); a prefab build assembles each nested prefab once and parses
-  only the YAML classes it reads (`yaml::docs_reading`). On disk (`disk_cache.rs`,
+  only the YAML classes it reads (`yaml::docs_reading`, in parallel past 1 MB); each level's nested
+  prefabs are read and parsed together ahead of the walk, model `.meta`s once per build, and `.mat`
+  files after the walk, read together (`Files::prefetch`, rayon). On disk (`disk_cache.rs`,
   `.git/gitgud/cache/`, keys include the app version, LRU-pruned to 1 GB in the background on
   open): scene / prefab `model_info` at commit trees, and shrunk textures by content
   (`Repo::shrink_texture`); Settings › Caches › 3D previews shows and clears it. Reopening a repo

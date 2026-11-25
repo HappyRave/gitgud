@@ -201,7 +201,8 @@ impl GuidIndex {
 }
 
 /// Collects the `.meta` files under `dir`; listing a folder gives each file's size and
-/// time without opening it, so only new or changed files are read.
+/// time without opening it, so only new or changed files are read. Folders are
+/// walked in parallel.
 fn walk_metas(
     root: &Path,
     dir: &Path,
@@ -209,9 +210,11 @@ fn walk_metas(
     out: &mut HashMap<String, MetaStamp>,
     reread: &mut usize,
 ) {
+    use rayon::prelude::*;
     let Ok(entries) = fs::read_dir(dir) else {
         return;
     };
+    let mut dirs = Vec::new();
     for entry in entries.flatten() {
         let name = entry.file_name();
         let name = name.to_string_lossy();
@@ -223,7 +226,7 @@ fn walk_metas(
             continue;
         };
         if kind.is_dir() || (kind.is_symlink() && path.is_dir()) {
-            walk_metas(root, &path, previous, out, reread);
+            dirs.push(path);
             continue;
         }
         if !name.ends_with(".meta") {
@@ -253,6 +256,19 @@ fn walk_metas(
                 guid,
             },
         );
+    }
+    let found: Vec<_> = dirs
+        .par_iter()
+        .map(|d| {
+            let mut out = HashMap::new();
+            let mut reread = 0;
+            walk_metas(root, d, previous, &mut out, &mut reread);
+            (out, reread)
+        })
+        .collect();
+    for (metas, n) in found {
+        out.extend(metas);
+        *reread += n;
     }
 }
 

@@ -151,6 +151,13 @@ pub(crate) struct PrefabBuilder<'a, 'g> {
     pub missing: Vec<String>,
     /// Nested prefabs already assembled, by path and depth: a prefab is often placed many times.
     nested: HashMap<(String, usize), Tree>,
+    /// Model `.meta`s already read, by model path: a scene names the same few thousands of times.
+    metas: HashMap<String, std::rc::Rc<Meta>>,
+    /// `.mat` files to load into `materials` once the walk is done, by index: their
+    /// files are then read together.
+    unloaded: Vec<(usize, String)>,
+    /// Nested prefabs read and parsed ahead of the walk, by path: text and documents.
+    parsed: HashMap<String, (String, Vec<Doc>)>,
 }
 
 impl<'a, 'g> PrefabBuilder<'a, 'g> {
@@ -161,7 +168,26 @@ impl<'a, 'g> PrefabBuilder<'a, 'g> {
             material_ix: HashMap::new(),
             missing: Vec::new(),
             nested: HashMap::new(),
+            metas: HashMap::new(),
+            unloaded: Vec::new(),
+            parsed: HashMap::new(),
         }
+    }
+
+    /// The `.meta` of model `path`, read once per build (empty when there is none).
+    fn model_meta(&mut self, path: &str) -> Result<std::rc::Rc<Meta>, Error> {
+        if let Some(meta) = self.metas.get(path) {
+            return Ok(meta.clone());
+        }
+        let meta = std::rc::Rc::new(
+            self.guids
+                .files
+                .read_text(&format!("{path}.meta"))?
+                .map(|t| Meta::parse(&t))
+                .unwrap_or_default(),
+        );
+        self.metas.insert(path.to_owned(), meta.clone());
+        Ok(meta)
     }
 
     /// Assembles the prefab at `path`.
@@ -171,7 +197,14 @@ impl<'a, 'g> PrefabBuilder<'a, 'g> {
             .files
             .read_text(path)?
             .ok_or_else(|| Error::Refused(format!("{path} is not in that version")))?;
-        let tree = self.tree(path, &text, 0)?;
+        let docs = parse(&text);
+        let tree = self.tree(path, &text, docs, 0)?;
+        let unloaded = std::mem::take(&mut self.unloaded);
+        let paths: Vec<String> = unloaded.iter().map(|(_, p)| p.clone()).collect();
+        self.guids.files.prefetch(&paths);
+        for (ix, p) in unloaded {
+            self.materials[ix] = Material::load(&p, self.guids)?;
+        }
         let keep: Vec<usize> = (0..tree.nodes.len())
             .filter(|&i| !tree.nodes[i].removed)
             .collect();
@@ -195,8 +228,56 @@ impl<'a, 'g> PrefabBuilder<'a, 'g> {
         Ok((scene, self.materials))
     }
 
-    fn tree(&mut self, path: &str, text: &str, depth: usize) -> Result<Tree, Error> {
-        let docs = docs_reading(text, |class, stripped| stripped || READ.contains(&class));
+    /// Reads and parses the prefabs `docs` place, all at once and in parallel, for
+    /// the walk to find in `parsed`.
+    fn parse_nested(&mut self, docs: &[Doc], depth: usize) -> Result<(), Error> {
+        use rayon::prelude::*;
+        if depth >= MAX_DEPTH {
+            return Ok(());
+        }
+        let mut paths = Vec::new();
+        for d in docs
+            .iter()
+            .filter(|d| d.class_id == PREFAB_INSTANCE && !d.stripped)
+        {
+            let Some(guid) = obj_ref(&d.body["m_SourcePrefab"]).and_then(|r| r.guid) else {
+                continue;
+            };
+            if let Some(src) = self.guids.path(&guid)?
+                && model_kind(&src) == Some(ModelKind::Prefab)
+                && !self.nested.contains_key(&(src.clone(), depth + 1))
+                && !self.parsed.contains_key(&src)
+                && !paths.contains(&src)
+            {
+                paths.push(src);
+            }
+        }
+        self.guids.files.prefetch(&paths);
+        let mut texts = Vec::with_capacity(paths.len());
+        for p in paths {
+            if let Some(text) = self.guids.files.read_text(&p)? {
+                texts.push((p, text));
+            }
+        }
+        let parsed: Vec<_> = texts
+            .into_par_iter()
+            .map(|(p, text)| {
+                let docs = parse(&text);
+                (p, (text, docs))
+            })
+            .collect();
+        self.parsed.extend(parsed);
+        Ok(())
+    }
+
+    fn tree(
+        &mut self,
+        path: &str,
+        text: &str,
+        docs: Vec<Doc>,
+        depth: usize,
+    ) -> Result<Tree, Error> {
+        self.parse_nested(&docs, depth)?;
         let by_id: HashMap<i64, &Doc> = docs.iter().map(|d| (id(&d.file_id), d)).collect();
         let mesh_keys = if docs.iter().any(|d| d.class_id == MESH) {
             mesh_asset::mesh_documents(text)
@@ -426,10 +507,17 @@ impl<'a, 'g> PrefabBuilder<'a, 'g> {
                 if let Some(tree) = self.nested.get(&key) {
                     tree.clone()
                 } else {
-                    let Some(text) = self.guids.files.read_text(&src)? else {
-                        return Ok(None);
+                    let (text, docs) = match self.parsed.remove(&src) {
+                        Some(parsed) => parsed,
+                        None => {
+                            let Some(text) = self.guids.files.read_text(&src)? else {
+                                return Ok(None);
+                            };
+                            let docs = parse(&text);
+                            (text, docs)
+                        }
                     };
-                    let tree = self.tree(&src, &text, depth + 1)?;
+                    let tree = self.tree(&src, &text, docs, depth + 1)?;
                     self.nested.insert(key, tree.clone());
                     tree
                 }
@@ -473,12 +561,7 @@ impl<'a, 'g> PrefabBuilder<'a, 'g> {
 
     /// A model file dropped into a prefab: one node that draws the whole model.
     fn model_instance(&mut self, path: &str) -> Result<Tree, Error> {
-        let meta = self
-            .guids
-            .files
-            .read_text(&format!("{path}.meta"))?
-            .map(|t| Meta::parse(&t))
-            .unwrap_or_default();
+        let meta = self.model_meta(path)?;
         let stem = base_name(path);
         let name = stem.rsplit_once('.').map_or(stem, |(s, _)| s).to_owned();
         Ok(Tree {
@@ -623,12 +706,7 @@ impl<'a, 'g> PrefabBuilder<'a, 'g> {
             ));
             return Ok(Some(MeshRef::Missing));
         };
-        let meta = self
-            .guids
-            .files
-            .read_text(&format!("{path}.meta"))?
-            .map(|t| Meta::parse(&t))
-            .unwrap_or_default();
+        let meta = self.model_meta(&path)?;
         let scale = if meta.global_scale > 0.0 {
             meta.global_scale
         } else {
@@ -673,7 +751,19 @@ impl<'a, 'g> PrefabBuilder<'a, 'g> {
             Some(r) => {
                 let guid = r.guid.clone().unwrap_or_default();
                 match self.guids.path(&guid)? {
-                    Some(p) => Material::load(&p, self.guids)?,
+                    Some(p) => {
+                        let m = Material::missing(base_name(&p));
+                        // A material inside a model file has no YAML to read.
+                        if !matches!(
+                            model_kind(&p),
+                            Some(
+                                ModelKind::Fbx | ModelKind::Obj | ModelKind::Gltf | ModelKind::Glb
+                            )
+                        ) {
+                            self.unloaded.push((self.materials.len(), p));
+                        }
+                        m
+                    }
                     None => {
                         self.missing.push(format!(
                             "{owner} › Renderer.m_Materials → guid {} (not in this version)",
@@ -689,6 +779,11 @@ impl<'a, 'g> PrefabBuilder<'a, 'g> {
         self.material_ix.insert(key, ix);
         Ok(ix)
     }
+}
+
+/// The documents of a prefab or scene the builder reads.
+fn parse(text: &str) -> Vec<Doc> {
+    docs_reading(text, |class, stripped| stripped || READ.contains(&class))
 }
 
 fn axis_ix(axis: &str) -> Option<usize> {
@@ -905,6 +1000,27 @@ mod tests {
             scene.missing,
             vec!["Lost › MeshFilter.m_Mesh → guid dead…007 (not in this version)".to_owned()]
         );
+    }
+
+    #[test]
+    fn loads_material_files_and_leaves_materials_inside_models_missing() {
+        let repo = project();
+        let prefab = [
+            HEADER.to_owned(),
+            go(100, "Deck", &[400, 2300]),
+            tf(400, 100, 0, "{x: 0, y: 0, z: 0}", "{x: 0, y: 0, z: 0, w: 1}"),
+            format!("--- !u!23 &2300\nMeshRenderer:\n  m_GameObject: {{fileID: 100}}\n  m_Materials:\n  - {{fileID: 2100000, guid: {RED}, type: 2}}\n  - {{fileID: -3033667219593020291, guid: {FBX}, type: 3}}\n  - {{fileID: 2100000, guid: {NAVY}, type: 2}}\n"),
+        ]
+        .concat();
+        repo.write("Assets/Deck.prefab", &prefab).commit_all("deck");
+        let (scene, mats) = build(&repo, "Assets/Deck.prefab");
+        let (_, deck) = named(&scene, "Deck");
+        let names: Vec<(&str, bool)> = deck
+            .materials
+            .iter()
+            .map(|&m| (mats[m].name.as_str(), mats[m].missing))
+            .collect();
+        assert_eq!(names, [("Red", false), ("hull.fbx", true), ("Navy", false)]);
     }
 
     #[test]

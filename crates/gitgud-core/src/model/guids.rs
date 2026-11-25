@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use super::meta::Meta;
 use super::tree::Files;
-use crate::repo::{Error, read_err};
+use crate::repo::{Error, Repo, read_err};
 use crate::unity::find_unity_root;
 use crate::unity_yaml::{GuidIndex, repo_guid_index};
 
@@ -84,26 +84,26 @@ impl<'a> Guids<'a> {
     fn scan(&self) -> Result<HashMap<String, String>, Error> {
         let mut out = HashMap::new();
         let repo = self.files.repo;
-        let gix = repo.gix();
         let mut known = repo
             .meta_blob_guids
             .lock()
             .expect("meta blob guids lock poisoned");
-        for (i, p) in self.files.paths().iter().enumerate() {
-            let Some(asset) = p.strip_suffix(".meta") else {
-                continue;
-            };
+        let metas: Vec<usize> = (0..self.files.paths().len())
+            .filter(|&i| self.files.paths()[i].ends_with(".meta"))
+            .collect();
+        let unread: Vec<gix::ObjectId> = metas
+            .iter()
+            .filter_map(|&i| self.files.blob(i))
+            .filter(|id| !known.contains_key(id))
+            .collect();
+        for (id, g) in read_guids(repo, &unread)? {
+            known.insert(id, g);
+        }
+        for i in metas {
+            let p = &self.files.paths()[i];
+            let asset = &p[..p.len() - ".meta".len()];
             let guid = match self.files.blob(i) {
-                Some(id) => match known.get(&id) {
-                    Some(g) => g.clone(),
-                    None => {
-                        let blob = gix.find_blob(id).map_err(read_err)?;
-                        let head = &blob.data[..blob.data.len().min(1024)];
-                        let g = Meta::guid_only(&String::from_utf8_lossy(head));
-                        known.insert(id, g.clone());
-                        g
-                    }
-                },
+                Some(id) => known.get(&id).cloned().flatten(),
                 None => self.files.read_text(p)?.and_then(|t| Meta::guid_only(&t)),
             };
             if let Some(g) = guid {
@@ -112,6 +112,24 @@ impl<'a> Guids<'a> {
         }
         Ok(out)
     }
+}
+
+/// The GUIDs of the `.meta` blobs `ids`, read in parallel (a project has thousands).
+fn read_guids(
+    repo: &Repo,
+    ids: &[gix::ObjectId],
+) -> Result<Vec<(gix::ObjectId, Option<String>)>, Error> {
+    use rayon::prelude::*;
+    ids.par_iter()
+        .map_init(
+            || repo.gix(),
+            |gix, &id| {
+                let blob = gix.find_blob(id).map_err(read_err)?;
+                let head = &blob.data[..blob.data.len().min(1024)];
+                Ok((id, Meta::guid_only(&String::from_utf8_lossy(head))))
+            },
+        )
+        .collect()
 }
 
 impl Meta {

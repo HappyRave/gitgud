@@ -596,6 +596,7 @@ impl Repo {
         };
         if kind == ModelKind::Prefab {
             let (mut scene, materials) = prefab::PrefabBuilder::new(&guids).build(path)?;
+            let mut clips: HashMap<String, Vec<(String, ClipSource)>> = HashMap::new();
             for (node, controller) in scene
                 .nodes
                 .iter()
@@ -603,8 +604,16 @@ impl Repo {
                 .filter_map(|(i, n)| Some((i, n.controller.clone()?)))
                 .collect::<Vec<_>>()
             {
-                for (name, source) in anim::controller_clips(&controller, &guids)? {
-                    scene.clips.push(SceneClip { node, name, source });
+                if !clips.contains_key(&controller) {
+                    let found = anim::controller_clips(&controller, &guids)?;
+                    clips.insert(controller.clone(), found);
+                }
+                for (name, source) in &clips[&controller] {
+                    scene.clips.push(SceneClip {
+                        node,
+                        name: name.clone(),
+                        source: source.clone(),
+                    });
                 }
             }
             info.models = self.used_model_infos(git, &scene, version);

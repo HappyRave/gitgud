@@ -1,3 +1,4 @@
+use rayon::prelude::*;
 use yaml_rust2::{Yaml, YamlLoader};
 
 use crate::unity_yaml::parse_doc_header;
@@ -24,40 +25,45 @@ pub(crate) fn docs(text: &str) -> Vec<Doc> {
     docs_reading(text, |_, _| true)
 }
 
+/// Bodies to parse, in bytes, from which they are parsed on several threads.
+const PARALLEL_FROM: usize = 1 << 20;
+
+/// A document's header and, when it is to be parsed, its body.
+type Part<'t> = ((u32, String, bool), Option<&'t str>);
+
 /// As [`docs`], but only documents `read(class, stripped)` accepts are parsed; the
 /// others keep their header with a `Null` body (a scene's meshes, particle systems
-/// and scripts are most of its bytes).
+/// and scripts are most of its bytes). A big file's documents are parsed in parallel.
 pub(crate) fn docs_reading(text: &str, read: impl Fn(u32, bool) -> bool) -> Vec<Doc> {
-    let mut out = Vec::new();
-    let mut cur: Option<((u32, String, bool), Option<String>)> = None;
-    for line in text.lines() {
-        if let Some(header) = parse_doc_header(line) {
-            if let Some((h, body)) = cur.take() {
-                push(&mut out, h, body.as_deref());
+    let mut parts: Vec<Part<'_>> = Vec::new();
+    let mut cur: Option<((u32, String, bool), Option<usize>)> = None;
+    let mut at = 0;
+    for line in text.split_inclusive('\n') {
+        if let Some(header) = parse_doc_header(line.trim_end_matches(['\n', '\r'])) {
+            if let Some((h, start)) = cur.take() {
+                parts.push((h, start.map(|s| &text[s..at])));
             }
-            let body = read(header.0, header.2).then(String::new);
-            cur = Some((header, body));
-        } else if let Some((_, Some(body))) = cur.as_mut() {
-            body.push_str(line);
-            body.push('\n');
+            let start = read(header.0, header.2).then_some(at + line.len());
+            cur = Some((header, start));
         }
+        at += line.len();
     }
-    if let Some((h, body)) = cur {
-        push(&mut out, h, body.as_deref());
+    if let Some((h, start)) = cur {
+        parts.push((h, start.map(|s| &text[s..])));
     }
-    out
+
+    let size: usize = parts.iter().filter_map(|p| p.1).map(str::len).sum();
+    if size < PARALLEL_FROM {
+        return parts.into_iter().filter_map(parse).collect();
+    }
+    parts.into_par_iter().filter_map(parse).collect()
 }
 
-fn push(
-    out: &mut Vec<Doc>,
-    (class_id, file_id, stripped): (u32, String, bool),
-    body: Option<&str>,
-) {
+/// The document `part` describes; `None` when its body doesn't parse.
+fn parse(((class_id, file_id, stripped), body): Part<'_>) -> Option<Doc> {
     let body = match body {
         Some(text) => {
-            let Ok(mut parsed) = YamlLoader::load_from_str(text) else {
-                return;
-            };
+            let mut parsed = YamlLoader::load_from_str(text).ok()?;
             let root = parsed.pop().unwrap_or(Yaml::Null);
             root.as_hash()
                 .and_then(|h| h.values().next().cloned())
@@ -65,12 +71,12 @@ fn push(
         }
         None => Yaml::Null,
     };
-    out.push(Doc {
+    Some(Doc {
         class_id,
         file_id,
         stripped,
         body,
-    });
+    })
 }
 
 /// A scalar as text, whatever YAML typed it as.
@@ -177,6 +183,41 @@ mod tests {
                 file_id: "100100000".into(),
                 guid: Some("0123456789abcdef0123456789abcdef".into())
             })
+        );
+    }
+
+    #[test]
+    fn parses_a_big_file_on_threads_in_order() {
+        let mut text = String::from("%YAML 1.1\n");
+        for i in 0..20_000 {
+            text.push_str(&format!(
+                "--- !u!1 &{i}\r\nGameObject:\r\n  m_Name: Object number {i} with a longer name\r\n  m_IsActive: 1\r\n"
+            ));
+            if i % 1000 == 0 {
+                text.push_str(&format!(
+                    "--- !u!43 &{}\nMesh:\n  m_Name: skipped\n",
+                    i + 1_000_000
+                ));
+            }
+        }
+        assert!(text.len() > PARALLEL_FROM);
+        let d = docs_reading(&text, |class, _| class == 1);
+        assert_eq!(d.len(), 20_020);
+        let objects: Vec<&Doc> = d.iter().filter(|x| x.class_id == 1).collect();
+        assert!(
+            objects
+                .iter()
+                .enumerate()
+                .all(|(i, x)| x.file_id == i.to_string())
+        );
+        assert_eq!(
+            scalar(&objects[19_999].body["m_Name"]).as_deref(),
+            Some("Object number 19999 with a longer name")
+        );
+        assert!(
+            d.iter()
+                .filter(|x| x.class_id == 43)
+                .all(|x| x.body.is_null())
         );
     }
 

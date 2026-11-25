@@ -20,6 +20,8 @@ pub(crate) struct Files<'a> {
     listed: Arc<Listed>,
     /// Gitignored files used from disk, for the viewer's note.
     from_disk: RefCell<BTreeSet<String>>,
+    /// Files read ahead by [`Files::prefetch`], handed out once.
+    prefetched: RefCell<HashMap<String, Vec<u8>>>,
 }
 
 /// A version's file list with a lookup by file name; built once per commit tree (and
@@ -30,6 +32,44 @@ pub(crate) struct Listed {
     blobs: Vec<gix::ObjectId>,
     by_name: HashMap<String, Vec<usize>>,
     tree: Option<gix::ObjectId>,
+}
+
+#[derive(Clone, Copy)]
+enum Source {
+    Blob(gix::ObjectId),
+    Disk,
+    /// Asked of the repo at the version (the index or the work tree).
+    Version,
+}
+
+/// What reading a file needs, without the per-build state, so threads can share it.
+#[derive(Clone, Copy)]
+struct Fetcher<'a> {
+    repo: &'a Repo,
+    version: &'a Version,
+    git: Option<&'a GitCli>,
+}
+
+impl Fetcher<'_> {
+    fn fetch(self, path: &str, source: Source) -> Result<Option<Vec<u8>>, Error> {
+        let read = match source {
+            Source::Blob(id) => self.repo.blob(id),
+            Source::Disk => std::fs::read(self.repo.root().join(path))
+                .map_err(|e| Error::Read(format!("{path}: {e}"))),
+            Source::Version => self.repo.file_at(path, self.version),
+        };
+        let bytes = match read {
+            Ok(b) => b,
+            Err(Error::Refused(_)) => return Ok(None),
+            Err(e) => return Err(e),
+        };
+        if parse_lfs_pointer(&bytes).is_none() {
+            return Ok(Some(bytes));
+        }
+        self.repo
+            .lfs_resolve_with_fetch(self.git, path, bytes, AUTO_FETCH_MAX_BYTES)
+            .map(Some)
+    }
 }
 
 /// How many listings a repo keeps: both sides of a few recent comparisons.
@@ -45,6 +85,7 @@ impl<'a> Files<'a> {
             tree: listed.tree,
             listed,
             from_disk: RefCell::new(BTreeSet::new()),
+            prefetched: RefCell::new(HashMap::new()),
         })
     }
 
@@ -133,30 +174,52 @@ impl<'a> Files<'a> {
     /// # Errors
     /// [`Error::Refused`] when the LFS object isn't downloaded and can't be fetched.
     pub fn read(&self, path: &str) -> Result<Option<Vec<u8>>, Error> {
-        let blob = if self.listed.blobs.is_empty() {
-            None
-        } else {
-            match self.index_of(path).and_then(|i| self.blob(i)) {
-                Some(id) => Some(id),
-                None if self.has(path) => None,
-                None => return Ok(None),
-            }
-        };
-        let read = match blob {
-            Some(id) => self.repo.blob(id),
-            None => self.repo.file_at(path, self.version),
-        };
-        let bytes = match read {
-            Ok(b) => b,
-            Err(Error::Refused(_)) => return Ok(None),
-            Err(e) => return Err(e),
-        };
-        if parse_lfs_pointer(&bytes).is_none() {
+        if let Some(bytes) = self.prefetched.borrow_mut().remove(path) {
             return Ok(Some(bytes));
         }
-        self.repo
-            .lfs_resolve_with_fetch(self.git, path, bytes, AUTO_FETCH_MAX_BYTES)
-            .map(Some)
+        match self.source(path) {
+            Some(source) => self.fetcher().fetch(path, source),
+            None => Ok(None),
+        }
+    }
+
+    /// Reads `paths` in parallel, so the next [`Files::read`] of each is immediate
+    /// (each file open costs a millisecond or two on Windows). A file that fails is
+    /// left for that read to report.
+    pub fn prefetch(&self, paths: &[String]) {
+        use rayon::prelude::*;
+        let wanted: Vec<(&String, Source)> = paths
+            .iter()
+            .filter(|p| !self.prefetched.borrow().contains_key(*p))
+            .filter_map(|p| Some((p, self.source(p)?)))
+            .collect();
+        let fetcher = self.fetcher();
+        let read: Vec<(String, Vec<u8>)> = wanted
+            .par_iter()
+            .filter_map(|(p, source)| Some(((*p).clone(), fetcher.fetch(p, *source).ok()??)))
+            .collect();
+        self.prefetched.borrow_mut().extend(read);
+    }
+
+    /// Where `path` is read from at this version; `None` when it isn't there.
+    fn source(&self, path: &str) -> Option<Source> {
+        if self.listed.blobs.is_empty() {
+            return Some(Source::Version);
+        }
+        match self.index_of(path).and_then(|i| self.blob(i)) {
+            Some(id) => Some(Source::Blob(id)),
+            // Not in this version but readable: a gitignored file on disk.
+            None if self.has(path) => Some(Source::Disk),
+            None => None,
+        }
+    }
+
+    fn fetcher(&self) -> Fetcher<'a> {
+        Fetcher {
+            repo: self.repo,
+            version: self.version,
+            git: self.git,
+        }
     }
 
     pub fn read_text(&self, path: &str) -> Result<Option<String>, Error> {
@@ -389,6 +452,34 @@ mod tests {
                 Some("Assets/Other/hull.png")
             );
             assert_eq!(files.find_near("nope.png", "Assets/Boat/boat.fbx"), None);
+        }
+    }
+
+    #[test]
+    fn prefetched_files_read_like_the_version_once() {
+        let repo = TestRepo::init();
+        repo.write(".gitignore", "Pack/\n")
+            .write("Assets/a.mat", "committed")
+            .commit_all("one");
+        repo.write("Assets/a.mat", "edited")
+            .write("Pack/b.mat", "on disk");
+        let r = crate::repo::open(repo.path()).unwrap();
+        let paths = ["Assets/a.mat", "Pack/b.mat", "Assets/none.mat"].map(String::from);
+        for (v, a) in [(Version::Head, "committed"), (Version::Worktree, "edited")] {
+            let files = Files::new(&r, &v).unwrap();
+            files.prefetch(&paths);
+            repo.write("Pack/b.mat", "changed after");
+            assert_eq!(files.read_text("Assets/a.mat").unwrap().as_deref(), Some(a));
+            assert_eq!(
+                files.read_text("Pack/b.mat").unwrap().as_deref(),
+                Some("on disk")
+            );
+            assert_eq!(
+                files.read_text("Pack/b.mat").unwrap().as_deref(),
+                Some("changed after")
+            );
+            assert_eq!(files.read_text("Assets/none.mat").unwrap(), None);
+            repo.write("Pack/b.mat", "on disk");
         }
     }
 
