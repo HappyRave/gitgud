@@ -6,6 +6,7 @@ use std::process::Command;
 use serde::{Deserialize, Serialize, Serializer};
 
 use crate::cli::no_console_window;
+pub use crate::git_choice::GitChoice;
 
 /// Oldest system git gitgud accepts (spec §2).
 pub const MIN_GIT: GitVersion = GitVersion {
@@ -28,6 +29,7 @@ pub enum GitSource {
     #[default]
     System,
     Bundled,
+    Custom,
 }
 
 /// A git release, compared by major, minor, then patch.
@@ -118,6 +120,10 @@ pub enum Error {
     UnparsableVersion(String),
     #[error("git {found} is too old; gitgud needs {min} or newer")]
     TooOld { found: GitVersion, min: GitVersion },
+    #[error("the embedded git is missing from this gitgud install")]
+    NoEmbedded,
+    #[error("{0} is not a git executable")]
+    NotAFile(PathBuf),
 }
 
 impl Serialize for Error {
@@ -202,16 +208,63 @@ pub fn bundled_git_candidates() -> Vec<PathBuf> {
     out
 }
 
-/// Finds `git` on the process `PATH`, falling back to a bundled MinGit executable when missing
-/// or older than [`MIN_GIT`].
+/// Finds the git picked in Settings ([`GitChoice::load`]).
 ///
 /// # Errors
-/// See [`locate_with_fallback`].
+/// See [`locate_choice`].
 pub fn locate() -> Result<GitInfo, Error> {
-    locate_with_fallback(
-        std::env::var_os("PATH").unwrap_or_default(),
-        &bundled_git_candidates(),
-    )
+    locate_choice(&GitChoice::load())
+}
+
+/// Finds the git `choice` names. `Auto` takes `git` on `PATH` and falls back to the embedded
+/// MinGit when it is missing or older than [`MIN_GIT`]; the other modes never fall back.
+///
+/// # Errors
+/// The chosen git is missing, can't run, or is older than [`MIN_GIT`].
+pub fn locate_choice(choice: &GitChoice) -> Result<GitInfo, Error> {
+    let path_var = std::env::var_os("PATH").unwrap_or_default();
+    match choice {
+        GitChoice::Auto => locate_with_fallback(path_var, &bundled_git_candidates()),
+        GitChoice::System => locate_in(path_var),
+        GitChoice::Embedded => {
+            let path = embedded_git().ok_or(Error::NoEmbedded)?;
+            checked(path, GitSource::Bundled)
+        }
+        GitChoice::Custom { path } => {
+            if !path.is_file() {
+                return Err(Error::NotAFile(path.clone()));
+            }
+            checked(path.clone(), GitSource::Custom)
+        }
+    }
+}
+
+/// The system git on `PATH`, whatever its version.
+#[must_use]
+pub fn system_git() -> Option<PathBuf> {
+    let cwd = std::env::current_dir().ok()?;
+    which::which_in("git", std::env::var_os("PATH"), cwd).ok()
+}
+
+/// The embedded MinGit shipped with this install, whatever its version.
+#[must_use]
+pub fn embedded_git() -> Option<PathBuf> {
+    bundled_git_candidates().into_iter().find(|p| p.is_file())
+}
+
+fn checked(path: PathBuf, source: GitSource) -> Result<GitInfo, Error> {
+    let version = version_of(&path)?;
+    if version < MIN_GIT {
+        return Err(Error::TooOld {
+            found: version,
+            min: MIN_GIT,
+        });
+    }
+    Ok(GitInfo {
+        path,
+        version,
+        source,
+    })
 }
 
 /// Finds `git` on `search_path`, or falls back to the first valid executable in `bundled_candidates`.
@@ -252,21 +305,18 @@ pub fn locate_with_fallback(
 pub fn locate_in(search_path: impl AsRef<OsStr>) -> Result<GitInfo, Error> {
     let cwd = std::env::current_dir().map_err(|_| Error::NotFound)?;
     let path = which::which_in("git", Some(search_path), cwd).map_err(|_| Error::NotFound)?;
-    let version = version_of(&path)?;
-    if version < MIN_GIT {
-        return Err(Error::TooOld {
-            found: version,
-            min: MIN_GIT,
-        });
-    }
-    Ok(GitInfo {
-        path,
-        version,
-        source: GitSource::System,
-    })
+    checked(path, GitSource::System)
 }
 
 fn version_of(git: &Path) -> Result<GitVersion, Error> {
+    GitVersion::parse(&version_text(git)?)
+}
+
+/// `git --version` output, trimmed (`git version 2.56.1.windows.1`).
+///
+/// # Errors
+/// [`Error::Spawn`] or [`Error::UnparsableVersion`] when git fails.
+pub fn version_text(git: &Path) -> Result<String, Error> {
     let spawn_err = |source| Error::Spawn {
         path: git.to_owned(),
         source,
@@ -280,7 +330,7 @@ fn version_of(git: &Path) -> Result<GitVersion, Error> {
             String::from_utf8_lossy(&out.stderr).into_owned(),
         ));
     }
-    GitVersion::parse(&String::from_utf8_lossy(&out.stdout))
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
 }
 
 #[cfg(test)]

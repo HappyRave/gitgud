@@ -15,7 +15,7 @@ pub struct GitCli {
 
 impl GitCli {
     pub fn new(info: &GitInfo) -> Self {
-        let extra_path = (info.source == GitSource::Bundled)
+        let extra_path = (info.source != GitSource::System)
             .then(|| info.path.parent().map(Path::to_path_buf))
             .flatten();
         Self {

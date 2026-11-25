@@ -5,7 +5,56 @@ import { open } from "@tauri-apps/plugin-dialog";
 export interface GitInfo {
   path: string;
   version: string;
-  source?: "system" | "bundled";
+  source?: GitSource;
+}
+
+export type GitSource = "system" | "bundled" | "custom";
+
+export type GitChoice = { mode: "auto" } | { mode: "system" } | { mode: "embedded" } | { mode: "custom"; path: string };
+
+export interface GitInstall {
+  path: string;
+  version: string | null;
+  error: string | null;
+  lfsVersion: string | null;
+  lfsOk: boolean;
+  credentialHelpers: string[];
+  credentialManager: string | null;
+}
+
+export interface GitInventory {
+  choice: GitChoice;
+  active: GitInfo | null;
+  activeError: string | null;
+  system: GitInstall | null;
+  embedded: GitInstall | null;
+  custom: GitInstall | null;
+  minGit: string;
+  settingsPath: string | null;
+}
+
+export interface LatestGit {
+  version: string;
+  systemBehind: boolean;
+  embeddedBehind: boolean;
+}
+
+export type SystemUpdate = { kind: "upToDate"; message: string } | { kind: "installerStarted"; message: string };
+
+export interface ConfigRow {
+  scope: "system" | "global";
+  key: string;
+  system: string[];
+  embedded: string[];
+  differs: boolean;
+}
+
+export interface RemoteCheck {
+  remote: string;
+  url: string;
+  ok: boolean;
+  elapsedMs: number;
+  message: string | null;
 }
 
 export type Head = { kind: "branch"; name: string } | { kind: "unborn"; name: string } | { kind: "detached"; id: string };
@@ -789,7 +838,7 @@ export interface ToolDiagnostics {
   gitPath: string;
   gitVersion: string;
   lfsVersion: string | null;
-  gitSource?: "system" | "bundled";
+  gitSource?: GitSource;
   lfsOk?: boolean;
 }
 
@@ -1130,6 +1179,13 @@ export interface Commands {
   config_get_identity: { args: { id?: number | null }; result: IdentityConfig };
   config_set_identity: { args: { id?: number | null; name: string; email: string }; result: null };
   tool_diagnostics: { args: Record<string, never>; result: ToolDiagnostics };
+  git_inventory: { args: Record<string, never>; result: GitInventory };
+  git_set_choice: { args: { choice: GitChoice }; result: GitInventory };
+  git_latest: { args: Record<string, never>; result: LatestGit };
+  git_update_system: { args: Record<string, never>; result: SystemUpdate };
+  git_install_system: { args: Record<string, never>; result: null };
+  git_config_compare: { args: Record<string, never>; result: ConfigRow[] };
+  git_check_remote: { args: { id: number }; result: RemoteCheck };
   unity_info: { args: { id: number }; result: UnityInfo };
   unity_configure_smart_merge: { args: { id: number; toolPath?: string | null }; result: UnityInfo };
   unity_meta_issues: { args: { id: number }; result: MetaIssue[] };
@@ -1252,7 +1308,10 @@ export interface Commands {
   cancel_clone: { args: Record<string, never>; result: boolean };
   fetch_many: { args: { paths: string[] }; result: RepoSummary[] };
   "plugin:window|set_title": { args: { label: string; value: string }; result: null };
-  "plugin:dialog|open": { args: { options: { directory: boolean; title: string } }; result: string | null };
+  "plugin:dialog|open": {
+    args: { options: { directory: boolean; title: string; filters?: { name: string; extensions: string[] }[] } };
+    result: string | null;
+  };
 }
 
 function call<K extends keyof Commands>(cmd: K, args?: Commands[K]["args"]): Promise<Commands[K]["result"]> {
@@ -1330,6 +1389,13 @@ export const configGetIdentity = (id: number | null = null) => call("config_get_
 export const configSetIdentity = (id: number | null, name: string, email: string) =>
   call("config_set_identity", { id, name, email });
 export const toolDiagnostics = () => call("tool_diagnostics");
+export const gitInventory = () => call("git_inventory");
+export const gitSetChoice = (choice: GitChoice) => call("git_set_choice", { choice });
+export const gitLatest = () => call("git_latest");
+export const gitUpdateSystem = () => call("git_update_system");
+export const gitInstallSystem = () => call("git_install_system");
+export const gitConfigCompare = () => call("git_config_compare");
+export const gitCheckRemote = (id: number) => call("git_check_remote", { id });
 export const stashSave = (id: number, message: string | null, includeUntracked: boolean) =>
   call("stash_save", { id, message, includeUntracked });
 export const stashApply = (id: number, index: number) => call("stash_apply", { id, index });
@@ -1404,6 +1470,10 @@ export const setWindowTitle = (value: string) => call("plugin:window|set_title",
 
 /** Native folder picker; `null` when cancelled. */
 export const pickFolder = (title = "Open repository") => open({ directory: true, title });
+
+/** Native picker for a git executable; `null` when cancelled. */
+export const pickGitExe = () =>
+  open({ directory: false, title: "Choose git.exe", filters: [{ name: "git", extensions: ["exe"] }] });
 
 export const libraryLoad = () => call("library_load", {});
 export const librarySummaries = (paths: string[]) => call("library_summaries", { paths });

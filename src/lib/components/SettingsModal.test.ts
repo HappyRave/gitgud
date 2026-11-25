@@ -66,12 +66,21 @@ describe("SettingsModal", () => {
         return null;
       },
       cache_stats: () => stats({ commitGraphBytes: graph }),
+      git_inventory: () => ({
+        choice: { mode: "auto" },
+        active: { path: "C:/Git/cmd/git.exe", version: "2.56.1", source: "system" },
+        activeError: null,
+        system: null,
+        embedded: null,
+        custom: null,
+        minGit: "2.45.2",
+        settingsPath: null,
+      }),
     });
 
     render(SettingsModal, { activeRepoId: 7, activeRepoName: "boat", onclose: vi.fn() });
 
     expect(await screen.findByText("2.56.1")).toBeInTheDocument();
-    expect(screen.getByText("git-lfs/3.6.0")).toBeInTheDocument();
     expect((screen.getByLabelText("user.name") as HTMLInputElement).value).toBe("Global Max");
 
     await fireEvent.click(screen.getByRole("button", { name: "boat" }));

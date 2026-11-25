@@ -65,7 +65,7 @@ fn a_clean_merge_commits_and_undo_takes_it_back() {
 fn prediction_names_the_conflicts_and_changes_nothing() {
     let (repo, session, id) = diverged();
     let open = session.get(id).unwrap();
-    let git = session.git().unwrap();
+    let git = &*session.git().unwrap();
 
     assert_eq!(open.repo.predict_merge(git, "other").unwrap(), ["a.txt"]);
     repo.git(&["branch", "fresh", "HEAD~1"]);
@@ -232,7 +232,7 @@ fn conflict_text_chunks_the_file_like_git() {
 
     let text = open
         .repo
-        .conflict_text(session.git().unwrap(), "a.txt")
+        .conflict_text(&session.git().unwrap(), "a.txt")
         .unwrap();
 
     assert!(text.final_newline);
@@ -273,7 +273,7 @@ fn files_that_contain_marker_lines_still_parse() {
         .get(id)
         .unwrap()
         .repo
-        .conflict_text(session.git().unwrap(), "t.txt")
+        .conflict_text(&session.git().unwrap(), "t.txt")
         .unwrap();
 
     assert_eq!(

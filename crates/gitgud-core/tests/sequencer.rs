@@ -17,7 +17,7 @@ fn cherry_pick_and_revert_clean_and_undoable() {
 
     let session = Session::default();
     let id = session.open(repo.path()).unwrap().id;
-    let git = session.git().unwrap();
+    let git = &*session.git().unwrap();
     assert!(
         session
             .get(id)
@@ -61,7 +61,7 @@ fn conflicted_cherry_pick_resolves_continues_and_undoes() {
 
     let session = Session::default();
     let id = session.open(repo.path()).unwrap().id;
-    let git = session.git().unwrap();
+    let git = &*session.git().unwrap();
     assert_eq!(
         session
             .get(id)

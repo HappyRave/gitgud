@@ -2,6 +2,8 @@ import { mockIPC } from "@tauri-apps/api/mocks";
 import type {
   Commands,
   Conflict,
+  GitChoice,
+  GitInventory,
   HistoryPlan,
   LibrarySnapshot,
   MergeState,
@@ -25,6 +27,41 @@ export function installMock(scenario: string) {
   const now = Math.floor(Date.now() / 1000);
   let graphVersion = 0;
   let commitGraphBuilt = false;
+  let gitChoice: GitChoice = { mode: "auto" };
+  const gitInv = (): GitInventory => {
+    const system = {
+      path: "C:/Program Files/Git/cmd/git.exe",
+      version: "2.55.0.windows.2",
+      error: null,
+      lfsVersion: "3.7.0",
+      lfsOk: true,
+      credentialHelpers: ["manager"],
+      credentialManager: "2.8.0",
+    };
+    const embedded = {
+      path: "C:/Users/Max/AppData/Local/gitgud/resources/git/cmd/git.exe",
+      version: "2.56.1.windows.1",
+      error: null,
+      lfsVersion: "3.8.1",
+      lfsOk: true,
+      credentialHelpers: ["manager"],
+      credentialManager: "2.9.1",
+    };
+    const custom =
+      gitChoice.mode === "custom" ? { ...system, path: gitChoice.path, version: "2.47.1", credentialManager: null } : null;
+    const pick = gitChoice.mode === "embedded" ? embedded : (custom ?? system);
+    const source = gitChoice.mode === "embedded" ? "bundled" : gitChoice.mode === "custom" ? "custom" : "system";
+    return {
+      choice: gitChoice,
+      active: { path: pick.path, version: pick.version!.split(".windows")[0], source },
+      activeError: null,
+      system,
+      embedded,
+      custom,
+      minGit: "2.45.2",
+      settingsPath: "C:/Users/Max/AppData/Roaming/com.happyrave.gitgud/git.json",
+    };
+  };
   let mockTags: TagInfo[] = [
     {
       name: "v0.4.2",
@@ -432,6 +469,27 @@ export function installMock(scenario: string) {
       gitPath: "C:/Program Files/Git/cmd/git.exe",
       gitVersion: "2.56.1",
       lfsVersion: "git-lfs/3.6.0",
+    }),
+    git_inventory: () => gitInv(),
+    git_set_choice: ({ choice }) => {
+      gitChoice = choice;
+      return gitInv();
+    },
+    git_latest: () => ({ version: "2.56.1.windows.1", systemBehind: true, embeddedBehind: false }),
+    git_update_system: () => ({ kind: "installerStarted", message: "" }),
+    git_install_system: () => null,
+    git_config_compare: () => [
+      { scope: "system", key: "http.sslbackend", system: ["openssl"], embedded: ["schannel"], differs: true },
+      { scope: "system", key: "core.editor", system: ["code --wait"], embedded: [], differs: true },
+      { scope: "system", key: "core.autocrlf", system: ["true"], embedded: ["true"], differs: false },
+      { scope: "global", key: "user.name", system: ["Max"], embedded: ["Max"], differs: false },
+    ],
+    git_check_remote: () => ({
+      remote: "origin",
+      url: "git@github.com:j2studio/boat.git",
+      ok: true,
+      elapsedMs: 412,
+      message: null,
     }),
     unity_info: () => ({
       isUnity: true,

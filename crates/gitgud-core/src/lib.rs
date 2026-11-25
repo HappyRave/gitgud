@@ -10,6 +10,8 @@ pub mod diff;
 mod disk_cache;
 pub mod font;
 pub mod git;
+pub mod git_choice;
+pub mod git_tools;
 pub mod gpu_texture;
 pub mod graph;
 pub mod history;

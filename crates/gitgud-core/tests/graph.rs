@@ -279,9 +279,9 @@ fn refresh_of_an_unknown_repo_fails() {
 #[test]
 fn session_locates_git_once() {
     let session = Session::default();
-    let first: *const _ = session.git().unwrap();
-    let second: *const _ = session.git().unwrap();
-    assert_eq!(first, second);
+    let first = session.git().unwrap();
+    let second = session.git().unwrap();
+    assert!(std::sync::Arc::ptr_eq(&first, &second));
 }
 
 #[test]

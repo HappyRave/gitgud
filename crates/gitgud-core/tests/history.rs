@@ -110,7 +110,7 @@ fn prediction_replays_each_step_and_names_conflicts_without_touching_anything() 
     repo.write("c.txt", "c\n").commit_all("three");
     let (session, id) = open(&repo);
     let r = session.get(id).unwrap().repo.clone();
-    let git = session.git().unwrap();
+    let git = &*session.git().unwrap();
     let (one, two, three) = (
         rev(&repo, "HEAD~2"),
         rev(&repo, "HEAD~1"),

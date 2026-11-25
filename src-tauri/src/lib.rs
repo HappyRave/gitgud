@@ -10,6 +10,7 @@ use gitgud_core::clone::{CloneProgress, clone_repo as core_clone_repo};
 use gitgud_core::config::{self, IdentityConfig, ToolDiagnostics};
 use gitgud_core::diff::{CommitDetail, FileDiff};
 use gitgud_core::git::{self, GitInfo};
+use gitgud_core::git_tools::{self, GitInventory};
 use gitgud_core::graph::Row;
 use gitgud_core::history::{Action, HistoryPlan, Step};
 use gitgud_core::lfs::{LfsCacheStats, LfsInfo, LfsLock};
@@ -349,7 +350,10 @@ async fn predict_merge(
     id: u32,
     branch: String,
 ) -> Result<Vec<String>, Error> {
-    session.get(id)?.repo.predict_merge(session.git()?, &branch)
+    session
+        .get(id)?
+        .repo
+        .predict_merge(&*session.git()?, &branch)
 }
 
 #[tauri::command]
@@ -368,7 +372,7 @@ async fn conflict_text(
     id: u32,
     path: String,
 ) -> Result<ConflictText, Error> {
-    session.get(id)?.repo.conflict_text(session.git()?, &path)
+    session.get(id)?.repo.conflict_text(&*session.git()?, &path)
 }
 
 #[tauri::command]
@@ -421,7 +425,10 @@ async fn predict_rebase(
     id: u32,
     onto: String,
 ) -> Result<RebasePlan, Error> {
-    session.get(id)?.repo.predict_rebase(session.git()?, &onto)
+    session
+        .get(id)?
+        .repo
+        .predict_rebase(&*session.git()?, &onto)
 }
 
 #[tauri::command]
@@ -483,7 +490,7 @@ async fn predicted_file(
     session
         .get(id)?
         .repo
-        .predicted_file(session.git()?, &tree, &path)
+        .predicted_file(&*session.git()?, &tree, &path)
 }
 
 #[tauri::command]
@@ -660,7 +667,7 @@ async fn predict_cherry_pick(
     session
         .get(id)?
         .repo
-        .predict_cherry_pick(session.git()?, &commit)
+        .predict_cherry_pick(&*session.git()?, &commit)
 }
 
 #[tauri::command]
@@ -672,7 +679,7 @@ async fn predict_revert(
     session
         .get(id)?
         .repo
-        .predict_revert(session.git()?, &commit)
+        .predict_revert(&*session.git()?, &commit)
 }
 
 #[tauri::command]
@@ -743,7 +750,7 @@ async fn config_get_identity(
     session: State<'_, Session>,
     id: Option<u32>,
 ) -> Result<IdentityConfig, Error> {
-    let git = session.git()?;
+    let git = &*session.git()?;
     match id {
         Some(repo_id) => config::read_identity(git, Some(session.get(repo_id)?.repo.root())),
         None => config::read_identity(git, None),
@@ -760,14 +767,56 @@ async fn config_set_identity(
     if let Some(repo_id) = id {
         session.set_repo_identity(repo_id, &name, &email).map(drop)
     } else {
-        config::write_identity(session.git()?, None, &name, &email)
+        config::write_identity(&*session.git()?, None, &name, &email)
     }
+}
+
+#[tauri::command]
+async fn git_inventory() -> GitInventory {
+    git_tools::inventory(&git::GitChoice::load())
+}
+
+#[tauri::command]
+async fn git_set_choice(
+    session: State<'_, Session>,
+    choice: git::GitChoice,
+) -> Result<GitInventory, Error> {
+    session.set_git_choice(&choice)?;
+    Ok(git_tools::inventory(&choice))
+}
+
+#[tauri::command]
+async fn git_latest(session: State<'_, Session>) -> Result<git_tools::LatestGit, Error> {
+    git_tools::latest_git(&*session.git()?)
+}
+
+#[tauri::command]
+async fn git_update_system() -> Result<git_tools::SystemUpdate, Error> {
+    git_tools::update_system_git()
+}
+
+#[tauri::command]
+async fn git_install_system() -> Result<(), Error> {
+    git_tools::install_system_git()
+}
+
+#[tauri::command]
+async fn git_config_compare() -> Result<Vec<git_tools::ConfigRow>, Error> {
+    git_tools::compare_installed_config()
+}
+
+#[tauri::command]
+async fn git_check_remote(
+    session: State<'_, Session>,
+    id: u32,
+) -> Result<git_tools::RemoteCheck, Error> {
+    session.check_remote(id)
 }
 
 #[tauri::command]
 async fn tool_diagnostics(session: State<'_, Session>) -> Result<ToolDiagnostics, Error> {
     let info = git::locate()?;
-    Ok(config::tool_diagnostics(session.git()?, &info))
+    Ok(config::tool_diagnostics(&*session.git()?, &info))
 }
 
 #[tauri::command]
@@ -1010,7 +1059,7 @@ async fn clone_repo<R: Runtime>(
         c
     };
     let _clear = ClearClone(&active.0);
-    let git = session.git()?;
+    let git = &*session.git()?;
     let cloned = core_clone_repo(
         git,
         &url,
@@ -1058,7 +1107,7 @@ async fn fetch_many<R: Runtime>(
     if total == 0 {
         return Ok(Vec::new());
     }
-    let git = session.git()?;
+    let git = &*session.git()?;
     let done = AtomicUsize::new(0);
     let next = AtomicUsize::new(0);
     let workers = total.clamp(1, 4);
@@ -1816,6 +1865,13 @@ fn app_with_library<R: Runtime>(builder: Builder<R>, library: Option<LibraryStor
             config_get_identity,
             config_set_identity,
             tool_diagnostics,
+            git_inventory,
+            git_set_choice,
+            git_latest,
+            git_update_system,
+            git_install_system,
+            git_config_compare,
+            git_check_remote,
             unity_info,
             unity_configure_smart_merge,
             unity_meta_issues,
@@ -2260,6 +2316,30 @@ mod tests {
         let info = Ipc::new().call("git_info", json!({})).unwrap();
         assert!(info["path"].as_str().unwrap().contains("git"));
         assert_eq!(info["version"].as_str().unwrap().split('.').count(), 3);
+    }
+
+    #[test]
+    fn git_management_commands_answer_over_ipc() {
+        let ipc = Ipc::new();
+        let inv = ipc.call("git_inventory", json!({})).unwrap();
+        assert!(inv["choice"]["mode"].is_string());
+        assert!(inv["active"]["path"].as_str().unwrap().contains("git"));
+        assert_eq!(inv["minGit"], "2.45.2");
+
+        let err = ipc
+            .call(
+                "git_set_choice",
+                json!({ "choice": { "mode": "custom", "path": "Z:/nowhere/git.exe" } }),
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("not a git executable"));
+
+        let repo = history();
+        let id = open(&ipc, &repo)["id"].clone();
+        let err = ipc
+            .call("git_check_remote", json!({ "id": id }))
+            .unwrap_err();
+        assert!(err.to_string().contains("no remote"), "{err}");
     }
 
     #[test]

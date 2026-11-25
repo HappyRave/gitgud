@@ -39,6 +39,7 @@
     type ThemeMode,
   } from "$lib/prefs.svelte";
   import { modelCache, type ModelCacheStats } from "$lib/model/cache";
+  import GitSettings from "./GitSettings.svelte";
 
   let {
     activeRepoId = null,
@@ -308,6 +309,9 @@
           class:on={activeSection === "sec-identity"}
           onclick={() => jumpTo("sec-identity")}>Git Identity</button
         >
+        <button type="button" class="bare rail-btn" class:on={activeSection === "sec-git"} onclick={() => jumpTo("sec-git")}
+          >Git</button
+        >
         <button
           type="button"
           class="bare rail-btn"
@@ -394,6 +398,10 @@
           </form>
         </section>
 
+        <section id="sec-git" class="sec" aria-label="Git">
+          <GitSettings {activeRepoId} />
+        </section>
+
         <section id="sec-appearance" class="sec">
           <h3>Appearance &amp; Diff</h3>
           <div class="prefs">
@@ -463,28 +471,7 @@
 
         <section id="sec-tools" class="sec">
           <h3>Tools &amp; Diagnostics</h3>
-          {#if diag}
-            <dl class="diag">
-              <dt>Git version</dt>
-              <dd class="gcache">
-                <span>{diag.gitVersion}</span>
-                {#if diag.gitSource === "bundled"}
-                  <span class="badge warn" title="Using bundled fallback Git (system Git missing or older than 2.45.2)"
-                    >bundled</span
-                  >
-                {:else if diag.gitSource === "system"}
-                  <span class="badge">system</span>
-                {/if}
-              </dd>
-              <dt>Git binary</dt>
-              <dd class="mono">{diag.gitPath}</dd>
-              <dt>Git LFS</dt>
-              <dd class="gcache">
-                <span>{diag.lfsVersion ?? "Not installed"}</span>
-                {#if diag.lfsVersion && diag.lfsOk === false}
-                  <span class="badge warn" title="git-lfs 3.3 or newer is recommended">&lt; 3.3 floor</span>
-                {/if}
-              </dd>
+          <dl class="diag">
               <dt>AI CLIs</dt>
               <dd>
                 {#if aiStatus === null}
@@ -507,9 +494,6 @@
                 </dd>
               {/if}
             </dl>
-          {:else}
-            <p class="ab">Checking installed tools…</p>
-          {/if}
           {#if timings.length > 0}
             <details class="latency">
               <summary>Local latency ({timings.length} recent ops)</summary>

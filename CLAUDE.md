@@ -42,8 +42,12 @@ The approved product spec is `docs/spec.md` (2026-11-21); design verdicts are in
   - **Reads** (status, log, commit graph, diff, blame): the `gix` crate (gitoxide), in-process.
   - **Writes and network** (commit, fetch, push, rebase, merge, stash): spawn the `git` CLI, so
     hooks, credential helpers, SSH, signing and user config behave exactly as in a terminal.
-    The system `git` is used when it is ≥ 2.45.2; bundled MinGit (`2.56.1`) + `git-lfs` (`3.8.1`) in
-    `src-tauri/resources/git/` is the fallback via `git::locate()` and `GitCli::command()`.
+    Which git runs is Settings › Git's `GitChoice` (`git_choice.rs`): Auto (default: the system
+    `git` when it is ≥ 2.45.2, else bundled MinGit (`2.56.1`) + `git-lfs` (`3.8.1`) in
+    `src-tauri/resources/git/`), System, Embedded or Custom path; the non-Auto modes never fall
+    back. Saved in `%APPDATA%\com.happyrave.gitgud\git.json` (`GITGUD_GIT_SETTINGS` overrides) and
+    read by `git::locate()`, so the CLI / MCP server follow it too. Core tests read that file as
+    well: a broken Custom choice breaks them.
   - Not `git2`/libgit2: no hook support, C build, credential friction.
 
 ## Layout
@@ -114,6 +118,13 @@ replaying at most 255 rows (spike 4.3).
 - **Config & diagnostics** (`config.rs`): reads/writes `user.name` and `user.email` at global or
   repo-local scope (`Session::set_repo_identity` triggers config reload), and reports installed git
   and git-lfs paths/versions.
+- **Git management** (`git_tools.rs`, `GitSettings.svelte`): `inventory` probes the system and
+  embedded gits side by side (version, LFS, credential helper / GCM); `Session::set_git_choice`
+  validates, saves and swaps the session's `Arc<GitCli>` at once; `latest_git` lists Git for
+  Windows' tags with `git ls-remote` (on demand, never on open); `update_system_git` runs
+  `git update-git-for-windows --yes` (exit 2 = installer started), `install_system_git` opens
+  `winget install Git.Git` in its own console; `compare_config` diffs the system / global config
+  both gits read; `check_remote` runs a prompt-free `ls-remote` on the open repo's remote.
 - **Unity & LFS** (`unity.rs`, `unity_yaml.rs`, `lfs.rs`): detects `ProjectVersion.txt`, `Temp/UnityLockfile` (guards
   checkout/merge/rebase touching `Assets/`), Hub `UnityYAMLMerge.exe`, Smart Merge setup in local
   `.git/config` + `.git/info/attributes` (never `.gitattributes`), v1.0 per-property verification in

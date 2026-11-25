@@ -1,7 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
+use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
@@ -63,7 +63,7 @@ pub struct Session {
     lfs_fetches: FetchLocks,
     /// Recent local operation timings (oldest evicted past 50).
     timings: Mutex<VecDeque<TimingSample>>,
-    git: OnceLock<GitCli>,
+    git: RwLock<Option<Arc<GitCli>>>,
 }
 
 /// A history plan's prediction and the size of its graph preview.
@@ -343,7 +343,7 @@ impl Session {
     /// [`Error::Refused`] while a merge is in progress, or git's error.
     pub fn merge(&self, id: u32, branch: &str) -> Result<Opened, Error> {
         let open = self.get(id)?;
-        let paths = open.repo.merge_paths(self.git()?, branch)?;
+        let paths = open.repo.merge_paths(&*self.git()?, branch)?;
         let action = format!("Merge {branch}");
         self.write_destructive(id, &action, &paths, |repo, git| {
             repo.merge(git, branch).map(drop)
@@ -355,7 +355,7 @@ impl Session {
     /// # Errors
     /// [`Error::UnknownRepo`], or a read error.
     pub fn merge_state(&self, id: u32) -> Result<Option<MergeState>, Error> {
-        self.get(id)?.repo.merge_state(self.git()?)
+        self.get(id)?.repo.merge_state(&*self.git()?)
     }
 
     /// Resolves conflicted `path` with `content`, recorded as `how` ("use both"...).
@@ -398,7 +398,7 @@ impl Session {
     /// git's error.
     pub fn merge_abort(&self, id: u32) -> Result<Opened, Error> {
         let open = self.get(id)?;
-        let paths = open.repo.merge_paths(self.git()?, "MERGE_HEAD")?;
+        let paths = open.repo.merge_paths(&*self.git()?, "MERGE_HEAD")?;
         self.write_destructive(id, "Abort merge", &paths, |repo, git| repo.merge_abort(git))
     }
 
@@ -418,7 +418,7 @@ impl Session {
     /// [`Error::Refused`] while another operation is in progress, or git's error.
     pub fn rebase(&self, id: u32, onto: &str) -> Result<Opened, Error> {
         let open = self.get(id)?;
-        let paths = open.repo.rebase_paths(self.git()?, onto)?;
+        let paths = open.repo.rebase_paths(&*self.git()?, onto)?;
         let action = format!("Rebase onto {onto}");
         self.write_destructive(id, &action, &paths, |repo, git| {
             repo.rebase(git, onto).map(drop)
@@ -430,7 +430,7 @@ impl Session {
     /// # Errors
     /// [`Error::UnknownRepo`], or a read error.
     pub fn rebase_state(&self, id: u32) -> Result<Option<RebaseState>, Error> {
-        self.get(id)?.repo.rebase_state(self.git()?)
+        self.get(id)?.repo.rebase_state(&*self.git()?)
     }
 
     /// Continues, skips the current commit of, or aborts the rebase in progress.
@@ -439,7 +439,7 @@ impl Session {
     /// [`Error::Refused`] while files are conflicted (continue), or git's error.
     pub fn rebase_step(&self, id: u32, step: RebaseStep) -> Result<Opened, Error> {
         let open = self.get(id)?;
-        let paths = open.repo.rebase_paths_in_progress(self.git()?)?;
+        let paths = open.repo.rebase_paths_in_progress(&*self.git()?)?;
         let action = match step {
             RebaseStep::Continue => "Continue rebase",
             RebaseStep::Skip => "Skip commit in rebase",
@@ -457,7 +457,7 @@ impl Session {
     /// # Errors
     /// See [`Repo::history_plan`].
     pub fn history_plan(&self, id: u32, from: &str) -> Result<HistoryPlan, Error> {
-        self.get(id)?.repo.history_plan(self.git()?, from)
+        self.get(id)?.repo.history_plan(&*self.git()?, from)
     }
 
     /// Predicts `steps` replayed onto `onto` and lays out the graph with the
@@ -473,7 +473,7 @@ impl Session {
         steps: &[Step],
     ) -> Result<PlanPreview, Error> {
         let open = self.get(id)?;
-        let git = self.git()?;
+        let git = &self.git()?;
         let prediction = open.repo.predict_plan(git, onto, base, steps)?;
         let ghosts = open.repo.plan_ghosts(steps, &prediction)?;
         let oid = |rev: &str| -> Result<gix::ObjectId, Error> {
@@ -529,7 +529,7 @@ impl Session {
         update_refs: bool,
     ) -> Result<Opened, Error> {
         let open = self.get(id)?;
-        let git = self.git()?;
+        let git = &self.git()?;
         let branch = open.repo.ensure_can_edit()?;
         let moved = open.repo.resolves_to(git, onto, base)?;
         let paths = open.repo.rebase_paths(git, onto)?;
@@ -559,7 +559,7 @@ impl Session {
     /// See [`Repo::quick_steps`] and [`Repo::run_plan`].
     pub fn quick_edit(&self, id: u32, commit: &str, action: Action) -> Result<Opened, Error> {
         let open = self.get(id)?;
-        let git = self.git()?;
+        let git = &self.git()?;
         let (base, steps) = open.repo.quick_steps(git, commit, action)?;
         let subject = open.repo.subject(git, commit)?;
         let label = match action {
@@ -673,7 +673,7 @@ impl Session {
         checkout: bool,
     ) -> Result<Opened, Error> {
         let open = self.get(id)?;
-        let git = self.git()?;
+        let git = &self.git()?;
         let trimmed = name.trim();
         let action = format!("Create branch {trimmed}");
         let paths = if checkout {
@@ -746,7 +746,7 @@ impl Session {
         local_name: &str,
     ) -> Result<Opened, Error> {
         let open = self.get(id)?;
-        let git = self.git()?;
+        let git = &self.git()?;
         let trimmed = local_name.trim();
         let paths = open.repo.checkout_rev_paths(git, remote_branch)?;
         let action = format!("Check out {trimmed} ({remote_branch})");
@@ -782,7 +782,7 @@ impl Session {
     /// See [`Repo::reset`].
     pub fn reset(&self, id: u32, target: &str, mode: ResetMode) -> Result<Opened, Error> {
         let open = self.get(id)?;
-        let git = self.git()?;
+        let git = &self.git()?;
         let short = &target[..target.len().min(7)];
         let kind = match mode {
             ResetMode::Soft => "soft",
@@ -806,7 +806,7 @@ impl Session {
     /// See [`Repo::cherry_pick`].
     pub fn cherry_pick(&self, id: u32, commit: &str) -> Result<Opened, Error> {
         let open = self.get(id)?;
-        let git = self.git()?;
+        let git = &self.git()?;
         let paths = open.repo.sequencer_paths(git, commit)?;
         let short = &commit[..commit.len().min(7)];
         let action = format!("Cherry-pick {short}");
@@ -821,7 +821,7 @@ impl Session {
     /// See [`Repo::revert_commit`].
     pub fn revert_commit(&self, id: u32, commit: &str) -> Result<Opened, Error> {
         let open = self.get(id)?;
-        let git = self.git()?;
+        let git = &self.git()?;
         let paths = open.repo.sequencer_paths(git, commit)?;
         let short = &commit[..commit.len().min(7)];
         let action = format!("Revert {short}");
@@ -835,7 +835,7 @@ impl Session {
     /// # Errors
     /// [`Error::UnknownRepo`], or a read error.
     pub fn sequencer_state(&self, id: u32) -> Result<Option<SequencerState>, Error> {
-        self.get(id)?.repo.sequencer_state(self.git()?)
+        self.get(id)?.repo.sequencer_state(&*self.git()?)
     }
 
     /// Continues or aborts the cherry-pick or revert in progress. Undoable.
@@ -844,7 +844,7 @@ impl Session {
     /// See [`Repo::sequencer_step`].
     pub fn sequencer_step(&self, id: u32, step: SequencerStep) -> Result<Opened, Error> {
         let open = self.get(id)?;
-        let git = self.git()?;
+        let git = &self.git()?;
         let (kind, oid) = open
             .repo
             .sequencer_head()?
@@ -924,7 +924,7 @@ impl Session {
     /// [`Error::Cancelled`], or git's error.
     pub fn fetch(&self, id: u32, mut on_progress: impl FnMut(Progress)) -> Result<Opened, Error> {
         let open = self.get(id)?;
-        let git = self.git()?;
+        let git = &self.git()?;
         self.run_task(id, |cancel| open.repo.fetch(git, &mut on_progress, cancel))?;
         self.refresh(id)
     }
@@ -943,7 +943,7 @@ impl Session {
         mut on_progress: impl FnMut(Progress),
     ) -> Result<PullResult, Error> {
         let open = self.get(id)?;
-        let git = self.git()?;
+        let git = &self.git()?;
         if open.repo.merge_state(git)?.is_some()
             || open.repo.rebase_state(git)?.is_some()
             || open.repo.sequencer_head()?.is_some()
@@ -1064,7 +1064,7 @@ impl Session {
         mut on_progress: impl FnMut(Progress),
     ) -> Result<Opened, Error> {
         let open = self.get(id)?;
-        let git = self.git()?;
+        let git = &self.git()?;
         self.run_task(id, |cancel| {
             open.repo.push(
                 git,
@@ -1092,7 +1092,7 @@ impl Session {
     ) -> Result<Opened, Error> {
         let open = self.get(id)?;
         open.repo
-            .delete_remote_branch(self.git()?, remote, branch)?;
+            .delete_remote_branch(&*self.git()?, remote, branch)?;
         self.refresh(id)
     }
 
@@ -1165,7 +1165,7 @@ impl Session {
     /// [`Error::UnknownRepo`], [`Error::Command`], or [`Error::Read`].
     pub fn set_repo_identity(&self, id: u32, name: &str, email: &str) -> Result<Opened, Error> {
         let open = self.get(id)?;
-        let git = self.git()?;
+        let git = &self.git()?;
         config::write_identity(git, Some(open.repo.root()), name, email)?;
         self.refresh(id)
     }
@@ -1214,7 +1214,7 @@ impl Session {
     /// [`Error::UnknownRepo`] or [`Error::Command`].
     pub fn unity_info(&self, id: u32) -> Result<UnityInfo, Error> {
         let open = self.get(id)?;
-        unity::detect_unity(self.git()?, &open.repo)
+        unity::detect_unity(&*self.git()?, &open.repo)
     }
 
     /// Configures Unity Smart Merge in local `.git/config` and `.git/info/attributes` only.
@@ -1227,7 +1227,7 @@ impl Session {
         tool_path: Option<&str>,
     ) -> Result<UnityInfo, Error> {
         let open = self.get(id)?;
-        let info = unity::configure_smart_merge(self.git()?, &open.repo, tool_path)?;
+        let info = unity::configure_smart_merge(&*self.git()?, &open.repo, tool_path)?;
         self.refresh(id)?;
         Ok(info)
     }
@@ -1282,7 +1282,7 @@ impl Session {
     /// [`Error::UnknownRepo`] or [`Error::Command`].
     pub fn unity_check_open_assets(&self, id: u32, range: &str) -> Result<bool, Error> {
         let open = self.get(id)?;
-        let git = self.git()?;
+        let git = &self.git()?;
         let info = unity::detect_unity(git, &open.repo)?;
         if !info.editor_open {
             return Ok(false);
@@ -1296,7 +1296,7 @@ impl Session {
     /// [`Error::UnknownRepo`] or [`Error::Command`].
     pub fn lfs_info(&self, id: u32) -> Result<LfsInfo, Error> {
         let open = self.get(id)?;
-        lfs::lfs_info(self.git()?, &open.repo)
+        lfs::lfs_info(&*self.git()?, &open.repo)
     }
 
     /// Lists Git LFS locks on the remote.
@@ -1305,7 +1305,7 @@ impl Session {
     /// See [`lfs::lfs_locks_list`].
     pub fn lfs_locks(&self, id: u32) -> Result<Vec<LfsLock>, Error> {
         let open = self.get(id)?;
-        lfs::lfs_locks_list(self.git()?, &open.repo)
+        lfs::lfs_locks_list(&*self.git()?, &open.repo)
     }
 
     /// Locks `path` with `git lfs lock`.
@@ -1314,7 +1314,7 @@ impl Session {
     /// See [`lfs::lfs_lock`].
     pub fn lfs_lock(&self, id: u32, path: &str) -> Result<(), Error> {
         let open = self.get(id)?;
-        lfs::lfs_lock(self.git()?, &open.repo, path)
+        lfs::lfs_lock(&*self.git()?, &open.repo, path)
     }
 
     /// Unlocks `path` with `git lfs unlock`.
@@ -1323,7 +1323,7 @@ impl Session {
     /// See [`lfs::lfs_unlock`].
     pub fn lfs_unlock(&self, id: u32, path: &str, force: bool) -> Result<(), Error> {
         let open = self.get(id)?;
-        lfs::lfs_unlock(self.git()?, &open.repo, path, force)
+        lfs::lfs_unlock(&*self.git()?, &open.repo, path, force)
     }
 
     /// Lists active locks held by us on files touched in commits about to be pushed.
@@ -1338,7 +1338,7 @@ impl Session {
         branch: &str,
     ) -> Result<Vec<LfsLock>, Error> {
         let open = self.get(id)?;
-        lfs::locks_in_push(self.git()?, &open.repo, remote, remote_branch, branch)
+        lfs::locks_in_push(&*self.git()?, &open.repo, remote, remote_branch, branch)
     }
 
     /// Quiet non-interactive background fetch when repo is idle and stale beyond `min_age_secs`.
@@ -1348,7 +1348,7 @@ impl Session {
     /// [`Error::UnknownRepo`] if closed.
     pub fn background_refresh(&self, id: u32, min_age_secs: u64) -> Result<bool, Error> {
         let open = self.get(id)?;
-        let git = self.git()?;
+        let git = &self.git()?;
         if open.repo.primary_remote_url().is_none() {
             return Ok(false);
         }
@@ -1428,7 +1428,7 @@ impl Session {
     /// [`Error::UnknownRepo`] or [`Error::Command`].
     pub fn push_tag(&self, id: u32, remote: &str, name: &str) -> Result<(), Error> {
         let open = self.get(id)?;
-        open.repo.push_tag(self.git()?, remote, name)
+        open.repo.push_tag(&*self.git()?, remote, name)
     }
 
     /// Deletes tag `name` from `remote`.
@@ -1437,7 +1437,7 @@ impl Session {
     /// [`Error::UnknownRepo`] or [`Error::Command`].
     pub fn delete_remote_tag(&self, id: u32, remote: &str, name: &str) -> Result<(), Error> {
         let open = self.get(id)?;
-        open.repo.delete_remote_tag(self.git()?, remote, name)
+        open.repo.delete_remote_tag(&*self.git()?, remote, name)
     }
 
     /// Lists recent commits touching `path` (following renames).
@@ -1452,7 +1452,7 @@ impl Session {
     ) -> Result<Vec<FileCommit>, Error> {
         let open = self.get(id)?;
         open.repo
-            .file_history(self.git()?, path, limit.unwrap_or(200))
+            .file_history(&*self.git()?, path, limit.unwrap_or(200))
     }
 
     /// Returns line-by-line blame annotations for `path` at `rev` (or worktree HEAD).
@@ -1466,7 +1466,7 @@ impl Session {
         rev: Option<&str>,
     ) -> Result<Vec<BlameLine>, Error> {
         let open = self.get(id)?;
-        open.repo.blame_file(self.git()?, path, rev)
+        open.repo.blame_file(&*self.git()?, path, rev)
     }
 
     /// Returns op log entry counts, byte footprint, and prunable summary for repo `id`.
@@ -1494,7 +1494,8 @@ impl Session {
     /// [`Error::UnknownRepo`] or [`Error::Command`].
     pub fn outside_reflog(&self, id: u32, limit: Option<usize>) -> Result<Vec<ReflogEntry>, Error> {
         let open = self.get(id)?;
-        open.repo.outside_reflog(self.git()?, limit.unwrap_or(100))
+        open.repo
+            .outside_reflog(&*self.git()?, limit.unwrap_or(100))
     }
 
     /// Returns whether `.git/objects/info/commit-graph` (or chain) exists.
@@ -1878,7 +1879,7 @@ impl Session {
     pub fn restack(&self, id: u32, top_branch: &str, onto: &str) -> Result<Opened, Error> {
         let paths = {
             let open = self.get(id)?;
-            let git = self.git()?;
+            let git = &self.git()?;
             open.repo.restack_paths(git, top_branch, onto)?
         };
         let label = format!("Restack {top_branch} onto {onto}");
@@ -1901,13 +1902,22 @@ impl Session {
         open.repo.pr_url_with_base(branch, base)
     }
 
+    /// Reaches repo `id`'s remote with the chosen git, without prompting.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`], [`Error::Refused`] without a remote, or [`Error::Command`].
+    pub fn check_remote(&self, id: u32) -> Result<crate::git_tools::RemoteCheck, Error> {
+        let open = self.get(id)?;
+        crate::git_tools::check_remote(&*self.git()?, open.repo.root())
+    }
+
     /// Measures local Git LFS cache footprint and dry-run prunable objects in repo `id`.
     ///
     /// # Errors
     /// [`Error::UnknownRepo`], [`Error::Read`], or [`Error::Command`].
     pub fn lfs_cache_stats(&self, id: u32) -> Result<LfsCacheStats, Error> {
         let open = self.get(id)?;
-        lfs::lfs_cache_stats(self.git()?, &open.repo)
+        lfs::lfs_cache_stats(&*self.git()?, &open.repo)
     }
 
     /// Prunes unreferenced local Git LFS objects in repo `id` and returns updated cache stats.
@@ -1931,7 +1941,7 @@ impl Session {
         path: Option<&str>,
     ) -> Result<bool, Error> {
         let open = self.get(id)?;
-        let git = self.git()?;
+        let git = &self.git()?;
         let normalized = oid.trim().to_ascii_lowercase();
         let gate = {
             let mut map = self.lfs_fetches.lock().expect("lfs fetches lock poisoned");
@@ -2093,7 +2103,7 @@ impl Session {
     ) -> Result<crate::model::ModelInfo, Error> {
         let repo = self.get(id)?.repo.clone();
         let git = self.git().ok();
-        repo.model_info(git, path, version)
+        repo.model_info(git.as_deref(), path, version)
     }
 
     /// Decodes sound file `path` at `version`; LFS objects up to the auto-fetch limit
@@ -2154,7 +2164,7 @@ impl Session {
         mesh: &str,
     ) -> Result<Vec<u8>, Error> {
         let repo = self.get(id)?.repo.clone();
-        repo.inline_mesh(self.git().ok(), path, version, mesh)
+        repo.inline_mesh(self.git().ok().as_deref(), path, version, mesh)
     }
 
     /// See [`Repo::inline_meshes`].
@@ -2169,7 +2179,7 @@ impl Session {
         meshes: &[&str],
     ) -> Result<Vec<u8>, Error> {
         let repo = self.get(id)?.repo.clone();
-        repo.inline_meshes(self.git().ok(), path, version, meshes)
+        repo.inline_meshes(self.git().ok().as_deref(), path, version, meshes)
     }
 
     /// See [`Repo::clip_curves`].
@@ -2184,7 +2194,7 @@ impl Session {
         after: &crate::image::Version,
     ) -> Result<crate::model::ClipCurves, Error> {
         let repo = self.get(id)?.repo.clone();
-        repo.clip_curves(self.git().ok(), path, before, after)
+        repo.clip_curves(self.git().ok().as_deref(), path, before, after)
     }
 
     /// See [`Repo::clip_users`].
@@ -2198,7 +2208,7 @@ impl Session {
         version: &crate::image::Version,
     ) -> Result<Vec<String>, Error> {
         let repo = self.get(id)?.repo.clone();
-        repo.clip_users(self.git()?, path, version)
+        repo.clip_users(&*self.git()?, path, version)
     }
 
     /// See [`Repo::sprite_sheet`].
@@ -2227,7 +2237,7 @@ impl Session {
         after: &crate::image::Version,
     ) -> Result<crate::model::DataTables, Error> {
         let repo = self.get(id)?.repo.clone();
-        repo.data_tables(self.git().ok(), path, before, after)
+        repo.data_tables(self.git().ok().as_deref(), path, before, after)
     }
 
     /// See [`Repo::material_view`].
@@ -2241,7 +2251,7 @@ impl Session {
         version: &crate::image::Version,
     ) -> Result<crate::model::MaterialView, Error> {
         let repo = self.get(id)?.repo.clone();
-        repo.material_view(self.git().ok(), path, version)
+        repo.material_view(self.git().ok().as_deref(), path, version)
     }
 
     /// See [`Repo::material_users`].
@@ -2255,7 +2265,7 @@ impl Session {
         version: &crate::image::Version,
     ) -> Result<Vec<String>, Error> {
         let repo = self.get(id)?.repo.clone();
-        repo.material_users(self.git()?, path, version)
+        repo.material_users(&*self.git()?, path, version)
     }
 
     /// Detects available local AI CLIs and env key presence (never reads key values).
@@ -2274,7 +2284,7 @@ impl Session {
         provider: Option<&str>,
     ) -> Result<String, Error> {
         let open = self.get(id)?;
-        ai::draft_commit_message(self.git()?, &open.repo, provider)
+        ai::draft_commit_message(&*self.git()?, &open.repo, provider)
     }
 
     /// Writes agent instructions (`claude`, `codex`, `cursor`, `generic`) into repo `id`.
@@ -2330,7 +2340,7 @@ impl Session {
     /// [`Error::UnknownRepo`] or [`Error::Command`].
     pub fn worktrees_list(&self, id: u32) -> Result<Vec<WorktreeInfo>, Error> {
         let open = self.get(id)?;
-        proposals::list_worktrees(self.git()?, &open.repo)
+        proposals::list_worktrees(&*self.git()?, &open.repo)
     }
 
     /// Captures uncommitted edits in linked `worktree_path` into a proposal on repo `id` and refreshes the graph.
@@ -2382,19 +2392,38 @@ impl Session {
         let git = self.git()?;
         let _one_writer = open.writing.lock().expect("write lock poisoned");
         let _paused = self.watchers().get(&id).map(RepoWatcher::pause);
-        f(&open, git)
+        f(&open, &git)
     }
 
-    /// The git CLI, located on first use.
+    /// The git CLI, located on first use from the Settings choice.
     ///
     /// # Errors
-    /// [`Error::Git`] when no usable git is on PATH.
-    pub fn git(&self) -> Result<&GitCli, Error> {
-        if let Some(cli) = self.git.get() {
-            return Ok(cli);
+    /// [`Error::Git`] when the chosen git is missing or too old.
+    pub fn git(&self) -> Result<Arc<GitCli>, Error> {
+        if let Some(cli) = self.git.read().expect("git lock poisoned").as_ref() {
+            return Ok(Arc::clone(cli));
         }
-        let cli = GitCli::new(&git::locate()?);
-        Ok(self.git.get_or_init(|| cli))
+        let cli = Arc::new(GitCli::new(&git::locate()?));
+        Ok(Arc::clone(
+            self.git
+                .write()
+                .expect("git lock poisoned")
+                .get_or_insert(cli),
+        ))
+    }
+
+    /// Saves `choice` and makes every later command run the git it names.
+    ///
+    /// # Errors
+    /// [`Error::Git`] when that git is missing or too old (nothing changes then);
+    /// [`Error::Refused`] when the choice can't be saved.
+    pub fn set_git_choice(&self, choice: &git::GitChoice) -> Result<git::GitInfo, Error> {
+        let info = git::locate_choice(choice)?;
+        choice
+            .save()
+            .map_err(|e| Error::Refused(format!("Could not save the git choice: {e}")))?;
+        *self.git.write().expect("git lock poisoned") = Some(Arc::new(GitCli::new(&info)));
+        Ok(info)
     }
 
     fn lock(&self) -> MutexGuard<'_, HashMap<u32, OpenRepo>> {

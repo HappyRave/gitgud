@@ -46,13 +46,13 @@ fn diverged(conflict: bool) -> (TestRepo, Session, u32) {
 fn prediction_counts_steps_and_names_the_first_conflict_without_touching_anything() {
     let (repo, session, id) = diverged(false);
     let r = session.get(id).unwrap().repo.clone();
-    let plan = r.predict_rebase(session.git().unwrap(), "main").unwrap();
+    let plan = r.predict_rebase(&session.git().unwrap(), "main").unwrap();
     assert_eq!((plan.commits, plan.behind, plan.conflict), (2, 1, None));
 
     let (repo2, session2, id2) = diverged(true);
     let tip = rev(&repo2, "HEAD");
     let r2 = session2.get(id2).unwrap().repo.clone();
-    let plan = r2.predict_rebase(session2.git().unwrap(), "main").unwrap();
+    let plan = r2.predict_rebase(&session2.git().unwrap(), "main").unwrap();
     assert_eq!(
         plan.conflict,
         Some(StepConflict {
