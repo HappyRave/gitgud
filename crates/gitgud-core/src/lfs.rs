@@ -189,7 +189,13 @@ pub fn lfs_info(git: &GitCli, repo: &Repo) -> Result<LfsInfo, Error> {
             false,
             Some("Add a GitHub or self-hosted LFS remote to use file locks".into()),
         ),
-        HostKind::GitHub | HostKind::Other => (installed, None),
+        HostKind::AzureDevOps => (
+            false,
+            Some("Azure Repos does not support Git LFS file locking".into()),
+        ),
+        HostKind::GitHub | HostKind::GitLab | HostKind::Codeberg | HostKind::Other => {
+            (installed, None)
+        }
     };
 
     Ok(LfsInfo {

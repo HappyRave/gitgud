@@ -710,7 +710,7 @@ export interface CommitOptions {
   noVerify?: boolean;
 }
 
-export type HostKind = "gitHub" | "bitbucket" | "other" | "none";
+export type HostKind = "gitHub" | "bitbucket" | "gitLab" | "azureDevOps" | "codeberg" | "other" | "none";
 
 export interface LibraryFolder {
   id: string;

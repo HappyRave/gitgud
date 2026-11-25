@@ -9,6 +9,9 @@ use crate::repo::{Error, Repo, read_err};
 pub enum HostKind {
     GitHub,
     Bitbucket,
+    GitLab,
+    AzureDevOps,
+    Codeberg,
     Other,
     None,
 }
@@ -70,7 +73,11 @@ pub fn pr_url_for_base(url: &str, branch: &str, base: Option<&str>) -> Option<St
             pr.push_str("&t=1");
             Some(pr)
         }
-        HostKind::Other | HostKind::None => None,
+        HostKind::GitLab
+        | HostKind::AzureDevOps
+        | HostKind::Codeberg
+        | HostKind::Other
+        | HostKind::None => None,
     }
 }
 
@@ -182,6 +189,15 @@ fn parse_remote(url: &str) -> Option<ParsedRemote> {
         HostKind::GitHub
     } else if host_lower == "bitbucket.org" {
         HostKind::Bitbucket
+    } else if host_lower == "gitlab.com" {
+        HostKind::GitLab
+    } else if host_lower == "dev.azure.com"
+        || host_lower == "ssh.dev.azure.com"
+        || host_lower.ends_with(".visualstudio.com")
+    {
+        HostKind::AzureDevOps
+    } else if host_lower == "codeberg.org" {
+        HostKind::Codeberg
     } else if !host_lower.is_empty() {
         HostKind::Other
     } else {
@@ -242,8 +258,27 @@ mod tests {
             );
         }
 
-        assert_eq!(detect_host("https://gitlab.com/a/b.git"), HostKind::Other);
-        assert_eq!(pr_url_for("https://gitlab.com/a/b.git", "main"), None);
+        for (url, kind) in [
+            ("https://gitlab.com/a/b.git", HostKind::GitLab),
+            ("git@gitlab.com:a/b.git", HostKind::GitLab),
+            (
+                "https://max@dev.azure.com/org/proj/_git/repo",
+                HostKind::AzureDevOps,
+            ),
+            (
+                "git@ssh.dev.azure.com:v3/org/proj/repo",
+                HostKind::AzureDevOps,
+            ),
+            (
+                "https://org.visualstudio.com/proj/_git/repo",
+                HostKind::AzureDevOps,
+            ),
+            ("https://codeberg.org/a/b.git", HostKind::Codeberg),
+            ("https://git.studio.local/a/b.git", HostKind::Other),
+        ] {
+            assert_eq!(detect_host(url), kind, "{url}");
+            assert_eq!(pr_url_for(url, "main"), None, "{url}");
+        }
         assert_eq!(detect_host("C:/repos/bare.git"), HostKind::None);
         assert_eq!(detect_host("C:\\repos\\bare.git"), HostKind::None);
     }

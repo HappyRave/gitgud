@@ -18,6 +18,7 @@
   import ContextMenu, { type MenuItem } from "$lib/components/ContextMenu.svelte";
   import Splitter from "$lib/components/Splitter.svelte";
   import UnityIcon from "$lib/components/UnityIcon.svelte";
+  import HostIcon from "$lib/components/HostIcon.svelte";
   import { inTextField, opLogKey } from "$lib/keys";
   import { prefs, setPaneSize } from "$lib/prefs.svelte";
   import {
@@ -236,13 +237,6 @@
     } else if (dragged.id !== folderId) {
       mutate(() => libraryMoveFolder(dragged.id, folderId, 0));
     }
-  }
-
-  function hostTag(host: string | undefined): string {
-    if (host === "gitHub") return "GH";
-    if (host === "bitbucket") return "BB";
-    if (host === "other") return "GIT";
-    return "";
   }
 
   let libBody = $state<HTMLElement | null>(null);
@@ -581,7 +575,7 @@
                 </span>
                 <span>{c && c.locksHeld > 0 ? `🔒 ${c.locksHeld}` : ""}</span>
                 <span class="la">{c?.lastActivity ? age(c.lastActivity) : ""}</span>
-                <span class="host">{hostTag(c?.host)}</span>
+                <span class="host">{#if c}<HostIcon host={c.host} />{/if}</span>
               </div>
             {/each}
           {/each}
@@ -859,7 +853,8 @@
     white-space: nowrap;
   }
   .host {
-    text-align: right;
+    display: flex;
+    justify-content: flex-end;
   }
   .link {
     color: var(--l0);
