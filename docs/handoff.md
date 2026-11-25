@@ -1,6 +1,6 @@
-# Handoff: gitgud v0.1.2
+# Handoff: gitgud v0.1.3+
 
-Written 2026-11-22, updated 2026-11-23 (through `62c6239`, v0.1.2) for the next session picking up `gitgud`.
+Written 2026-11-22, updated 2026-11-23 (through `62c6239`, v0.1.2) and 2026-11-25 (through `a7a14b6`, after v0.1.3) for the next session picking up `gitgud`.
 
 ## Read first
 
@@ -11,7 +11,7 @@ Written 2026-11-22, updated 2026-11-23 (through `62c6239`, v0.1.2) for the next 
 ## Where things stand
 
 - Branch `main` has **Milestones 1–9** implemented (`e00bdc3` through `3aa28c1`), covering all v1.0 and v1.1 functional rows in `docs/spec.md` plus `gitgud-cli` and its stdio MCP server.
-- After M9: polish + NSIS packaging + full E2E pass (`4a739be`), portable zip/exe (`19fb83a`), v0.1.1 (`9512243`) and v0.1.2 (`62c6239`) — see "Since M9" below.
+- After M9: polish + NSIS packaging + full E2E pass (`4a739be`), portable zip/exe (`19fb83a`), v0.1.1 (`9512243`), v0.1.2 (`62c6239`) and v0.1.3 (`f69d40c`: 3D previews of models, prefabs and scenes, R7 file viewers), then the 3D scene speed and correctness work of 2026-11-25 — see "Since M9" below.
 - M1–M9 were verified headlessly as they landed; the Playwright E2E suite (`pnpm e2e`) first ran in `4a739be` (33/33). **No interactive `pnpm tauri dev` walkthrough has happened yet.**
 
 ## What is built (Milestones 1–9)
@@ -36,10 +36,25 @@ Written 2026-11-22, updated 2026-11-23 (through `62c6239`, v0.1.2) for the next 
 | `19fb83a` | Portable zip + standalone exe (`pnpm package:portable`) | `scripts/package-portable.ps1` |
 | `9512243` v0.1.1 | Draggable, persisted panel splitters (`prefs.panes`), op-log `Close` + sidebar `Working copy` toggle, `Ctrl`/`Shift`-click multi-select staging | `Splitter.svelte`, `prefs.svelte.ts`, `StatusList.svelte`, `WorkingCopy.svelte`, `working.ts`, `OpLogPanel.svelte` |
 | `62c6239` v0.1.2 | Texture viewer: DDS/EXR/HDR/TIFF/16-bit PSD decode, channels, zoom, pixelated, diff heatmap; LFS objects `<= 25 MiB` auto-fetched (`lfs_fetch_object`); LFS pointer cards; asset + LFS conflict inspector in `SidePick` | `image.rs`, `lfs.rs`, `ImageDiff.svelte`, `LfsBinaryCard.svelte`, `SidePick.svelte` |
+| `f69d40c` v0.1.3 | 3D compare for FBX / OBJ / glTF / Mesh `.asset`, prefabs and scenes (R6); R7 viewers: fonts, materials, audio, data tables, PDF, video, sprite sheets, animation curves; Settings › Previews and › Caches | `model/`, `$lib/model/*`, `$lib/viewers/*`, `ModelViewer.svelte`, `FilePreview.svelte` |
+| `177da1c`…`f10844c` | Scene opening speed: inline meshes indexed once, scene infos + textures on disk, scenes shown at once with meshes streaming in, worker-pool fetch + parse, shared / bundled / instanced / GPU-compressed loads, one build per side with warm-up on the card, parallel YAML | `disk_cache.rs`, `gpu_texture.rs`, `model/prefab.rs`, `$lib/model/{prefab,stage,fbxPool,instancing,inlineBatch}.ts` |
+| `1ded195` | Whole FBX files placed in a scene get their import's materials again (lost in the worker pack); custom shaders' base map picked by name, with a per-shader "base map" choice in the 3D viewer's ⚠ panel | `packFbx.ts`, `prefab.ts`, `material.rs`, `approximations.ts`, `ModelViewer.svelte` |
+| `e3b0a8d` | `Server-Timing` header on every `gitgud` protocol response (`queue`, `read`, `shrink`, `total`) for profiling | `src-tauri/src/images.rs` |
+| `4db6b6e` | Kept 3D textures found by the file as stored (content or LFS pointer), so a hit reads no LFS object and decodes no TGA / PSD | `image.rs`, `session.rs` |
+| `ea4bfaa` | Prefabs and scenes framed again on their real meshes once loaded (unless the camera was moved); framing fits the horizontal FOV of side-by-side halves | `stage.ts`, `view.ts`, `ModelViewer.svelte` |
+| `a7a14b6` | Parsed model meshes kept in the disk cache (`/geometry`, keyed by content + kind + `PARSER_VERSION`), uploaded only once the worker pool is idle | `geometryCache.ts`, `packedBytes.ts`, `fbxPool.ts`, `disk_cache.rs` |
 
 The v0.1.1 / v0.1.2 commits don't record which checks ran; re-run the full list below before trusting them.
 
-## Latest verified checks (v0.1.2, `62c6239`, run 2026-11-23)
+## Latest verified checks (`a7a14b6`, run 2026-11-25)
+
+- `pnpm e2e` on a clean checkout of `a7a14b6`: **36/36 passed** in 195.2 s; 10k-commit open + first 200
+  rows **62.9 ms** (≤ 300), outside edit visible **253 ms** (≤ 300)
+- `pnpm vitest run`: **91 test files / 531 tests passed**; `pnpm check`: 0 errors, 0 warnings
+- `cargo clippy --workspace --all-targets -- -D warnings`: passed; `cargo test -p gitgud-core --lib`:
+  138 passed; `cargo test -p gitgud --lib`: 49 passed (the core integration suites weren't re-run)
+
+## Earlier verified checks (v0.1.2, `62c6239`, run 2026-11-23)
 
 - `pnpm check` (`svelte-check`): **0 errors, 0 warnings** (484 files)
 - `pnpm vitest run`: **47 test files / 362 tests passed**
@@ -79,30 +94,25 @@ The v0.1.1 / v0.1.2 commits don't record which checks ran; re-run the full list 
 
 ## Things to do next (recommended first session order)
 
-0. **Next task (Max, 2026-11-25): speed up the backend requests for 3D scenes.** After v0.1.3's
-   front-end work (texture shrinking, LOD0 only, shared listings and disk meshes, FBX parsed on
-   workers), escape1's `Escape 4 - Mirror.unity` at `0dc209d` opens in about 16.5 s, and the main
-   thread is idle for about 10 s of that, waiting on the backend. Per open (both sides): 1,632
-   `model_info` IPC calls (one per model file per side), 406 `/model` requests, 1,048
-   `/model?…&mesh=` inline-mesh requests (each side loads the scene's embedded meshes separately,
-   even unchanged ones) and about 100 `/image` requests. Ideas to measure first: one batched
-   `model_info` call for all of a scene's model files; inline meshes keyed by content so both sides
-   share them, or served in one batch; per-request timing in `images.rs` to find the slow route.
-   Measure with the CDP profile used for v0.1.3 (debug build launched with
-   `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9334`).
-   **2026-11-25 progress:** inline meshes indexed once per version (both sides kept), the
-   viewer no longer remounted by `FilePreview` (equal versions as new objects, and a stale
-   probe of the previous file), the scene builder parses only the YAML classes it reads, and
-   scene infos + shrunk textures are kept on disk. Debug build, same scene: 21.1 s → 8.7 s on
-   the first open after a restart (disk cache warm), 6.4 s after a window reload. Left: inline
-   meshes (~150 ms each, 524 per open, each side converts its own) and the `/model` FBX bytes;
-   a first open after a restart once built the scene twice and didn't again — unexplained.
-   **Re-measured at `f10844c` (2026-11-25):** click on "Open in 3D" → "tris" line: 9.3 s with no
-   disk cache, 3.6 s after a restart (cache warm), 3.7 s after a window reload. Per open: 2
-   `model_info` calls (done 1.3 s after the click, started by the card's warm-up), 415 `/model`
-   requests (252 MB; no separate inline-mesh requests any more), 132 `/image` requests (98 MB),
-   which finish last. CDP's per-request timings are meaningless for the custom protocol; per-route
-   timing would have to be logged in `images.rs`.
-1. Build with `pnpm package` and test `target/release/bundle/nsis/gitgud_0.1.2_x64-setup.exe` interactively on a Windows user profile (install, CLI `PATH`, uninstall).
+0. **3D scene opening: speed is done enough (2026-11-25); correctness is next.** escape1's
+   `Escape 4 - Mirror.unity` at `0dc209d` (about 12,000 objects, 406 model files), release build,
+   "Open in 3D" click → stats line: **2.1 s** reopening (disk cache warm), **3.7 s** for the open that
+   fills the parsed-mesh cache, **5.7 s** with no disk cache at all (GPU texture compression, 20.8 s of
+   CPU across threads). It was 16.5 s at v0.1.3. mission-z-2's cemetery scene (3,243 meshes) opens in
+   1.0 s. How to measure: launch `target/release/gitgud.exe` with
+   `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9334`, a throwaway
+   `WEBVIEW2_USER_DATA_FOLDER` / `GITGUD_LIBRARY`, attach Playwright over CDP, and read each
+   response's `Server-Timing`; a Chrome trace (`browser.startTracing`) splits the main thread from the
+   workers. Debug-build numbers mislead (texture compression and decoding are many times slower).
+   Left on speed, in order of worth: the main thread (about 2 s of CPU in three.js object handling and
+   WebGL calls; the final `refresh` is one 290 ms task), cold texture compression (a faster BC preset,
+   or PNG first and compress in the background), scene-stored mesh batches (about 250 ms each, off the
+   critical path). Correctness gaps found the same day: **Unity Terrain components aren't drawn**
+   (only MeshFilter / MeshRenderer / SkinnedMeshRenderer / Animator / LOD Group are read); custom shaders
+   whose textures are all data (a noise map) show that texture instead of a flat colour; particles,
+   sprites, UI and lights aren't drawn; following Amplify graphs (`ASEBEGIN` blocks: 172 of 449 shaders in
+   mission-z-2, 114 node types) was costed at 2–3 days and left for later. Not yet seen live by Max:
+   the per-shader "base map" choice.
+1. Build with `pnpm package` and test the NSIS installer from `target/release/bundle/nsis/` interactively on a Windows user profile (install, CLI `PATH`, uninstall).
 2. Start `pnpm tauri dev`, open a real Unity + LFS repo plus a multi-repo Library folder, and do a structured walkthrough of M1–M9 themes/density, WebView2 accelerator keys (`Ctrl+P`/`Ctrl+F`/`Ctrl+R`), Settings' **Local latency** timings, and the v0.1.1/v0.1.2 pieces (splitters, multi-select staging, texture viewer on real DDS/EXR/PSD, LFS auto-fetch, LFS conflict inspector).
 3. Address any layout polish or Unity YAML parser edge cases uncovered on real `.unity`/`.prefab` assets, plus live GitHub/Bitbucket remote LFS lock checks (`O1`) and Sourcetree baseline (`O9`).
