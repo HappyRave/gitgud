@@ -493,10 +493,10 @@
     {/if}
 
     {#if filling && !errors.after}
-      <p class="filling" aria-live="polite"><LoadingBar label={status.label} value={status.value} /></p>
+      <p class="filling" aria-live="polite"><LoadingBar label={status.label} value={status.value} wide /></p>
     {/if}
     {#if loading}
-      <p class="state loading"><LoadingBar label={status.label} value={status.value} /></p>
+      <p class="state loading"><LoadingBar label={status.label} value={status.value} wide /></p>
     {:else if lfsMissing}
       <div class="state card"><LfsBinaryCard {path} {meta} {onfetch} /></div>
     {:else if errors.after}

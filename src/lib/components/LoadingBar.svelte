@@ -1,17 +1,19 @@
 <script lang="ts">
-  let { label, value = null }: { label: string; value?: number | null } = $props();
+  /** `wide`: a fixed width with the bar at its right end, for labels that change while it shows. */
+  let { label, value = null, wide = false }: { label: string; value?: number | null; wide?: boolean } = $props();
   const pct = $derived(value === null ? null : Math.round(Math.min(1, Math.max(0, value)) * 100));
 </script>
 
 <span
   class="loading"
+  class:wide
   role="progressbar"
   aria-label={label}
   aria-valuemin={pct === null ? undefined : 0}
   aria-valuemax={pct === null ? undefined : 100}
   aria-valuenow={pct ?? undefined}
 >
-  {label}
+  <span class="label" title={label}>{label}</span>
   <span class="bar" aria-hidden="true"><i class:fill={pct !== null} style:width={pct === null ? undefined : `${pct}%`}></i></span>
 </span>
 
@@ -21,8 +23,22 @@
     display: inline-flex;
     align-items: center;
     gap: 8px;
+    max-width: 100%;
     color: var(--fg);
     animation: show 0s 120ms both;
+  }
+  .label {
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    font-variant-numeric: tabular-nums;
+  }
+  .wide {
+    width: min(360px, 100%);
+  }
+  .wide .label {
+    flex: 1;
   }
   @keyframes show {
     from {
@@ -30,6 +46,7 @@
     }
   }
   .bar {
+    flex: none;
     width: 120px;
     height: 5px;
     border-radius: 3px;
