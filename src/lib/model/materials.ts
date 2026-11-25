@@ -10,10 +10,10 @@ import {
   RepeatWrapping,
   SRGBColorSpace,
   type Texture,
-  TextureLoader,
 } from "three";
 import type { ModelMaterial } from "$lib/api";
 import { shaderBase } from "$lib/prefs.svelte";
+import { BitmapTextureLoader } from "./bitmapTexture";
 import { type Status, TINT } from "./compare";
 
 export const MISSING_COLOR = "#ff00ff";
@@ -24,7 +24,8 @@ export type LoadTexture = (url: string) => Texture;
 /** Fires "load" whenever a texture finishes loading, so stages can redraw. */
 export const textureEvents = new EventTarget();
 
-export const loadTexture: LoadTexture = (url) => new TextureLoader().load(url, () => textureEvents.dispatchEvent(new Event("load")));
+export const loadTexture: LoadTexture = (url) =>
+  new BitmapTextureLoader().load(url, () => textureEvents.dispatchEvent(new Event("load")));
 
 /**
  * `desc` with the base map taken from the texture property picked for its shader,

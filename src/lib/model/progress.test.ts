@@ -3,7 +3,7 @@ import { LoadProgress } from "./progress";
 
 describe("LoadProgress", () => {
   it("walks through the stages of a two-version load", () => {
-    const p = new LoadProgress();
+    const p = new LoadProgress((flush) => flush());
     const seen: string[] = [];
     p.onchange = (s) => seen.push(`${s.label}${s.value === null ? "" : ` @${s.value.toFixed(2)}`}`);
 
@@ -32,6 +32,22 @@ describe("LoadProgress", () => {
       "Loading textures 1 / 4 @0.25",
       "Opening in three.js…",
     ]);
+  });
+
+  it("sums up a burst of steps once per frame", () => {
+    const frames: (() => void)[] = [];
+    const p = new LoadProgress((flush) => frames.push(flush));
+    const seen: string[] = [];
+    p.onchange = (s) => seen.push(s.label);
+    for (let i = 0; i < 500; i++) {
+      p.report(`mesh${i}`, { phase: "request", name: `mesh${i}` });
+    }
+    expect(frames).toHaveLength(1);
+    expect(seen).toEqual([]);
+    frames.shift()!();
+    expect(seen).toEqual(["Waiting for mesh0 and 499 more…"]);
+    p.report("mesh0", { phase: "done" });
+    expect(frames).toHaveLength(1);
   });
 
   it("can't measure a download without a size", () => {

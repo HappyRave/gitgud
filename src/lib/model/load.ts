@@ -1,4 +1,5 @@
-import { type AnimationClip, Group, LoadingManager, type Material, type Mesh, type Object3D, TextureLoader } from "three";
+import { type AnimationClip, Group, LoadingManager, type Material, type Mesh, type Object3D } from "three";
+import { BitmapTextureLoader } from "./bitmapTexture";
 import type { ModelInfo, ModelKind } from "$lib/api";
 import { type LoadTexture, materialFrom } from "./materials";
 import type { Step } from "./progress";
@@ -12,6 +13,8 @@ export interface LoadedModel {
   missing: string[];
   /** Gitignored files drawn from the disk copy, the same in every version. */
   fromDisk?: number;
+  /** The object each clip animates from (a prefab's Animator), so binding doesn't search the whole scene. */
+  clipRoots?: Map<AnimationClip, Object3D>;
 }
 
 export interface LoadSource {
@@ -84,7 +87,7 @@ export class TrackedFiles {
   constructor(refUrl: ((ref: string) => string) | null, report: (s: Step) => void = () => {}) {
     const m = this.manager;
     m.setURLModifier((u) => (refUrl && !/^(data:|blob:|https?:|gitgud:)/.test(u) ? refUrl(u) : u));
-    m.addHandler(/\.(tga|psd|dds|exr|hdr|tiff?)$/i, new TextureLoader(m));
+    m.addHandler(/\.(tga|psd|dds|exr|hdr|tiff?)$/i, new BitmapTextureLoader(m));
     m.onStart = () => (this.busy = true);
     m.onProgress = (_url, loaded, total) => report({ phase: "files", loaded, total });
     m.onLoad = () => {
@@ -96,7 +99,7 @@ export class TrackedFiles {
   }
 
   /** Loads a texture through this manager, so it is counted. */
-  readonly loadTexture: LoadTexture = (url) => new TextureLoader(this.manager).load(url);
+  readonly loadTexture: LoadTexture = (url) => new BitmapTextureLoader(this.manager).load(url);
 
   idle(): Promise<void> {
     return this.busy ? new Promise((resolve) => this.waiting.push(resolve)) : Promise.resolve();

@@ -246,17 +246,19 @@ export async function assemblePrefab(scene: ModelScene, materials: ModelMaterial
     }),
   );
   const clips: AnimationClip[] = [];
+  const clipRoots = new Map<AnimationClip, Object3D>();
   for (const c of scene.clips) {
     const clip = await sceneClip(c, objects[c.node], model);
     if (clip instanceof AnimationClip) {
       clips.push(clip);
+      clipRoots.set(clip, objects[c.node]);
     } else {
       missing.push(`Clip ${c.name} couldn't be read: ${clip}`);
     }
   }
   await textures.idle();
   ctx.progress?.("textures")({ phase: "done" });
-  return { root, clips, approximated: [...approximated], missing };
+  return { root, clips, approximated: [...approximated], missing, clipRoots };
 }
 
 /** The object at Unity animation path `path` ("Body/Arm") under `from`. */

@@ -78,6 +78,7 @@ export class ModelStage {
   private raf = 0;
   private last = 0;
   private active = true;
+  private compiling: Promise<void> | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
     const r = (this.renderer = new WebGLRenderer({ canvas, antialias: true, alpha: true }));
@@ -118,6 +119,21 @@ export class ModelStage {
     this.applyShading();
     this.frameAll();
     this.setClip(this.clips()[0]?.name ?? null);
+    // Linking a big scene's shaders would block the first frame; link them in parallel first.
+    const sides = this.sides.filter((s): s is Side => !!s);
+    const compiling = (this.compiling = Promise.all(sides.map((s) => this.renderer.compileAsync(s.scene, this.camera))).then(
+      () => {
+        if (this.compiling === compiling) {
+          this.compiling = null;
+          this.dirty = true;
+        }
+      },
+      (e) => {
+        console.error("Shader compile failed", e);
+        this.compiling = null;
+        this.dirty = true;
+      },
+    ));
   }
 
   get single() {
@@ -142,7 +158,7 @@ export class ModelStage {
       s.mixer.stopAllAction();
       const c = s.model.clips.find((x) => x.name === name);
       if (c) {
-        s.mixer.clipAction(c).play();
+        s.mixer.clipAction(c, s.model.clipRoots?.get(c)).play();
       }
       s.mixer.setTime(0);
     }
@@ -369,7 +385,7 @@ export class ModelStage {
       this.seek((this.time + dt) % dur);
       this.ontime(this.time, dur);
     }
-    if (this.dirty) {
+    if (this.dirty && !this.compiling) {
       this.dirty = false;
       this.render();
     }

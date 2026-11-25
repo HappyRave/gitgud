@@ -68,20 +68,13 @@ function textureBytes(t: Texture): number {
   return img?.width && img.height ? img.width * img.height * 4 : 0;
 }
 
-function bytesOf(geometries: Iterable<BufferGeometry>, materials: Iterable<Material>, seen: Set<object>): number {
+/** Bytes of `textures` that `seen` doesn't hold yet. */
+function unseenBytes(textures: Texture[], seen: Set<object>): number {
   let n = 0;
-  for (const g of geometries) {
-    if (!seen.has(g)) {
-      seen.add(g);
-      n += geometryBytes(g);
-    }
-  }
-  for (const m of materials) {
-    for (const t of texturesOf(m)) {
-      if (!seen.has(t.source)) {
-        seen.add(t.source);
-        n += textureBytes(t);
-      }
+  for (const t of textures) {
+    if (!seen.has(t.source)) {
+      seen.add(t.source);
+      n += textureBytes(t);
     }
   }
   return n;
@@ -107,8 +100,9 @@ function disposeAll(geometries: BufferGeometry[], materials: Material[]) {
 export class ModelCache {
   budget = MODEL_CACHE_BUDGET;
   private models = new Map<string, Entry<Promise<LoadedModel>>>();
-  private loaded = new Map<string, LoadedModel>();
-  private materials = new Map<string, Entry<Material>>();
+  /** Each loaded model's parts and geometry size, read once: a scene adds hundreds, each one trims. */
+  private loaded = new Map<string, { geometries: BufferGeometry[]; materials: Material[]; textures: Texture[]; geometry: number }>();
+  private materials = new Map<string, Entry<Material> & { textures: Texture[] }>();
   private clock = 0;
 
   /** The model `key` names, loaded once with `load`. A failed load isn't kept. */
@@ -127,7 +121,8 @@ export class ModelCache {
         }
         const { geometries, materials } = partsOf(m.root);
         markShared(geometries, materials);
-        this.loaded.set(key, m);
+        const geometry = geometries.reduce((n, g) => n + geometryBytes(g), 0);
+        this.loaded.set(key, { geometries, materials, textures: materials.flatMap(texturesOf), geometry });
         this.trim();
       },
       () => {
@@ -148,7 +143,7 @@ export class ModelCache {
     }
     const m = make();
     markShared([], [m]);
-    this.materials.set(key, { value: m, used: ++this.clock });
+    this.materials.set(key, { value: m, used: ++this.clock, textures: texturesOf(m) });
     this.trim();
     return m;
   }
@@ -157,18 +152,18 @@ export class ModelCache {
     const seen = new Set<object>();
     let bytes = 0;
     for (const m of this.loaded.values()) {
-      const { geometries, materials } = partsOf(m.root);
-      bytes += bytesOf(geometries, materials, seen);
+      bytes += m.geometry + unseenBytes(m.textures, seen);
     }
-    bytes += bytesOf([], [...this.materials.values()].map((e) => e.value), seen);
+    for (const e of this.materials.values()) {
+      bytes += unseenBytes(e.textures, seen);
+    }
     return { models: this.models.size, materials: this.materials.size, bytes };
   }
 
   /** Frees everything; a viewer still showing a model re-uploads what it draws. */
   clear() {
     for (const m of this.loaded.values()) {
-      const { geometries, materials } = partsOf(m.root);
-      disposeAll(geometries, materials);
+      disposeAll(m.geometries, m.materials);
     }
     disposeAll([], [...this.materials.values()].map((e) => e.value));
     this.models.clear();
@@ -186,8 +181,7 @@ export class ModelCache {
       if (model && (!material || model[1] < material[1])) {
         const loaded = this.loaded.get(model[0]);
         if (loaded) {
-          const { geometries, materials } = partsOf(loaded.root);
-          disposeAll(geometries, materials);
+          disposeAll(loaded.geometries, loaded.materials);
         }
         this.loaded.delete(model[0]);
         this.models.delete(model[0]);

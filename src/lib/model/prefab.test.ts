@@ -1,5 +1,6 @@
 import {
   AnimationClip,
+  AnimationMixer,
   BufferAttribute,
   BufferGeometry,
   Group,
@@ -183,6 +184,13 @@ describe("assemblePrefab", () => {
     expect(bob.tracks.map((t) => t.name)).toEqual([`${skiff.getObjectByName("Hull")!.uuid}.position`]);
     expect(run.name).toBe("Run");
     expect(run.tracks[0].name).toBe("Hull_Mesh.position");
+
+    expect(model.clipRoots?.get(bob)).toBe(skiff);
+    expect(model.clipRoots?.get(run)).toBe(skiff);
+    const mixer = new AnimationMixer(model.root);
+    mixer.clipAction(bob, model.clipRoots?.get(bob)).play();
+    mixer.setTime(1);
+    expect(skiff.getObjectByName("Hull")!.position.y).toBe(1);
   });
 
   it("moves FBX geometry so its pivot is the origin, as Unity's import does", () => {

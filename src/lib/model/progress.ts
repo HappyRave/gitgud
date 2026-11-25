@@ -22,17 +22,28 @@ interface Item {
 
 /**
  * Folds the steps of every file a model load touches (both versions, every
- * model a prefab uses) into one label and one bar.
+ * model a prefab uses) into one label and one bar. A scene reports thousands of
+ * steps, so `onchange` runs at most once per `schedule` (an animation frame).
  */
 export class LoadProgress {
   onchange: (s: Summary) => void = () => {};
   private items = new Map<string, Item>();
+  private pending = false;
+
+  constructor(private readonly schedule: (flush: () => void) => void = (flush) => requestAnimationFrame(flush)) {}
 
   report(key: string, step: Step) {
     const prev = this.items.get(key);
     const bytes: [number, number] = step.phase === "download" ? [step.loaded, step.total] : (prev?.bytes ?? [0, 0]);
     this.items.set(key, { step, bytes });
-    this.onchange(this.summary());
+    if (this.pending) {
+      return;
+    }
+    this.pending = true;
+    this.schedule(() => {
+      this.pending = false;
+      this.onchange(this.summary());
+    });
   }
 
   /** Reports `fn`'s steps under `key`. */
