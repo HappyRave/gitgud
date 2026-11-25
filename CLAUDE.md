@@ -141,7 +141,9 @@ replaying at most 255 rows (spike 4.3).
   file at a version (LFS resolved; a Unity `Mesh` `.asset` converted to GLB in `mesh_asset.rs`) and
   `/ref?path=<model>&ref=<name>` the texture or buffer it names (`Files::find_near`). `model_info`
   returns Unity materials (`.mat` → base map / normal / colour / metallic / smoothness, custom shaders
-  flagged `approximated`), an FBX's `.meta` `externalObjects` remaps and scale, and for a prefab a
+  flagged `approximated`, their base map picked by name — colour-like first, normals / masks / noise /
+  spec skipped — with `baseCandidates` for the per-shader "base map" choice in the 3D viewer's ⚠ panel,
+  shared with the material viewer's), an FBX's `.meta` `externalObjects` remaps and scale, and for a prefab a
   `ModelScene` (`prefab.rs`: GameObjects, nested prefabs and variants with `m_Modifications`, stripped
   objects via Unity's `(instance ^ id) & i64::MAX` ids, built-in primitives, missing references,
   Animator clips from `anim.rs`), mirrored into three.js's right-handed space. GUIDs resolve through
@@ -152,7 +154,9 @@ replaying at most 255 rows (spike 4.3).
   without images or textures; no `window` for camera aspect): re-copy and re-apply them when three is
   upgraded. Prefabs and scenes load FBX and Unity meshes `geometryOnly`: fetched and parsed on a pool
   of six workers (`fbxPool.ts` queues jobs in the order asked, at most eight per worker;
-  `fbx.worker.ts`, `readGeometry.ts`) and handed back as transferable buffers (`packFbx.ts`).
+  `fbx.worker.ts`, `readGeometry.ts`) and handed back as transferable buffers (`packFbx.ts`, which
+  keeps each mesh's material names so a whole model file placed in a scene still gets its import's
+  remapped materials).
   `buildPrefab` shows the hierarchy at once with a dot per mesh and `load()` streams the meshes in,
   nearest the default camera first (`view.ts`); the viewer shows a scene before its meshes and
   `stage.refresh()` compares, fits floor / light and draws unchanged static meshes instanced

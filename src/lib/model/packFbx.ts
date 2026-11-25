@@ -1,4 +1,14 @@
-import { AnimationClip, BufferAttribute, BufferGeometry, Group, Mesh, type Object3D } from "three";
+import {
+  AnimationClip,
+  BufferAttribute,
+  BufferGeometry,
+  type Color,
+  Group,
+  type Material,
+  Mesh,
+  MeshStandardMaterial,
+  type Object3D,
+} from "three";
 import type { LoadedModel } from "./load";
 
 /** The attributes prefabs draw with; skinning and morphs aren't used there. */
@@ -13,6 +23,8 @@ export interface PackedMesh {
   attributes: { name: string; array: Typed; itemSize: number; normalized: boolean }[];
   index: Uint32Array | Uint16Array | null;
   groups: { start: number; count: number; materialIndex?: number }[];
+  /** The file's materials on this mesh, one per group, for the import's remaps. */
+  materials: { name: string; color: number }[];
 }
 
 /** A parsed FBX reduced to what prefabs and scenes use, in buffers a worker can hand over. */
@@ -53,6 +65,10 @@ export function packFbx(root: Object3D, scale: number, clips: AnimationClip[]): 
       attributes,
       index,
       groups: g.groups.map((x) => ({ ...x })),
+      materials: (Array.isArray(mesh.material) ? mesh.material : [mesh.material]).map((m) => ({
+        name: m.name,
+        color: (m as Material & { color?: Color }).color?.getHex() ?? 0xffffff,
+      })),
     });
   });
   return { packed: { scale, meshes, clips: clips.map((c) => AnimationClip.toJSON(c)) }, transfer: [...transfer] };
@@ -62,6 +78,16 @@ export function packFbx(root: Object3D, scale: number, clips: AnimationClip[]): 
 export function unpackFbx(p: PackedModel, importScale: number): LoadedModel {
   const file = new Group();
   file.scale.setScalar(p.scale * importScale);
+  const made = new Map<string, MeshStandardMaterial>();
+  const material = ({ name, color }: { name: string; color: number }) => {
+    const key = `${name}|${color}`;
+    let m = made.get(key);
+    if (!m) {
+      m = new MeshStandardMaterial({ name, color });
+      made.set(key, m);
+    }
+    return m;
+  };
   for (const m of p.meshes) {
     const g = new BufferGeometry();
     for (const a of m.attributes) {
@@ -73,7 +99,8 @@ export function unpackFbx(p: PackedModel, importScale: number): LoadedModel {
     for (const x of m.groups) {
       g.addGroup(x.start, x.count, x.materialIndex);
     }
-    const mesh = new Mesh(g);
+    const mats = m.materials.map(material);
+    const mesh = new Mesh(g, mats.length > 1 ? mats : mats[0]);
     mesh.name = m.name;
     if (m.originalName !== null) {
       mesh.userData.originalName = m.originalName;

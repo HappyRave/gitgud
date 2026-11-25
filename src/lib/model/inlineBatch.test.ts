@@ -10,7 +10,7 @@ vi.mock("./fbxPool", () => ({
       .map((id) =>
         id === "bad"
           ? { id, error: "Assets/Room.unity › Mesh &bad: no vertices" }
-          : { id, packed: { scale: 1, clips: [], meshes: [{ name: `m${id}`, originalName: null, transformData: null, attributes: [], index: null, groups: [] }] } },
+          : { id, packed: { scale: 1, clips: [], meshes: [{ name: `m${id}`, originalName: null, transformData: null, attributes: [], index: null, groups: [], materials: [] }] } },
       ),
   ),
 }));

@@ -128,6 +128,7 @@ describe("materialKey", () => {
     missing: false,
     textures: [],
     baseProperty: null,
+    baseCandidates: [],
     ...over,
   });
 

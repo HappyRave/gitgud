@@ -3,12 +3,15 @@ import { BitmapTextureLoader } from "./bitmapTexture";
 import type { ModelInfo, ModelKind } from "$lib/api";
 import { type LoadTexture, materialFrom } from "./materials";
 import type { Step } from "./progress";
+import { Approximations, type BaseSlots } from "./approximations";
 
 export interface LoadedModel {
   root: Object3D;
   clips: AnimationClip[];
   /** Shaders shown through an approximation, by name. */
   approximated: string[];
+  /** For each of those shaders, the texture properties its base map can come from. */
+  bases?: Record<string, BaseSlots>;
   /** References that couldn't be found ("Cargo › mesh → guid …"). */
   missing: string[];
   /** Gitignored files drawn from the disk copy, the same in every version. */
@@ -106,27 +109,32 @@ export class TrackedFiles {
   }
 }
 
-function remap(root: Object3D, src: LoadSource, approximated: Set<string>, load: LoadTexture) {
+function remap(root: Object3D, src: LoadSource, approximated: Approximations, load: LoadTexture) {
   const info = src.info;
-  if (!info || Object.keys(info.remaps).length === 0) {
+  if (!info) {
     return;
   }
   const made = new Map<number, Material>();
-  const swap = (m: Material): Material => {
-    const ix = info.remaps[m.name];
-    if (ix === undefined) {
-      return m;
-    }
+  remapMaterials(root, info.remaps, (ix) => {
     let out = made.get(ix);
     if (!out) {
       const desc = info.materials[ix];
       out = materialFrom(desc, src.imageUrl, load);
-      if (desc.approximated) {
-        approximated.add(desc.shader);
-      }
+      approximated.note(desc);
       made.set(ix, out);
     }
     return out;
+  });
+}
+
+/** Swaps each mesh's model-file material for the Unity material the import maps its name to. */
+export function remapMaterials(root: Object3D, remaps: Record<string, number>, material: (ix: number) => Material) {
+  if (Object.keys(remaps).length === 0) {
+    return;
+  }
+  const swap = (m: Material): Material => {
+    const ix = remaps[m.name];
+    return ix === undefined ? m : material(ix);
   };
   root.traverse((o) => {
     const mesh = o as Mesh;
@@ -139,7 +147,7 @@ function remap(root: Object3D, src: LoadSource, approximated: Set<string>, load:
 /** Loads a standalone model file (FBX, OBJ, glTF, GLB) the way Unity imports it. */
 export async function loadModel(src: LoadSource): Promise<LoadedModel> {
   const report = src.onProgress ?? (() => {});
-  const approximated = new Set<string>();
+  const approximated = new Approximations();
   const workerKind = !src.geometryOnly ? null : src.kind === "fbx" ? "fbx" : src.kind === "glb" || src.kind === "asset" ? "glb" : null;
   if (workerKind) {
     // Fetched and parsed in a worker: the main thread only gets the finished buffers.
@@ -190,5 +198,5 @@ export async function loadModel(src: LoadSource): Promise<LoadedModel> {
   const wrapper = new Group();
   wrapper.name = "(model)";
   wrapper.add(root);
-  return { root: wrapper, clips, approximated: [...approximated], missing: [] };
+  return { root: wrapper, clips, approximated: approximated.shaders, bases: approximated.bases, missing: [] };
 }

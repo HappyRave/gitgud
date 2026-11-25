@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { compare } from "$lib/model/compare";
 import type { LoadedModel } from "$lib/model/load";
 import type { ModelSide, Opened } from "$lib/model/open";
-import { prefs } from "$lib/prefs.svelte";
+import { prefs, shaderBase } from "$lib/prefs.svelte";
 import ModelViewer from "./ModelViewer.svelte";
 
 const stages: FakeStage[] = [];
@@ -102,6 +102,25 @@ describe("ModelViewer", () => {
       "Assets/gun.prefab HEAD",
       "Assets/gun.prefab On disk",
     ]);
+  });
+
+  it("lets a custom shader's base map be picked from its textures, and reloads with it", async () => {
+    const ground = (): LoadedModel => ({
+      ...boat(0, false),
+      approximated: ["Custom/Ground"],
+      bases: { "Custom/Ground": { auto: "_Dirt", slots: ["_Dirt", "_Grass"] } },
+    });
+    opened.set("On disk", { model: ground(), error: null });
+    render(ModelViewer, { repoId: 1, path: "Assets/Cemetery.unity", after: DISK });
+    await fireEvent.click(await screen.findByRole("button", { name: "1 warning" }, { timeout: 5000 }));
+
+    const select = screen.getByRole("combobox", { name: /base map/ }) as HTMLSelectElement;
+    expect(select.value).toBe("_Dirt");
+    expect(asked).toEqual(["Assets/Cemetery.unity On disk"]);
+    await fireEvent.change(select, { target: { value: "_Grass" } });
+
+    expect(shaderBase("Custom/Ground")).toBe("_Grass");
+    await waitFor(() => expect(asked).toEqual(["Assets/Cemetery.unity On disk", "Assets/Cemetery.unity On disk"]));
   });
 
   it("compares two versions and remembers the Changes shading", async () => {

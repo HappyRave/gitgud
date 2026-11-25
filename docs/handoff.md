@@ -97,6 +97,12 @@ The v0.1.1 / v0.1.2 commits don't record which checks ran; re-run the full list 
    the first open after a restart (disk cache warm), 6.4 s after a window reload. Left: inline
    meshes (~150 ms each, 524 per open, each side converts its own) and the `/model` FBX bytes;
    a first open after a restart once built the scene twice and didn't again — unexplained.
+   **Re-measured at `f10844c` (2026-11-25):** click on "Open in 3D" → "tris" line: 9.3 s with no
+   disk cache, 3.6 s after a restart (cache warm), 3.7 s after a window reload. Per open: 2
+   `model_info` calls (done 1.3 s after the click, started by the card's warm-up), 415 `/model`
+   requests (252 MB; no separate inline-mesh requests any more), 132 `/image` requests (98 MB),
+   which finish last. CDP's per-request timings are meaningless for the custom protocol; per-route
+   timing would have to be logged in `images.rs`.
 1. Build with `pnpm package` and test `target/release/bundle/nsis/gitgud_0.1.2_x64-setup.exe` interactively on a Windows user profile (install, CLI `PATH`, uninstall).
 2. Start `pnpm tauri dev`, open a real Unity + LFS repo plus a multi-repo Library folder, and do a structured walkthrough of M1–M9 themes/density, WebView2 accelerator keys (`Ctrl+P`/`Ctrl+F`/`Ctrl+R`), Settings' **Local latency** timings, and the v0.1.1/v0.1.2 pieces (splitters, multi-select staging, texture viewer on real DDS/EXR/PSD, LFS auto-fetch, LFS conflict inspector).
 3. Address any layout polish or Unity YAML parser edge cases uncovered on real `.unity`/`.prefab` assets, plus live GitHub/Bitbucket remote LFS lock checks (`O1`) and Sourcetree baseline (`O9`).

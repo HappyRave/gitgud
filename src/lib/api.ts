@@ -355,6 +355,8 @@ export interface ModelMaterial {
   textures: TextureSlot[];
   /** The property `baseMap` came from. */
   baseProperty: string | null;
+  /** An approximated shader's texture properties that look like a colour, likeliest first. */
+  baseCandidates: string[];
 }
 
 export interface TextureSlot {

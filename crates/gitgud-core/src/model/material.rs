@@ -62,6 +62,9 @@ pub struct Material {
     pub textures: Vec<TextureSlot>,
     /// The property `base_map` came from.
     pub base_property: Option<String>,
+    /// For an approximated shader, the texture properties that look like a colour
+    /// (likeliest first, the base map's included), for the viewer's base map choice.
+    pub base_candidates: Vec<String>,
 }
 
 /// A texture property of a material and the image it holds.
@@ -95,6 +98,7 @@ impl Material {
             missing: true,
             textures: Vec::new(),
             base_property: None,
+            base_candidates: Vec::new(),
         }
     }
 
@@ -133,6 +137,7 @@ impl Material {
             missing: false,
             textures: Vec::new(),
             base_property: None,
+            base_candidates: Vec::new(),
         };
         for (key, tex) in keyed_list(&props["m_TexEnvs"]) {
             let Some(guid) = obj_ref(&tex["m_Texture"]).and_then(|r| r.guid) else {
@@ -170,12 +175,16 @@ impl Material {
                 .or_else(|| {
                     m.textures
                         .iter()
-                        .find(|t| Some(&t.path) != m.normal_map.as_ref())
+                        .filter(|t| Some(&t.path) != m.normal_map.as_ref())
+                        .min_by_key(|t| colour_rank(&t.property))
                 })
                 .cloned();
             if let Some(slot) = pick {
                 m.use_base(&slot);
             }
+        }
+        if approximated {
+            m.base_candidates = base_candidates(&m);
         }
         for (key, v) in keyed_list(&props["m_Floats"]) {
             match key.as_str() {
@@ -202,6 +211,72 @@ impl Material {
         self.offset = slot.offset;
         self.base_property = Some(slot.property.clone());
     }
+}
+
+/// How likely a custom shader's texture property is its colour: 0 named like one,
+/// 2 named like data (normals, masks, noise, ...), 1 anything else.
+fn colour_rank(property: &str) -> u8 {
+    const COLOUR: &[&str] = &[
+        "albedo",
+        "basecolor",
+        "base_color",
+        "diffuse",
+        "maintex",
+        "color",
+        "colour",
+    ];
+    const DATA: &[&str] = &[
+        "normal",
+        "bump",
+        "mask",
+        "noise",
+        "height",
+        "rough",
+        "metal",
+        "smooth",
+        "occlusion",
+        "emiss",
+        "splat",
+        "control",
+        "flow",
+        "ramp",
+        "lut",
+        "matcap",
+        "cube",
+        "dissolve",
+        "displace",
+        "distort",
+        "spec",
+        "gloss",
+    ];
+    let p = property.to_ascii_lowercase();
+    if DATA.iter().any(|w| p.contains(w)) {
+        2
+    } else if COLOUR.iter().any(|w| p.contains(w)) {
+        0
+    } else {
+        1
+    }
+}
+
+/// `m`'s texture properties named like a colour or neutrally, likeliest first, with
+/// its base map's property always in.
+fn base_candidates(m: &Material) -> Vec<String> {
+    let mut slots: Vec<_> = m
+        .textures
+        .iter()
+        .filter(|t| Some(&t.path) != m.normal_map.as_ref())
+        .map(|t| (colour_rank(&t.property), &t.property))
+        .filter(|(rank, _)| *rank < 2)
+        .collect();
+    slots.sort_by_key(|(rank, _)| *rank);
+    let mut out: Vec<String> = slots.into_iter().map(|(_, p)| p.clone()).collect();
+    if let Some(base) = &m.base_property
+        && !out.contains(base)
+    {
+        out.insert(0, base.clone());
+    }
+    out
 }
 
 /// Everything a `.mat` sets, for the material viewer's table.
@@ -560,10 +635,10 @@ mod tests {
         assert_eq!(props, ["_Mask", "_Drawing"]);
         assert_eq!(
             head.base_property.as_deref(),
-            Some("_Mask"),
-            "first assigned"
+            Some("_Drawing"),
+            "a mask isn't a colour"
         );
-        assert_eq!(head.base_map.as_deref(), Some("Assets/T/mask.png"));
+        assert_eq!(head.base_map.as_deref(), Some("Assets/T/drawing.png"));
 
         let marked = load(Version::Worktree);
         assert_eq!(
@@ -572,6 +647,66 @@ mod tests {
             "[MainTexture] wins"
         );
         assert_eq!(marked.tiling, [2.0, 2.0]);
+    }
+
+    #[test]
+    fn a_custom_shader_s_base_map_skips_masks_normals_and_noise_and_prefers_colour_names() {
+        let slots = |props: &[&str]| {
+            props
+                .iter()
+                .enumerate()
+                .map(|(i, p)| format!("    - {p}:\n        m_Texture: {{fileID: 2800000, guid: {:032x}, type: 3}}\n        m_Scale: {{x: 1, y: 1}}\n        m_Offset: {{x: 0, y: 0}}\n", 0xabc0 + i))
+                .collect::<String>()
+        };
+        let mat = |props: &[&str]| {
+            format!(
+                "--- !u!21 &2100000\nMaterial:\n  m_Name: Ground\n  m_Shader: {{fileID: 4800000, guid: {SHADER}, type: 3}}\n  m_SavedProperties:\n    m_TexEnvs:\n{}",
+                slots(props)
+            )
+        };
+        let repo = TestRepo::init();
+        repo.write("Assets/S/Ground.shader", "Shader \"Custom/Ground\"\n{\n}\n")
+            .write("Assets/S/Ground.shader.meta", &format!("guid: {SHADER}\n"));
+        for i in 0..5 {
+            repo.write(&format!("Assets/T/{i}.png"), "x").write(
+                &format!("Assets/T/{i}.png.meta"),
+                &format!("guid: {:032x}\n", 0xabc0 + i),
+            );
+        }
+        repo.write(
+            "Assets/M/a.mat",
+            &mat(&[
+                "_EdgeNoise",
+                "_DirtNormal",
+                "_SplatMask",
+                "_Grass",
+                "_AlbedoMap",
+            ]),
+        )
+        .write(
+            "Assets/M/b.mat",
+            &mat(&["_EdgeNoise", "_DirtNormal", "_SpecGlossMap", "_Grass"]),
+        )
+        .write("Assets/M/c.mat", &mat(&["_Noise", "_HeightMap"]))
+        .commit_all("one");
+        let r = crate::repo::open(repo.path()).unwrap();
+        let files = Files::new(&r, &Version::Head).unwrap();
+        let g = Guids::new(&files);
+        let load = |p: &str| Material::load(p, &g).unwrap();
+        let base = |p: &str| load(p).base_property;
+
+        assert_eq!(base("Assets/M/a.mat").as_deref(), Some("_AlbedoMap"));
+        assert_eq!(base("Assets/M/b.mat").as_deref(), Some("_Grass"));
+        assert_eq!(
+            base("Assets/M/c.mat").as_deref(),
+            Some("_Noise"),
+            "nothing better: the first one"
+        );
+        assert_eq!(
+            load("Assets/M/a.mat").base_candidates,
+            ["_AlbedoMap", "_Grass"]
+        );
+        assert_eq!(load("Assets/M/c.mat").base_candidates, ["_Noise"]);
     }
 
     #[test]

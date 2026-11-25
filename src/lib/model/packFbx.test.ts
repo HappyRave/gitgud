@@ -1,4 +1,13 @@
-import { AnimationClip, BufferAttribute, BufferGeometry, Group, Mesh, VectorKeyframeTrack } from "three";
+import {
+  AnimationClip,
+  BufferAttribute,
+  BufferGeometry,
+  Group,
+  Mesh,
+  MeshPhongMaterial,
+  type MeshStandardMaterial,
+  VectorKeyframeTrack,
+} from "three";
 import { describe, expect, it } from "vitest";
 import { readGeometry } from "./readGeometry";
 import { packFbx, unpackFbx } from "./packFbx";
@@ -41,6 +50,23 @@ describe("packFbx", () => {
     expect(meshes[0].geometry.groups).toEqual([{ start: 0, count: 3, materialIndex: 1 }]);
     expect(model.clips[0].name).toBe("Take 001");
     expect(model.clips[0].tracks[0].name).toBe("Hull_Mesh.position");
+  });
+
+  it("keeps each mesh's material names and colours, so import remaps still find them", () => {
+    const root = new Group();
+    const one = tri("Ground");
+    one.material = new MeshPhongMaterial({ name: "M_Ground", color: 0x336699 });
+    const two = tri("Wall");
+    two.material = [new MeshPhongMaterial({ name: "M_Ground" }), new MeshPhongMaterial({ name: "M_Rock" })];
+    root.add(one, two);
+
+    const meshes = unpackFbx(structuredClone(packFbx(root, 1, []).packed), 1).root.children[0].children as Mesh[];
+
+    const first = meshes[0].material as MeshStandardMaterial;
+    expect(first.name).toBe("M_Ground");
+    expect(first.color.getHex()).toBe(0x336699);
+    const names = (meshes[1].material as MeshStandardMaterial[]).map((m) => m.name);
+    expect(names).toEqual(["M_Ground", "M_Rock"]);
   });
 
   it("parses an FBX in place when there are no workers", async () => {

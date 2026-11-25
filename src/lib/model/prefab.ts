@@ -28,7 +28,8 @@ import { clone as cloneSkinned } from "three/examples/jsm/utils/SkeletonUtils.js
 import { modelCache } from "./cache";
 import { loadShared, materialKey } from "./shared";
 import { inlineBatcher } from "./inlineBatch";
-import { type LoadedModel, TrackedFiles } from "./load";
+import { type LoadedModel, remapMaterials, TrackedFiles } from "./load";
+import { Approximations } from "./approximations";
 import type { Step } from "./progress";
 import { type LoadTexture, MISSING_COLOR, materialFrom } from "./materials";
 import { meshFileKind } from "./source";
@@ -175,8 +176,10 @@ export function assemblePrefab(scene: ModelScene, materials: ModelMaterial[], ct
  */
 export function buildPrefab(scene: ModelScene, materials: ModelMaterial[], ctx: PrefabContext): BuildingModel {
   const models = new Map<string, Promise<LoadedModel>>();
+  const infos = new Map<string, ModelInfo>();
   const made = new Map<number, Material>();
-  const approximated = new Set<string>();
+  const imported = new Map<string, Material>();
+  const approximated = new Approximations();
   const missing = [...scene.missing];
   const textures = new TrackedFiles(null, ctx.progress?.("textures"));
   const loadTexture = ctx.loadTexture ?? textures.loadTexture;
@@ -192,8 +195,9 @@ export function buildPrefab(scene: ModelScene, materials: ModelMaterial[], ctx: 
       const report = ctx.progress?.(path);
       report?.({ phase: "request", name: path.slice(path.lastIndexOf("/") + 1) });
       p = kind
-        ? ctx.info(path).then((info) =>
-            loadShared({
+        ? ctx.info(path).then((info) => {
+            infos.set(path, info);
+            return loadShared({
               kind,
               url: ctx.modelUrl(path),
               refUrl: ctx.refUrl(path),
@@ -203,8 +207,8 @@ export function buildPrefab(scene: ModelScene, materials: ModelMaterial[], ctx: 
               name: path.slice(path.lastIndexOf("/") + 1),
               onProgress: report,
               geometryOnly: true,
-            }),
-          )
+            });
+          })
         : Promise.reject(new Error(`${path} is not a model file the viewer reads`));
       p.catch(() => report?.({ phase: "done" }));
       models.set(path, p);
@@ -219,10 +223,23 @@ export function buildPrefab(scene: ModelScene, materials: ModelMaterial[], ctx: 
       const key = materialKey(desc);
       const make = () => materialFrom(desc, ctx.imageUrl, loadTexture);
       m = key ? modelCache.material(key, make) : make();
-      if (desc.approximated) {
-        approximated.add(desc.shader);
-      }
+      approximated.note(desc);
       made.set(ix, m);
+    }
+    return m;
+  };
+
+  /** A model file's material by the import's index, made once per file and content. */
+  const importedMaterial = (path: string, info: ModelInfo, ix: number): Material => {
+    const id = `${path}|${ix}`;
+    let m = imported.get(id);
+    if (!m) {
+      const desc = info.materials[ix];
+      const key = materialKey(desc);
+      const make = () => materialFrom(desc, ctx.imageUrl, loadTexture);
+      m = key ? modelCache.material(key, make) : make();
+      approximated.note(desc);
+      imported.set(id, m);
     }
     return m;
   };
@@ -259,7 +276,12 @@ export function buildPrefab(scene: ModelScene, materials: ModelMaterial[], ctx: 
       return missingMesh();
     }
     if (ref.name === null && ref.id === null) {
-      return cloneSkinned(loaded.root);
+      const whole = cloneSkinned(loaded.root);
+      const info = infos.get(ref.path);
+      if (info) {
+        remapMaterials(whole, info.remaps, (ix) => importedMaterial(ref.path, info, ix));
+      }
+      return whole;
     }
     // A Mesh .asset holds one mesh, referenced by its main fileID (4300000), not a hashed one.
     const src = meshFileKind(ref.path) === "asset" ? firstMesh(loaded.root) : findMesh(loaded.root, ref.name, ref.id);
@@ -324,7 +346,7 @@ export function buildPrefab(scene: ModelScene, materials: ModelMaterial[], ctx: 
       }
       await textures.idle();
       ctx.progress?.("textures")({ phase: "done" });
-      Object.assign(building, { clips, clipRoots, approximated: [...approximated], missing });
+      Object.assign(building, { clips, clipRoots, approximated: approximated.shaders, bases: approximated.bases, missing });
       return building;
     });
     return loading;

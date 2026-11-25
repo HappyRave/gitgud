@@ -6,7 +6,7 @@ import {
   Group,
   type LineSegments,
   Mesh,
-  type MeshStandardMaterial,
+  MeshStandardMaterial,
   Texture,
   VectorKeyframeTrack,
 } from "three";
@@ -26,7 +26,7 @@ vi.mock("./load", async (orig) => ({
     file.scale.setScalar(0.01);
     const geo = new BufferGeometry();
     geo.setAttribute("position", new BufferAttribute(new Float32Array([0, 0, 0, 100, 0, 0, 0, 100, 0]), 3));
-    const hull = Object.assign(new Mesh(geo), { name: "Hull_Mesh" });
+    const hull = Object.assign(new Mesh(geo, new MeshStandardMaterial({ name: "M_Hull" })), { name: "Hull_Mesh" });
     hull.userData.transformData = { rotationPivot: [1, 2, 3], scalingPivot: [1, 2, 3] };
     file.add(hull);
     const wrapper = new Group();
@@ -55,6 +55,7 @@ vi.mock("./fbxPool", () => ({
             attributes: [{ name: "position", array: new Float32Array(9), itemSize: 3, normalized: false }],
             index: null,
             groups: [],
+            materials: [{ name: "", color: 0xffffff }],
           },
         ],
       },
@@ -80,6 +81,7 @@ const mat = (name: string, over: Partial<ModelMaterial> = {}): ModelMaterial => 
   missing: false,
   textures: [],
   baseProperty: null,
+  baseCandidates: [],
   ...over,
 });
 
@@ -189,6 +191,34 @@ describe("assemblePrefab", () => {
     const model = await assemblePrefab(scene, [], ctx);
     expect((model.root.getObjectByName("Table")!.children[0] as Mesh).isMesh).toBe(true);
     expect(model.missing).toEqual([]);
+  });
+
+  it("gives a whole model file its import's materials, mapped from the file's own material names", async () => {
+    const scene: ModelScene = {
+      nodes: [
+        node("Terrain", { mesh: { type: "asset", path: "Assets/terrain.fbx", name: null, id: null, scale: 1 } }),
+        node("Terrain 2", { mesh: { type: "asset", path: "Assets/terrain.fbx", name: null, id: null, scale: 1 } }),
+      ],
+      missing: [],
+      clips: [],
+    };
+    const ground = mat("MI_Ground", { shader: "Custom/Ground", approximated: true, baseMap: "dirt.png", baseMapKey: "d1" });
+    const info = async (): Promise<ModelInfo> => ({
+      kind: "fbx",
+      key: null,
+      materials: [ground],
+      remaps: { M_Hull: 0 },
+      scale: 1,
+      scene: null,
+      fromDisk: 0,
+    });
+    const model = await assemblePrefab(scene, [], { ...ctx, info });
+    const drawn = (name: string) => model.root.getObjectByName(name)!.getObjectByProperty("isMesh", true) as Mesh;
+    const one = drawn("Terrain").material as MeshStandardMaterial;
+    expect(one.name).toBe("MI_Ground");
+    expect(one.map).not.toBeNull();
+    expect(drawn("Terrain 2").material).toBe(one);
+    expect(model.approximated).toEqual(["Custom/Ground"]);
   });
 
   it("draws meshes stored inside the scene, loading each one once", async () => {

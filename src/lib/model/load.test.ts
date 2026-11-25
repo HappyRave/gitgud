@@ -72,6 +72,7 @@ const desc = (over: Partial<ModelMaterial> = {}): ModelMaterial => ({
   missing: false,
   textures: [],
   baseProperty: null,
+  baseCandidates: [],
   ...over,
 });
 
@@ -132,7 +133,8 @@ describe("loadModel", () => {
     const model = await loadModel({ kind: "asset", url: "m://Room.unity?mesh=7", refUrl: (r) => r, imageUrl: (p) => p, info: null, geometryOnly: true });
     const mesh = model.root.getObjectByName("Tri") as Mesh;
     expect(mesh.geometry.getAttribute("position").count).toBe(3);
-    expect((mesh.material as MeshBasicMaterial).name).toBe("");
+    expect((mesh.material as MeshBasicMaterial).name).toBe("HullMat");
+    expect((mesh.material as MeshBasicMaterial).map ?? null).toBeNull();
 
     const gone = loadModel({ kind: "asset", url: "m://Room.unity?mesh=8", refUrl: (r) => r, imageUrl: (p) => p, info: null, geometryOnly: true });
     await expect(gone).rejects.toBeInstanceOf(ModelLoadError);

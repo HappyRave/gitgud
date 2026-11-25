@@ -6,7 +6,8 @@
   import type { ModelSide, Opened } from "$lib/model/open";
   import type { Summary } from "$lib/model/progress";
   import type { CompareMode, ModelStage } from "$lib/model/stage";
-  import { prefs, setModelPlaying, setModelShading } from "$lib/prefs.svelte";
+  import { prefs, setModelPlaying, setModelShading, setShaderBase, shaderBase } from "$lib/prefs.svelte";
+  import { type BaseSlots, mergeBases } from "$lib/model/approximations";
   import LfsBinaryCard from "./LfsBinaryCard.svelte";
   import LoadingBar from "./LoadingBar.svelte";
 
@@ -53,6 +54,9 @@
   let changes = $state<Change[]>([]);
   let counts = $state<{ before: ModelStats | null; after: ModelStats | null }>({ before: null, after: null });
   let notes = $state<string[]>([]);
+  /** Custom shaders shown as standard lit, with the textures a base map can come from. */
+  let approx = $state<string[]>([]);
+  let bases = $state<Record<string, BaseSlots>>({});
   let notesOpen = $state(false);
   let clips = $state<{ name: string; duration: number }[]>([]);
   let clip = $state<string | null>(null);
@@ -131,6 +135,8 @@
     changes = [];
     counts = { before: null, after: null };
     notes = [];
+    approx = [];
+    bases = {};
     clips = [];
     clip = null;
     loading = false;
@@ -162,8 +168,9 @@
     filling = false;
     changes = stage.comparison.changes;
     counts = { before: b?.model ? stats(b.model.root) : null, after: stats(a.model.root) };
-    const shaders = new Set([...(b?.model?.approximated ?? []), ...a.model.approximated]);
-    const found = [...shaders].map((s) => `${s} is shown as a standard lit material`).concat(a.model.missing);
+    approx = [...new Set([...(b?.model?.approximated ?? []), ...a.model.approximated])];
+    bases = mergeBases(b?.model?.bases, a.model.bases);
+    const found = [...a.model.missing];
     const disk = Math.max(a.model.fromDisk ?? 0, b?.model?.fromDisk ?? 0);
     if (disk > 0) {
       found.push(`${fmt(disk)} gitignored ${disk === 1 ? "file comes" : "files come"} from your disk copy, the same in both versions`);
@@ -185,13 +192,29 @@
 
   const inputs = $derived(JSON.stringify([repoId, path, before, after, bust]));
 
-  $effect(() => {
-    void inputs;
+  function reload() {
     loading = true;
     filling = false;
     status = { label: "Loading model…", value: null };
     void load(++seq);
+  }
+
+  $effect(() => {
+    void inputs;
+    reload();
   });
+
+  /** The base map shown for `shader`: the one picked for it, else the automatic one. */
+  function baseOf(shader: string): string {
+    const b = bases[shader];
+    const picked = shaderBase(shader);
+    return picked && b.slots.includes(picked) ? picked : (b.auto ?? b.slots[0]);
+  }
+
+  function pickBase(shader: string, property: string) {
+    setShaderBase(shader, property);
+    reload();
+  }
 
   function sync() {
     if (!stage) {
@@ -409,8 +432,8 @@
         </div>
       {/if}
 
-      {#if notes.length > 0 || errors.before}
-        {@const count = notes.length + (errors.before ? 1 : 0)}
+      {#if notes.length > 0 || approx.length > 0 || errors.before}
+        {@const count = notes.length + approx.length + (errors.before ? 1 : 0)}
         <button
           type="button"
           class="warn-btn"
@@ -426,6 +449,16 @@
         {#if notesOpen}
           <div class="notes" role="note">
             {#if errors.before}<span>{before?.label}: {errors.before}</span>{/if}
+            {#each approx as s (s)}
+              <span
+                >{s} is shown as a standard lit material{#if (bases[s]?.slots.length ?? 0) > 1}
+                  <label class="base"
+                    >· base map <select value={baseOf(s)} onchange={(e) => pickBase(s, e.currentTarget.value)}
+                      >{#each bases[s].slots as p (p)}<option value={p}>{p}</option>{/each}</select
+                    ></label
+                  >{/if}</span
+              >
+            {/each}
             {#each notes as n (n)}<span>{n}</span>{/each}
           </div>
         {/if}
@@ -737,6 +770,19 @@
     background: var(--warn);
     color: var(--warn-ink);
     font-size: 11px;
+  }
+  .notes .base {
+    margin-left: 4px;
+    white-space: nowrap;
+  }
+  .notes select {
+    margin-left: 3px;
+    padding: 0 2px;
+    font: 10.5px var(--mono);
+    color: inherit;
+    background: rgb(255 255 255 / 0.35);
+    border: 1px solid currentColor;
+    border-radius: 3px;
   }
   .transport {
     position: absolute;

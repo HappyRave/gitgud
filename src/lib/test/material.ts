@@ -26,6 +26,7 @@ export function material(
       missing: false,
       textures: [],
       baseProperty: null,
+      baseCandidates: [],
     },
     properties: Object.entries(props).map(([key, value]) => ({
       key,

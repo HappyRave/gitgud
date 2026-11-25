@@ -12,7 +12,7 @@ use crate::repo::Repo;
 pub const BUDGET: u64 = 1024 * 1024 * 1024;
 
 /// Bumped whenever what is kept changes shape or meaning, so older files aren't read.
-const FORMAT: u32 = 2;
+const FORMAT: u32 = 3;
 
 /// Slow 3D preview results kept on disk across restarts, in `.git/gitgud/cache`:
 /// scene and prefab infos at commits (a commit never changes) and shrunk textures
