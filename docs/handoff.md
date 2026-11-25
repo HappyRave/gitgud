@@ -90,6 +90,13 @@ The v0.1.1 / v0.1.2 commits don't record which checks ran; re-run the full list 
    share them, or served in one batch; per-request timing in `images.rs` to find the slow route.
    Measure with the CDP profile used for v0.1.3 (debug build launched with
    `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9334`).
+   **2026-11-25 progress:** inline meshes indexed once per version (both sides kept), the
+   viewer no longer remounted by `FilePreview` (equal versions as new objects, and a stale
+   probe of the previous file), the scene builder parses only the YAML classes it reads, and
+   scene infos + shrunk textures are kept on disk. Debug build, same scene: 21.1 s → 8.7 s on
+   the first open after a restart (disk cache warm), 6.4 s after a window reload. Left: inline
+   meshes (~150 ms each, 524 per open, each side converts its own) and the `/model` FBX bytes;
+   a first open after a restart once built the scene twice and didn't again — unexplained.
 1. Build with `pnpm package` and test `target/release/bundle/nsis/gitgud_0.1.2_x64-setup.exe` interactively on a Windows user profile (install, CLI `PATH`, uninstall).
 2. Start `pnpm tauri dev`, open a real Unity + LFS repo plus a multi-repo Library folder, and do a structured walkthrough of M1–M9 themes/density, WebView2 accelerator keys (`Ctrl+P`/`Ctrl+F`/`Ctrl+R`), Settings' **Local latency** timings, and the v0.1.1/v0.1.2 pieces (splitters, multi-select staging, texture viewer on real DDS/EXR/PSD, LFS auto-fetch, LFS conflict inspector).
 3. Address any layout polish or Unity YAML parser edge cases uncovered on real `.unity`/`.prefab` assets, plus live GitHub/Bitbucket remote LFS lock checks (`O1`) and Sourcetree baseline (`O9`).

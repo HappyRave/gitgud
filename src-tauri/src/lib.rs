@@ -1298,6 +1298,11 @@ async fn clear_unity_caches(session: State<'_, Session>, id: u32) -> Result<Cach
 }
 
 #[tauri::command]
+async fn clear_preview_cache(session: State<'_, Session>, id: u32) -> Result<CacheStats, Error> {
+    session.clear_preview_cache(id)
+}
+
+#[tauri::command]
 async fn worktree_unity_diff(
     session: State<'_, Session>,
     id: u32,
@@ -1816,6 +1821,7 @@ fn app_with_library<R: Runtime>(builder: Builder<R>, library: Option<LibraryStor
             write_commit_graph,
             cache_stats,
             clear_unity_caches,
+            clear_preview_cache,
             worktree_unity_diff,
             commit_unity_diff,
             model_info,
@@ -2014,6 +2020,17 @@ mod tests {
         let cleared = ipc.call("clear_unity_caches", json!({ "id": id })).unwrap();
         assert_eq!(cleared["modelInfos"], 0);
         assert_eq!(cleared["guidIndexBytes"], 0);
+        let previews = ipc
+            .call("clear_preview_cache", json!({ "id": id }))
+            .unwrap();
+        assert_eq!(previews["previewModels"], 0);
+        assert_eq!(previews["previewBytes"], 0);
+        assert!(
+            previews["previewCachePath"]
+                .as_str()
+                .unwrap()
+                .ends_with("cache")
+        );
         let err = ipc
             .call(
                 "model_info",

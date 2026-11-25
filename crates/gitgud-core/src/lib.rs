@@ -7,6 +7,7 @@ pub mod cli;
 pub mod clone;
 pub mod config;
 pub mod diff;
+mod disk_cache;
 pub mod font;
 pub mod git;
 pub mod graph;

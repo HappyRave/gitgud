@@ -3,7 +3,7 @@ use serde_json::json;
 use super::yaml::{docs, num, scalar};
 use crate::repo::Error;
 
-const MESH_CLASS: u32 = 43;
+pub(crate) const MESH_CLASS: u32 = 43;
 const POSITION: usize = 0;
 const NORMAL: usize = 1;
 const TEXCOORD0: usize = 4;

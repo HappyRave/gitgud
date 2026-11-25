@@ -125,6 +125,34 @@ fn large_unhydrated_lfs_pointer_refuses_auto_fetch_and_prompts_fetch() {
 }
 
 #[test]
+fn reopening_a_repo_keeps_its_caches_until_its_config_changes() {
+    let repo = TestRepo::init();
+    repo.write("Assets/boat.prefab", "%YAML 1.1\n")
+        .commit_all("one");
+    let session = Session::default();
+    let first = session.open(repo.path()).unwrap().id;
+    session
+        .model_info(first, "Assets/boat.prefab", &Version::Head)
+        .unwrap();
+
+    let again = session.open(repo.path()).unwrap().id;
+    assert_ne!(first, again);
+    assert!(std::sync::Arc::ptr_eq(
+        &session.get(first).unwrap().repo,
+        &session.get(again).unwrap().repo
+    ));
+    assert_eq!(session.cache_stats(again).unwrap().model_infos, 1);
+
+    repo.git(&["config", "user.name", "Someone Else"]);
+    let fresh = session.open(repo.path()).unwrap().id;
+    assert_eq!(
+        session.cache_stats(fresh).unwrap().model_infos,
+        0,
+        "a changed config opens it anew"
+    );
+}
+
+#[test]
 fn reads_both_sides_of_a_conflict() {
     let repo = TestRepo::init();
     put(&repo, "t.png", V1);

@@ -2,6 +2,7 @@ use std::path::Path;
 
 use serde::Serialize;
 
+use crate::disk_cache::DiskCache;
 use crate::repo::{Error, Repo};
 use crate::unity_yaml::{clear_guid_index, guid_index_file};
 
@@ -24,6 +25,11 @@ pub struct CacheStats {
     pub commit_graph_bytes: Option<u64>,
     /// Where Git LFS keeps downloaded objects (sizes come from `lfs_cache_stats`).
     pub lfs_objects_path: String,
+    /// The 3D preview cache on disk: scene and prefab infos at commits, shrunk textures.
+    pub preview_cache_path: String,
+    pub preview_models: usize,
+    pub preview_textures: usize,
+    pub preview_bytes: u64,
 }
 
 fn file_bytes(path: &Path) -> Option<u64> {
@@ -54,7 +60,13 @@ impl Repo {
         } else {
             (single, None)
         };
+        let preview = DiskCache::new(self);
+        let preview_stats = preview.stats();
         CacheStats {
+            preview_cache_path: preview.root().to_string_lossy().into_owned(),
+            preview_models: preview_stats.models,
+            preview_textures: preview_stats.textures,
+            preview_bytes: preview_stats.bytes,
             guid_index_bytes: file_bytes(&index_file).unwrap_or(0),
             guid_index_file: index_file.to_string_lossy().into_owned(),
             meta_files: self
@@ -108,6 +120,21 @@ impl Repo {
             .clear();
         clear_guid_index(self)
     }
+
+    /// Drops the 3D preview cache on disk, and what memory holds of it.
+    ///
+    /// # Errors
+    /// [`Error::Read`] when the cache folder can't be deleted.
+    pub fn clear_preview_cache(&self) -> Result<(), Error> {
+        self.model_infos
+            .lock()
+            .expect("model info lock poisoned")
+            .clear();
+        crate::image::forget_shrunk();
+        DiskCache::new(self)
+            .clear()
+            .map_err(|e| Error::Read(format!("cannot clear the preview cache: {e}")))
+    }
 }
 
 #[cfg(test)]
@@ -158,6 +185,47 @@ mod tests {
                 cleared.guid_index_bytes
             ),
             (0, 0, 0, 0, 0)
+        );
+    }
+
+    #[test]
+    fn keeps_scene_infos_at_commits_across_restarts_until_cleared() {
+        let repo = TestRepo::init();
+        repo.write(
+            "Assets/Room.unity",
+            "%YAML 1.1\n--- !u!1 &1\nGameObject:\n  m_Name: Wall\n  m_Component:\n  - component: {fileID: 2}\n--- !u!4 &2\nTransform:\n  m_GameObject: {fileID: 1}\n  m_Father: {fileID: 0}\n",
+        )
+        .commit_all("one");
+        let first = crate::repo::open(repo.path()).unwrap();
+        let built = first
+            .model_info(None, "Assets/Room.unity", &Version::Head)
+            .unwrap();
+        first
+            .model_info(None, "Assets/Room.unity", &Version::Worktree)
+            .unwrap();
+        assert_eq!(first.cache_stats().preview_models, 1, "only the commit's");
+
+        let restarted = crate::repo::open(repo.path()).unwrap();
+        let stats = restarted.cache_stats();
+        assert_eq!(stats.preview_models, 1);
+        assert!(stats.preview_bytes > 0);
+        assert!(stats.preview_cache_path.ends_with("cache"));
+        assert_eq!(
+            restarted
+                .model_info(None, "Assets/Room.unity", &Version::Head)
+                .unwrap(),
+            built
+        );
+
+        restarted.clear_preview_cache().unwrap();
+        let cleared = restarted.cache_stats();
+        assert_eq!(
+            (
+                cleared.preview_models,
+                cleared.preview_bytes,
+                cleared.model_infos
+            ),
+            (0, 0, 0)
         );
     }
 }

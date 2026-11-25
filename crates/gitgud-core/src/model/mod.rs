@@ -11,11 +11,12 @@ mod sprites;
 pub(crate) mod tree;
 mod yaml;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
+use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 pub use anim::{ClipSource, SceneClip, Track};
 pub use curves::{ClipCurves, CurveKey, CurveTrack, FlipbookTrack};
@@ -45,7 +46,7 @@ pub struct DataTables {
 pub const MAX_USERS: usize = 50;
 
 /// The kinds of 3D asset the viewer opens.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ModelKind {
     Fbx,
@@ -85,7 +86,7 @@ pub fn model_mime(kind: ModelKind) -> &'static str {
 }
 
 /// What the viewer needs besides the model file itself.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelInfo {
     pub kind: ModelKind,
@@ -102,6 +103,43 @@ pub struct ModelInfo {
     pub scene: Option<ModelScene>,
     /// Gitignored files used from disk (asset packs kept out of git): the same in every version.
     pub from_disk: usize,
+}
+
+/// How many scenes or prefabs `Repo::inline_mesh` keeps: both sides of a compare.
+const KEPT_INLINE_SOURCES: usize = 2;
+
+/// A scene or prefab read for its inline meshes, with where each Mesh document is.
+pub(crate) struct InlineSource {
+    text: String,
+    meshes: HashMap<String, Range<usize>>,
+}
+
+impl InlineSource {
+    fn new(bytes: Vec<u8>) -> Self {
+        let text = String::from_utf8(bytes)
+            .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned());
+        let starts: Vec<usize> = text
+            .starts_with("--- !u!")
+            .then_some(0)
+            .into_iter()
+            .chain(text.match_indices("\n--- !u!").map(|(i, _)| i + 1))
+            .collect();
+        let mut meshes = HashMap::new();
+        for (k, &start) in starts.iter().enumerate() {
+            let end = starts.get(k + 1).copied().unwrap_or(text.len());
+            let line = text[start..end].lines().next().unwrap_or_default();
+            if let Some((mesh_asset::MESH_CLASS, id, _)) = crate::unity_yaml::parse_doc_header(line)
+            {
+                meshes.entry(id).or_insert(start..end);
+            }
+        }
+        Self { text, meshes }
+    }
+
+    /// The Mesh document with `fileID` `id`.
+    fn mesh(&self, id: &str) -> Option<&str> {
+        self.meshes.get(id).map(|r| &self.text[r.clone()])
+    }
 }
 
 impl Repo {
@@ -144,44 +182,35 @@ impl Repo {
         id: &str,
     ) -> Result<Vec<u8>, Error> {
         let key = format!("{path}@{version:?}");
-        let bytes = {
+        let source = {
             // Held while loading: a scene's meshes are requested all at once.
-            let mut cached = self
-                .inline_source
+            let mut kept = self
+                .inline_sources
                 .lock()
                 .expect("inline source lock poisoned");
-            match cached.as_ref().filter(|(k, _)| *k == key) {
-                Some((_, b)) => b.clone(),
+            match kept.iter().find(|(k, _)| *k == key) {
+                Some((_, s)) => s.clone(),
                 None => {
                     let raw = self.file_at(path, version)?;
-                    let b = Arc::new(self.lfs_resolve_with_fetch(
+                    let bytes = self.lfs_resolve_with_fetch(
                         git,
                         path,
                         raw,
                         crate::lfs::AUTO_FETCH_MAX_BYTES,
-                    )?);
-                    *cached = Some((key, b.clone()));
-                    b
+                    )?;
+                    let s = Arc::new(InlineSource::new(bytes));
+                    if kept.len() >= KEPT_INLINE_SOURCES {
+                        kept.remove(0);
+                    }
+                    kept.push((key, s.clone()));
+                    s
                 }
             }
         };
-        let header = format!("--- !u!43 &{id}");
-        let text = String::from_utf8_lossy(&bytes);
-        let start = text
-            .match_indices(&header)
-            .map(|(i, _)| i)
-            .find(|&i| {
-                (i == 0 || text.as_bytes()[i - 1] == b'\n')
-                    && text[i + header.len()..]
-                        .chars()
-                        .next()
-                        .is_none_or(|c| c == '\n' || c == '\r' || c == ' ')
-            })
+        let doc = source
+            .mesh(id)
             .ok_or_else(|| Error::Refused(format!("{path} has no Mesh &{id}")))?;
-        let end = text[start + header.len()..]
-            .find("\n--- !u!")
-            .map_or(text.len(), |e| start + header.len() + e + 1);
-        mesh_asset::mesh_asset_to_glb(&text[start..end])
+        mesh_asset::mesh_asset_to_glb(doc)
             .map_err(|e| Error::Read(format!("{path} › Mesh &{id}: {e}")))
     }
 
@@ -222,7 +251,23 @@ impl Repo {
             }
             kept.generation()
         };
-        let info = self.read_model_info(git, path, version, kind)?;
+        // Building a scene or prefab is the slow part, and a commit's never changes.
+        let disk = match &origin {
+            cache::Origin::Tree(tree) if kind == ModelKind::Prefab => {
+                Some((crate::disk_cache::DiskCache::new(self), tree.to_string()))
+            }
+            _ => None,
+        };
+        let info = match disk.as_ref().and_then(|(d, tree)| d.model_info(tree, path)) {
+            Some(hit) => hit,
+            None => {
+                let info = self.read_model_info(git, path, version, kind)?;
+                if let Some((d, tree)) = &disk {
+                    d.put_model_info(tree, path, &info);
+                }
+                info
+            }
+        };
         self.model_infos
             .lock()
             .expect("model info lock poisoned")
@@ -640,6 +685,45 @@ mod tests {
                 .to_string(),
             "Assets/Room.unity has no Mesh &123"
         );
+
+        repo.write(
+            "Assets/Room.unity",
+            &format!("%YAML 1.1\n{}", mesh_asset::tri_mesh("5678")),
+        );
+        for _ in 0..2 {
+            assert!(
+                r.inline_mesh(None, "Assets/Room.unity", &Version::Head, "1234")
+                    .is_ok()
+            );
+            assert!(
+                r.inline_mesh(None, "Assets/Room.unity", &Version::Worktree, "5678")
+                    .is_ok()
+            );
+        }
+        assert_eq!(
+            r.inline_sources.lock().unwrap().len(),
+            2,
+            "both sides of the compare are kept"
+        );
+    }
+
+    #[test]
+    fn indexes_the_mesh_documents_of_a_scene() {
+        let text = format!(
+            "{}--- !u!43 &99 stripped\nMesh:\n--- !u!1 &7\nGameObject:\n  m_Name: A\n{}",
+            mesh_asset::tri_mesh("7"),
+            mesh_asset::tri_mesh("70")
+        );
+        let source = InlineSource::new(text.clone().into_bytes());
+        assert_eq!(source.meshes.len(), 3, "the GameObject &7 isn't a mesh");
+        assert_eq!(source.mesh("7").unwrap(), mesh_asset::tri_mesh("7"));
+        assert_eq!(
+            source.mesh("99").unwrap(),
+            "--- !u!43 &99 stripped\nMesh:\n"
+        );
+        assert_eq!(source.mesh("70").unwrap(), mesh_asset::tri_mesh("70"));
+        assert!(text.ends_with(source.mesh("70").unwrap()));
+        assert!(source.mesh("1").is_none());
     }
 
     #[test]

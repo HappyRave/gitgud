@@ -1,4 +1,4 @@
-use gitgud_core::image::{Version, image_type, shrink_image};
+use gitgud_core::image::{Version, image_type};
 use gitgud_core::model::{model_kind, model_mime};
 use gitgud_core::preview::file_mime;
 use gitgud_core::repo::Error;
@@ -84,7 +84,7 @@ fn read(session: &Session, uri: &str) -> Result<(Vec<u8>, &'static str), (Status
             let bytes = session
                 .model_ref_bytes(repo, &path, &reference, &version)
                 .map_err(fail)?;
-            Ok(shrunk(bytes, mime, max))
+            shrunk(session, repo, bytes, mime, max)
         }
         _ => {
             let mime = image_type(&path).ok_or_else(|| bad("not an image"))?;
@@ -92,17 +92,28 @@ fn read(session: &Session, uri: &str) -> Result<(Vec<u8>, &'static str), (Status
             let bytes = session
                 .image_bytes(repo, &path, &version, auto_fetch)
                 .map_err(fail)?;
-            Ok(shrunk(bytes, mime, max))
+            shrunk(session, repo, bytes, mime, max)
         }
     }
 }
 
 /// With `max=<px>` (3D previews), an image bigger than that comes back shrunk, as PNG.
-fn shrunk(bytes: Vec<u8>, mime: &'static str, max: Option<u32>) -> (Vec<u8>, &'static str) {
-    match max.and_then(|m| shrink_image(&bytes, m)) {
-        Some(small) => (small, "image/png"),
-        None => (bytes, mime),
-    }
+fn shrunk(
+    session: &Session,
+    repo: u32,
+    bytes: Vec<u8>,
+    mime: &'static str,
+    max: Option<u32>,
+) -> Result<(Vec<u8>, &'static str), (StatusCode, String)> {
+    let Some(max) = max else {
+        return Ok((bytes, mime));
+    };
+    Ok(
+        match session.shrink_texture(repo, &bytes, max).map_err(fail)? {
+            Some(small) => (small, "image/png"),
+            None => (bytes, mime),
+        },
+    )
 }
 
 fn fail(e: Error) -> (StatusCode, String) {

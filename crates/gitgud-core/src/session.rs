@@ -128,22 +128,42 @@ impl Session {
     /// See [`repo::open`], [`Repo::status`] and [`Graph::build`].
     pub fn open(&self, path: impl AsRef<Path>) -> Result<Opened, Error> {
         let started = Instant::now();
-        let repo = repo::open(path)?;
+        let repo = self.reuse_or_open(path)?;
         let dirty = !repo.status()?.entries.is_empty();
         let graph = Graph::build(&repo, dirty)?;
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let open = OpenRepo {
             config_stamp: config_stamp(&repo),
-            repo: Arc::new(repo),
+            repo,
             graph: Arc::new(graph),
             graph_version: 0,
             writing: Arc::default(),
         };
         let opened = opened(id, &open);
         warm_guid_index(&open.repo);
+        prune_disk_cache(&open.repo);
         self.lock().insert(id, open);
         self.record_timing("open", started);
         Ok(opened)
+    }
+
+    /// The repository at `path`; one already open (a reloaded window opens its
+    /// repos again) is shared with its caches, unless its config changed since.
+    fn reuse_or_open(&self, path: impl AsRef<Path>) -> Result<Arc<Repo>, Error> {
+        let fresh = repo::open(path)?;
+        let stamp = config_stamp(&fresh);
+        let same = self
+            .lock()
+            .values()
+            .find(|o| o.repo.root() == fresh.root() && o.config_stamp == stamp)
+            .map(|o| o.repo.clone());
+        Ok(match same {
+            Some(repo) => {
+                unity_yaml::forget_guid_index(&repo);
+                repo
+            }
+            None => Arc::new(fresh),
+        })
     }
 
     /// Reads working-copy status of repo `id` and records a local latency sample.
@@ -1512,6 +1532,29 @@ impl Session {
         Ok(repo.cache_stats())
     }
 
+    /// See [`Repo::clear_preview_cache`]; returns the stats after.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`], or as [`Repo::clear_preview_cache`].
+    pub fn clear_preview_cache(&self, id: u32) -> Result<crate::caches::CacheStats, Error> {
+        let repo = self.get(id)?.repo;
+        repo.clear_preview_cache()?;
+        Ok(repo.cache_stats())
+    }
+
+    /// See [`Repo::shrink_texture`].
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`].
+    pub fn shrink_texture(
+        &self,
+        id: u32,
+        bytes: &[u8],
+        max: u32,
+    ) -> Result<Option<Vec<u8>>, Error> {
+        Ok(self.get(id)?.repo.shrink_texture(bytes, max))
+    }
+
     /// Structural property diff of a working-copy Unity YAML file (staged or unstaged).
     ///
     /// # Errors
@@ -2272,6 +2315,13 @@ fn warm_guid_index(repo: &Arc<repo::Repo>) {
     let repo = repo.clone();
     std::thread::spawn(move || {
         unity_yaml::repo_guid_index(&repo);
+    });
+}
+
+fn prune_disk_cache(repo: &Arc<repo::Repo>) {
+    let repo = repo.clone();
+    std::thread::spawn(move || {
+        crate::disk_cache::DiskCache::new(&repo).prune(crate::disk_cache::BUDGET);
     });
 }
 

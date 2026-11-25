@@ -52,6 +52,38 @@ describe("FilePreview", () => {
     setAuto3dLimit(AUTO_3D_DEFAULT);
   });
 
+  it("keeps the viewer when the parent passes the same versions as new objects", async () => {
+    const calls = mockCommands({ unity_asset_info: () => ({ binary: false, classId: 29, size: 900, objects: 10 }) });
+    const view = render(FilePreview, { repoId: 1, path: "Scenes/Harbour.unity", before: HEAD, after: DISK });
+    const stub = await screen.findByTestId("stub");
+    await view.rerender({ repoId: 1, path: "Scenes/Harbour.unity", before: { ...HEAD }, after: { ...DISK } });
+    expect(screen.getByTestId("stub")).toBe(stub);
+    expect(calls.filter((c) => c.cmd === "unity_asset_info")).toHaveLength(2);
+  });
+
+  it("never opens a big scene in 3D on the previous file's probe", async () => {
+    mockCommands({
+      unity_asset_info: ({ path }) => ({ binary: false, classId: 29, size: 900, objects: path.endsWith(".unity") ? 8_000 : 10 }),
+    });
+    const view = render(FilePreview, { repoId: 1, path: "Prefabs/Gun.prefab", before: HEAD, after: DISK });
+    await screen.findByTestId("stub");
+    let mountedScene = false;
+    const watch = new MutationObserver((records) => {
+      for (const r of records) {
+        for (const n of r.addedNodes) {
+          const el = n instanceof Element ? n : null;
+          mountedScene ||= !!(el?.matches('[data-path="Scenes/Mirror.unity"]') || el?.querySelector('[data-path="Scenes/Mirror.unity"]'));
+        }
+        mountedScene ||= r.type === "attributes" && (r.target as Element).getAttribute("data-path") === "Scenes/Mirror.unity";
+      }
+    });
+    watch.observe(document.body, { childList: true, subtree: true, attributes: true });
+    await view.rerender({ repoId: 1, path: "Scenes/Mirror.unity", before: HEAD, after: DISK });
+    expect(await screen.findByText("8,000 objects.")).toBeInTheDocument();
+    watch.disconnect();
+    expect(mountedScene).toBe(false);
+  });
+
   it("offers Structure for an .asset with no visual view", async () => {
     mockCommands({ unity_asset_info: () => ({ binary: false, classId: 156, size: 900, objects: 0 }) });
     render(FilePreview, { repoId: 1, path: "Terrain/Island.asset", before: HEAD, after: DISK });

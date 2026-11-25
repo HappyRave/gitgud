@@ -21,34 +21,50 @@ pub(crate) struct ObjRef {
 /// Splits Unity YAML into documents and parses each body. Documents that don't
 /// parse are skipped.
 pub(crate) fn docs(text: &str) -> Vec<Doc> {
+    docs_reading(text, |_, _| true)
+}
+
+/// As [`docs`], but only documents `read(class, stripped)` accepts are parsed; the
+/// others keep their header with a `Null` body (a scene's meshes, particle systems
+/// and scripts are most of its bytes).
+pub(crate) fn docs_reading(text: &str, read: impl Fn(u32, bool) -> bool) -> Vec<Doc> {
     let mut out = Vec::new();
-    let mut cur: Option<((u32, String, bool), String)> = None;
+    let mut cur: Option<((u32, String, bool), Option<String>)> = None;
     for line in text.lines() {
         if let Some(header) = parse_doc_header(line) {
             if let Some((h, body)) = cur.take() {
-                push(&mut out, h, &body);
+                push(&mut out, h, body.as_deref());
             }
-            cur = Some((header, String::new()));
-        } else if let Some((_, body)) = cur.as_mut() {
+            let body = read(header.0, header.2).then(String::new);
+            cur = Some((header, body));
+        } else if let Some((_, Some(body))) = cur.as_mut() {
             body.push_str(line);
             body.push('\n');
         }
     }
     if let Some((h, body)) = cur {
-        push(&mut out, h, &body);
+        push(&mut out, h, body.as_deref());
     }
     out
 }
 
-fn push(out: &mut Vec<Doc>, (class_id, file_id, stripped): (u32, String, bool), body: &str) {
-    let Ok(mut parsed) = YamlLoader::load_from_str(body) else {
-        return;
+fn push(
+    out: &mut Vec<Doc>,
+    (class_id, file_id, stripped): (u32, String, bool),
+    body: Option<&str>,
+) {
+    let body = match body {
+        Some(text) => {
+            let Ok(mut parsed) = YamlLoader::load_from_str(text) else {
+                return;
+            };
+            let root = parsed.pop().unwrap_or(Yaml::Null);
+            root.as_hash()
+                .and_then(|h| h.values().next().cloned())
+                .unwrap_or(Yaml::Null)
+        }
+        None => Yaml::Null,
     };
-    let root = parsed.pop().unwrap_or(Yaml::Null);
-    let body = root
-        .as_hash()
-        .and_then(|h| h.values().next().cloned())
-        .unwrap_or(Yaml::Null);
     out.push(Doc {
         class_id,
         file_id,
@@ -139,6 +155,15 @@ mod tests {
         assert_eq!(d.len(), 3);
         assert_eq!((d[0].class_id, d[0].file_id.as_str()), (1, "100"));
         assert_eq!(scalar(&d[0].body["m_Name"]).as_deref(), Some("Boat"));
+        let some = docs_reading(PREFAB, |class, stripped| class == 1 || stripped);
+        assert_eq!(some.len(), 3);
+        assert_eq!((some[1].class_id, some[1].file_id.as_str()), (4, "400"));
+        assert!(
+            some[1].body.is_null(),
+            "an unread class keeps its header only"
+        );
+        assert_eq!(scalar(&some[0].body["m_Name"]).as_deref(), Some("Boat"));
+        assert!(obj_ref(&some[2].body["m_SourcePrefab"]).is_some());
         assert_eq!(
             vec3(&d[1].body["m_LocalPosition"], [0.0; 3]),
             [1.0, 2.5, -3.0]

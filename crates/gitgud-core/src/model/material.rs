@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::guids::Guids;
 use super::tree::base_name;
@@ -35,7 +35,7 @@ const BUILTIN_SHADERS: [(&str, &str); 4] = [
 ];
 
 /// A Unity material reduced to what a standard PBR material can show.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Material {
     pub name: String,
@@ -65,7 +65,7 @@ pub struct Material {
 }
 
 /// A texture property of a material and the image it holds.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TextureSlot {
     pub property: String,

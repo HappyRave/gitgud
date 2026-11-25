@@ -230,7 +230,14 @@ replaying at most 255 rows (spike 4.3).
   (size + mtime), saved to `.git/gitgud/guid-index`, built in the background when a Unity repo opens,
   and marked stale (not dropped) on refresh; `.meta` GUIDs are kept per blob and per commit tree;
   `model_info` results per (path, commit tree), the index's / work tree's until the next refresh
-  (`model/cache.rs`); a prefab build assembles each nested prefab once. Every `model_info` carries a
+  (`model/cache.rs`, 2,048 entries); a prefab build assembles each nested prefab once and parses
+  only the YAML classes it reads (`yaml::docs_reading`). On disk (`disk_cache.rs`,
+  `.git/gitgud/cache/`, keys include the app version, LRU-pruned to 1 GB in the background on
+  open): scene / prefab `model_info` at commit trees, and shrunk textures by content
+  (`Repo::shrink_texture`); Settings › Caches › 3D previews shows and clears it. Reopening a repo
+  that is already open (a reloaded window) shares its `Repo` and caches (`Session::reuse_or_open`)
+  unless its config changed. `Repo::inline_mesh` indexes each scene version's Mesh documents
+  once (`InlineSource`) and keeps both sides of a compare. Every `model_info` carries a
   content `key` (blob id, or a work-tree file's size + time), and `$lib/model/cache.ts` / `shared.ts`
   share loaded model files and Unity materials by it across viewers (both compare sides, reopenings),
   marked `userData.shared` so `ModelStage.release` leaves them; 768 MB budget, LRU. `cache_stats` /

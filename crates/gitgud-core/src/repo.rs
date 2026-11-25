@@ -30,9 +30,10 @@ pub struct Repo {
     pub(crate) model_infos: Mutex<InfoCache>,
     /// Paths found gitignored on disk (or not); see `Repo::ignored_on_disk`.
     pub(crate) ignored: Mutex<HashMap<String, bool>>,
-    /// The scene or prefab last read for its inline meshes, so a scene's hundreds of
-    /// meshes don't each re-read it; see `Repo::inline_mesh`.
-    pub(crate) inline_source: Mutex<Option<(String, Arc<Vec<u8>>)>>,
+    /// The scenes or prefabs last read for their inline meshes (both sides of a
+    /// compare), so a scene's hundreds of meshes don't each re-read it; see
+    /// `Repo::inline_mesh`.
+    pub(crate) inline_sources: Mutex<Vec<(String, Arc<crate::model::InlineSource>)>>,
     /// Recent versions' file listings; see `model::tree::Files::new`.
     pub(crate) listings: Mutex<Vec<(crate::model::cache::Origin, Arc<crate::model::tree::Listed>)>>,
 }
@@ -60,7 +61,7 @@ pub fn open(path: impl AsRef<Path>) -> Result<Repo, Error> {
         meta_blob_guids: Mutex::new(HashMap::new()),
         model_infos: Mutex::new(InfoCache::default()),
         ignored: Mutex::new(HashMap::new()),
-        inline_source: Mutex::new(None),
+        inline_sources: Mutex::new(Vec::new()),
         listings: Mutex::new(Vec::new()),
     })
 }

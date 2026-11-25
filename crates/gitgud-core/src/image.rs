@@ -59,11 +59,46 @@ const SHRUNK_BUDGET: usize = 256 * 1024 * 1024;
 /// `None` when it is already small enough or can't be decoded, so the original is used.
 #[must_use]
 pub fn shrink_image(bytes: &[u8], max: u32) -> Option<Vec<u8>> {
+    shrink_through(bytes, max, None)
+}
+
+/// [`shrink_image`], with `disk` checked after memory and kept up to date.
+fn shrink_through(
+    bytes: &[u8],
+    max: u32,
+    disk: Option<&crate::disk_cache::DiskCache>,
+) -> Option<Vec<u8>> {
     let key = xxhash_rust::xxh64::xxh64(bytes, u64::from(max));
     if let Some(hit) = SHRUNK.lock().expect("shrunk lock poisoned").1.get(&key) {
         return hit.clone();
     }
-    let out = image::load_from_memory(bytes).ok().and_then(|img| {
+    let out = match disk.and_then(|d| d.texture(key)) {
+        Some(hit) => hit,
+        None => {
+            let out = shrink_uncached(bytes, max);
+            if let Some(d) = disk {
+                d.put_texture(key, out.as_deref());
+            }
+            out
+        }
+    };
+    let mut cache = SHRUNK.lock().expect("shrunk lock poisoned");
+    let size = out.as_ref().map_or(0, Vec::len);
+    if cache.0 + size > SHRUNK_BUDGET {
+        *cache = Default::default();
+    }
+    cache.0 += size;
+    cache.1.insert(key, out.clone());
+    out
+}
+
+/// Drops the shrunk textures kept in memory.
+pub(crate) fn forget_shrunk() {
+    *SHRUNK.lock().expect("shrunk lock poisoned") = Default::default();
+}
+
+fn shrink_uncached(bytes: &[u8], max: u32) -> Option<Vec<u8>> {
+    image::load_from_memory(bytes).ok().and_then(|img| {
         let (w, h) = (img.width(), img.height());
         if w.max(h) <= max {
             return None;
@@ -83,21 +118,20 @@ pub fn shrink_image(bytes: &[u8], max: u32) -> Option<Vec<u8>> {
         .write_image(small.as_raw(), sw, sh, image::ExtendedColorType::Rgba8)
         .ok()
         .map(|()| png)
-    });
-    let mut cache = SHRUNK.lock().expect("shrunk lock poisoned");
-    let size = out.as_ref().map_or(0, Vec::len);
-    if cache.0 + size > SHRUNK_BUDGET {
-        *cache = Default::default();
-    }
-    cache.0 += size;
-    cache.1.insert(key, out.clone());
-    out
+    })
 }
 
 const LFS_HEADER_LF: &[u8] = b"version https://git-lfs.github.com/spec/v1\n";
 const LFS_HEADER_CRLF: &[u8] = b"version https://git-lfs.github.com/spec/v1\r\n";
 
 impl Repo {
+    /// [`shrink_image`], kept in the repo's disk cache too, so 3D previews skip the
+    /// work after a restart.
+    #[must_use]
+    pub fn shrink_texture(&self, bytes: &[u8], max: u32) -> Option<Vec<u8>> {
+        shrink_through(bytes, max, Some(&crate::disk_cache::DiskCache::new(self)))
+    }
+
     /// The bytes of image `path` at `version`; an LFS pointer is swapped for its
     /// local object.
     ///
@@ -821,6 +855,31 @@ mod tests {
         assert!(
             shrunk.starts_with(b"\x89PNG"),
             "JPEG decodes and comes back as PNG"
+        );
+    }
+
+    #[test]
+    fn keeps_shrunk_textures_on_disk() {
+        let repo = crate::testing::TestRepo::init();
+        let r = crate::repo::open(repo.path()).unwrap();
+        let mut big = Cursor::new(Vec::new());
+        image::RgbaImage::from_fn(2048, 64, |x, y| image::Rgba([x as u8, y as u8, 7, 255]))
+            .write_to(&mut big, ImageFormat::Png)
+            .unwrap();
+        let big = big.into_inner();
+        let small = r.shrink_texture(&big, 512).unwrap();
+        assert!(r.shrink_texture(b"tiny", 512).is_none());
+        let disk = crate::disk_cache::DiskCache::new(&r);
+        assert_eq!(
+            disk.stats().textures,
+            2,
+            "the shrunk one and the one left as is"
+        );
+        forget_shrunk();
+        assert_eq!(
+            r.shrink_texture(&big, 512),
+            Some(small),
+            "read back from disk"
         );
     }
 

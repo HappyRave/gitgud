@@ -1318,10 +1318,10 @@ pub(crate) fn forget_guid_index(repo: &Repo) {
         .expect("model info lock poisoned")
         .forget_live();
     repo.ignored.lock().expect("ignored lock poisoned").clear();
-    *repo
-        .inline_source
+    repo.inline_sources
         .lock()
-        .expect("inline source lock poisoned") = None;
+        .expect("inline source lock poisoned")
+        .clear();
     repo.listings
         .lock()
         .expect("listings lock poisoned")

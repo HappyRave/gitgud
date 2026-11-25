@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use yaml_rust2::Yaml;
 
 use super::guids::Guids;
@@ -13,7 +13,7 @@ const ANIMATOR_STATE: u32 = 1102;
 const BLEND_TREE: u32 = 206;
 
 /// Where a clip's keys come from.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum ClipSource {
     /// Keys read from a `.anim` file, in right-handed space.
@@ -29,18 +29,18 @@ pub enum ClipSource {
 }
 
 /// Keys for one property of the object at `path` (relative to the Animator, `/`-separated).
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Track {
     pub path: String,
     /// `position`, `quaternion` or `scale`.
-    pub property: &'static str,
+    pub property: String,
     pub times: Vec<f32>,
     pub values: Vec<f32>,
 }
 
 /// A clip an Animator on node `node` can play.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SceneClip {
     pub node: usize,
@@ -93,7 +93,7 @@ fn curves(list: &Yaml, property: &'static str, out: &mut Vec<Track>, end: &mut f
         if !times.is_empty() {
             out.push(Track {
                 path,
-                property,
+                property: property.to_owned(),
                 times,
                 values,
             });
@@ -116,7 +116,7 @@ fn euler_curves(list: &Yaml, out: &mut Vec<Track>, end: &mut f32) {
         if !times.is_empty() {
             out.push(Track {
                 path,
-                property: "quaternion",
+                property: "quaternion".to_owned(),
                 times,
                 values,
             });

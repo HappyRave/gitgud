@@ -24,6 +24,10 @@ const stats = (over: Partial<CacheStats> = {}): CacheStats => ({
   commitGraphPath: "C:/work/boat/.git/objects/info/commit-graph",
   commitGraphBytes: null,
   lfsObjectsPath: "C:/work/boat/.git/lfs/objects",
+  previewCachePath: "C:/work/boat/.git/gitgud/cache",
+  previewModels: 0,
+  previewTextures: 0,
+  previewBytes: 0,
   ...over,
 });
 
@@ -133,6 +137,25 @@ describe("SettingsModal", () => {
     expect(dispose).toHaveBeenCalled();
     expect(caches.getByText(/0 models · 0 materials · ~0 B/)).toBeInTheDocument();
     expect(clear3d).toBeDisabled();
+  });
+
+  it("shows the 3D preview cache on disk and clears it", async () => {
+    const calls = mockCommands({
+      config_get_identity: () => ({ userName: "Max", userEmail: "max@example.com" }),
+      tool_diagnostics: () => ({ gitPath: "C:/Git/git.exe", gitVersion: "2.56.1", lfsVersion: null }),
+      has_commit_graph: () => true,
+      cache_stats: () => stats({ previewModels: 2, previewTextures: 112, previewBytes: 48 * 1024 * 1024 }),
+      clear_preview_cache: () => stats(),
+    });
+    render(SettingsModal, { activeRepoId: 7, activeRepoName: "boat", onclose: vi.fn() });
+    const caches = within(await screen.findByRole("region", { name: "Caches" }));
+    expect(await caches.findByText(/2 scenes & prefabs · 112 textures · 48\.0 MB/)).toBeInTheDocument();
+    expect(caches.getByText("C:/work/boat/.git/gitgud/cache")).toBeInTheDocument();
+    const clear = caches.getAllByRole("button", { name: "Clear" })[2];
+    await fireEvent.click(clear);
+    expect(await caches.findByText(/0 scenes & prefabs · 0 textures · 0 B/)).toBeInTheDocument();
+    expect(calls.find((c) => c.cmd === "clear_preview_cache")?.args).toEqual({ id: 7 });
+    expect(clear).toBeDisabled();
   });
 
   it("displays AI providers, prunes LFS cache, writes agent instructions, refreshes index, and shows latency", async () => {

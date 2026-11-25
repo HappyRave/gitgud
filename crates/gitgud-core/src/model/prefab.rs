@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use yaml_rust2::Yaml;
 
 use super::guids::Guids;
 use super::material::Material;
 use super::meta::Meta;
 use super::tree::base_name;
-use super::yaml::{Doc, ObjRef, docs, num, obj_ref, quat, scalar, vec3};
+use super::yaml::{Doc, ObjRef, docs_reading, num, obj_ref, quat, scalar, vec3};
 use super::{ModelKind, model_kind};
 use crate::repo::Error;
 
@@ -26,6 +26,18 @@ const SKINNED_MESH_RENDERER: u32 = 137;
 const PREFAB_INSTANCE: u32 = 1001;
 const MESH: u32 = 43;
 const LOD_GROUP: u32 = 205;
+/// The classes whose contents the builder reads; the rest only need their header.
+const READ: [u32; 9] = [
+    GAME_OBJECT,
+    TRANSFORM,
+    RECT_TRANSFORM,
+    MESH_RENDERER,
+    MESH_FILTER,
+    ANIMATOR,
+    SKINNED_MESH_RENDERER,
+    PREFAB_INSTANCE,
+    LOD_GROUP,
+];
 
 /// The file being read and its documents, for meshes stored inside it.
 struct Local<'d> {
@@ -34,7 +46,7 @@ struct Local<'d> {
 }
 
 /// The mesh a node draws.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum MeshRef {
     /// A mesh inside a model file, by `name` when the importer's table has it,
@@ -57,7 +69,7 @@ pub enum MeshRef {
 }
 
 /// One GameObject of an assembled prefab, in three.js's right-handed space.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelNode {
     pub name: String,
@@ -76,7 +88,7 @@ pub struct ModelNode {
 }
 
 /// A prefab flattened into nodes, nested prefabs and variants applied.
-#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelScene {
     pub nodes: Vec<ModelNode>,
@@ -176,7 +188,7 @@ impl<'a, 'g> PrefabBuilder<'a, 'g> {
     }
 
     fn tree(&mut self, path: &str, text: &str, depth: usize) -> Result<Tree, Error> {
-        let docs = docs(text);
+        let docs = docs_reading(text, |class, stripped| stripped || READ.contains(&class));
         let by_id: HashMap<i64, &Doc> = docs.iter().map(|d| (id(&d.file_id), d)).collect();
         let local = Local { path, docs: &by_id };
         let mut tree = Tree { nodes: Vec::new() };

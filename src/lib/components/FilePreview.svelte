@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import { type BinaryMeta, type BinarySide, type UnityAssetInfo, unityAssetInfo } from "$lib/api";
   import type { ModelSide } from "$lib/model/open";
   import { toVersion } from "$lib/model/source";
@@ -45,26 +46,32 @@
   const isPrefab = $derived(/\.prefab$/i.test(target));
   const probes = $derived(kind === "asset" || kind === "material" || kind === "curves" || kind === "scene" || isPrefab);
 
-  let info = $state<{ before: UnityAssetInfo | null; after: UnityAssetInfo | null } | null>(null);
+  let probed = $state<{ key: string; before: UnityAssetInfo | null; after: UnityAssetInfo | null } | null>(null);
   let probeError = $state<string | null>(null);
 
+  // A string, so a parent passing equal versions as new objects doesn't re-probe (and remount the viewer).
+  const probeKey = $derived(`${repoId}:${target}:${JSON.stringify(before?.at)}:${JSON.stringify(after.at)}:${bust}`);
+  // Keyed, so the previous file's result never decides this file's view, not even for one frame.
+  const info = $derived(probed?.key === probeKey ? probed : null);
+
   $effect(() => {
-    const key = `${repoId}:${target}:${JSON.stringify(before?.at)}:${JSON.stringify(after.at)}:${bust}`;
-    info = null;
+    const key = probeKey;
     probeError = null;
     if (!probes) {
       return;
     }
-    const read = (side: ModelSide | null) =>
-      side ? unityAssetInfo(repoId, target, toVersion(side.at)).catch(() => null) : Promise.resolve(null);
-    Promise.all([read(before), read(after)]).then(
-      ([b, a]) => {
-        if (key === `${repoId}:${target}:${JSON.stringify(before?.at)}:${JSON.stringify(after.at)}:${bust}`) {
-          info = { before: b, after: a };
-        }
-      },
-      (err) => (probeError = String(err)),
-    );
+    untrack(() => {
+      const read = (side: ModelSide | null) =>
+        side ? unityAssetInfo(repoId, target, toVersion(side.at)).catch(() => null) : Promise.resolve(null);
+      Promise.all([read(before), read(after)]).then(
+        ([b, a]) => {
+          if (key === probeKey) {
+            probed = { key, before: b, after: a };
+          }
+        },
+        (err) => (probeError = String(err)),
+      );
+    });
   });
 
   const binary = $derived(!!info && (info.before?.binary || info.after?.binary));

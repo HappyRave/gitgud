@@ -4,6 +4,7 @@
     agentSetup,
     aiProviders,
     cacheStats,
+    clearPreviewCache,
     clearUnityCaches,
     configGetIdentity,
     configSetIdentity,
@@ -89,6 +90,23 @@
       error = String(err);
     } finally {
       clearingUnity = false;
+    }
+  }
+
+  let clearingPreviews = $state(false);
+
+  async function clearPreviews() {
+    if (activeRepoId == null || clearingPreviews) {
+      return;
+    }
+    clearingPreviews = true;
+    error = null;
+    try {
+      caches = await clearPreviewCache(activeRepoId);
+    } catch (err) {
+      error = String(err);
+    } finally {
+      clearingPreviews = false;
     }
   }
 
@@ -538,6 +556,20 @@
                     <button type="button" disabled={models3d.models + models3d.materials === 0} onclick={clearModels}>Clear</button>
                   </div>
                   <span class="where">Memory, shared by every repo, until gitgud closes</span>
+                </dd>
+                <dt>3D previews</dt>
+                <dd>
+                  <div class="gcache">
+                    <span>
+                      {count(caches.previewModels)} scenes &amp; prefabs · {count(caches.previewTextures)} textures · {formatBytes(caches.previewBytes)}
+                    </span>
+                    <button type="button" disabled={clearingPreviews || caches.previewBytes === 0} onclick={clearPreviews}>
+                      {clearingPreviews ? "Clearing…" : "Clear"}
+                    </button>
+                  </div>
+                  <span class="where" title={caches.previewCachePath}
+                    >Disk, kept across restarts, at <span class="mono">{caches.previewCachePath}</span></span
+                  >
                 </dd>
                 <dt>Commit graph</dt>
                 <dd>

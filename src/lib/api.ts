@@ -1031,6 +1031,10 @@ export interface CacheStats {
   commitGraphPath: string;
   commitGraphBytes: number | null;
   lfsObjectsPath: string;
+  previewCachePath: string;
+  previewModels: number;
+  previewTextures: number;
+  previewBytes: number;
 }
 
 export interface AiProviderStatus {
@@ -1150,6 +1154,7 @@ export interface Commands {
   has_commit_graph: { args: { id: number }; result: boolean };
   cache_stats: { args: { id: number }; result: CacheStats };
   clear_unity_caches: { args: { id: number }; result: CacheStats };
+  clear_preview_cache: { args: { id: number }; result: CacheStats };
   write_commit_graph: { args: { id: number }; result: null };
   worktree_unity_diff: { args: { id: number; path: string; side: Side }; result: UnityYamlDiff };
   commit_unity_diff: { args: { id: number; commit: string; path: string }; result: UnityYamlDiff };
@@ -1453,6 +1458,7 @@ export const outsideReflog = (id: number, limit = 100) => call("outside_reflog",
 export const hasCommitGraph = (id: number) => call("has_commit_graph", { id });
 export const cacheStats = (id: number) => call("cache_stats", { id });
 export const clearUnityCaches = (id: number) => call("clear_unity_caches", { id });
+export const clearPreviewCache = (id: number) => call("clear_preview_cache", { id });
 export const writeCommitGraph = (id: number) => call("write_commit_graph", { id });
 export const worktreeUnityDiff = (id: number, path: string, side: Side) => call("worktree_unity_diff", { id, path, side });
 export const commitUnityDiff = (id: number, commit: string, path: string) =>

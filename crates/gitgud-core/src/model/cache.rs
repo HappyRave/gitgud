@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use super::ModelInfo;
 
-/// How many `model_info` results a repo keeps.
-const KEPT_INFOS: usize = 64;
+/// How many `model_info` results a repo keeps: a big scene's models, both sides.
+const KEPT_INFOS: usize = 2048;
 
 /// Where a version's files come from: a commit's tree never changes, the rest can.
 #[derive(Debug, Clone, PartialEq, Eq)]
