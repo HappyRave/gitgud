@@ -164,6 +164,10 @@
     }
     if (growing) {
       stage.refresh();
+      // It was framed on the placeholders, which only mark where meshes sit, not their size.
+      if (!stage.cameraMoved) {
+        stage.frameAll();
+      }
     }
     filling = false;
     changes = stage.comparison.changes;

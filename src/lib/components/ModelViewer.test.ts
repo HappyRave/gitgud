@@ -23,6 +23,9 @@ class FakeStage {
   frameAll = vi.fn();
   setClip = vi.fn((name: string | null) => (this.clip = name));
   seek = vi.fn();
+  refresh = vi.fn();
+  cameraMoved = false;
+  added() {}
   private models: [LoadedModel | null, LoadedModel | null] = [null, null];
   constructor() {
     stages.push(this);
@@ -187,6 +190,25 @@ describe("ModelViewer", () => {
     expect(screen.getAllByRole("button", { name: /Buoy_/ })).toHaveLength(1);
     await fireEvent.click(screen.getByRole("button", { name: "Changed only" }));
     expect(stages[0].dim).toBe(true);
+  });
+
+  it("frames a scene again once its meshes are in, unless the camera was moved meanwhile", async () => {
+    const growing = (): Opened => {
+      const model = boat(0, false);
+      return { model, error: null, load: async () => model };
+    };
+    opened.set("On disk", growing());
+    const view = render(ModelViewer, { repoId: 1, path: "Assets/gun.prefab", after: DISK });
+    await waitFor(() => expect(stages[0]?.refresh).toHaveBeenCalled(), { timeout: 5000 });
+    expect(stages[0].frameAll).toHaveBeenCalledTimes(1);
+
+    stages[0].cameraMoved = true;
+    stages[0].frameAll.mockClear();
+    stages[0].refresh.mockClear();
+    opened.set("On disk", growing());
+    await view.rerender({ repoId: 1, path: "Assets/other.prefab", after: DISK });
+    await waitFor(() => expect(stages[0].refresh).toHaveBeenCalled());
+    expect(stages[0].frameAll).not.toHaveBeenCalled();
   });
 
   it("says when gitignored files were drawn from the disk copy", async () => {

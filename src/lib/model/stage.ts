@@ -6,7 +6,6 @@ import {
   GridHelper,
   Group,
   HemisphereLight,
-  MathUtils,
   type Material,
   Mesh,
   type Object3D,
@@ -28,7 +27,7 @@ import { type Comparison, compare, type Status } from "./compare";
 import type { LoadedModel } from "./load";
 import { type Instanced, instance } from "./instancing";
 import { ShadingKit, textureEvents } from "./materials";
-import { FOV, framingCamera } from "./view";
+import { FOV, fitDistance, framingCamera } from "./view";
 
 /** "merged": the newer version only, with the older one's changed objects as amber wire ghosts. */
 export type CompareMode = "side" | "swipe" | "onion" | "merged";
@@ -76,6 +75,8 @@ export class ModelStage {
   clip: string | null = null;
   /** Called every frame the clock moves, with the time and clip length. */
   ontime: (time: number, duration: number) => void = () => {};
+  /** The user orbited, zoomed or flew to an object since the camera last framed everything. */
+  cameraMoved = false;
 
   private sides: [Side | null, Side | null] = [null, null];
   private readonly kit = new ShadingKit();
@@ -113,6 +114,7 @@ export class ModelStage {
     this.controls = new OrbitControls(this.camera, canvas);
     this.controls.enableDamping = true;
     this.controls.addEventListener("change", () => (this.dirty = true));
+    this.controls.addEventListener("start", () => (this.cameraMoved = true));
     this.loop = this.loop.bind(this);
     this.raf = requestAnimationFrame(this.loop);
     textureEvents.addEventListener("load", this.redraw);
@@ -162,7 +164,8 @@ export class ModelStage {
 
   /**
    * The models shown while loading are complete: compares them, fits floor and
-   * light to their real size and picks up their clips. The camera stays put.
+   * light to their real size and picks up their clips. The camera stays put; the
+   * viewer frames everything again when the user hasn't moved it (`cameraMoved`).
    */
   refresh() {
     const [before, after] = this.sides;
@@ -288,7 +291,7 @@ export class ModelStage {
       return;
     }
     const sphere = box.getBoundingSphere(new Sphere());
-    const cam = framingCamera(sphere);
+    const cam = framingCamera(sphere, this.viewAspect());
     const dist = cam.distanceTo(sphere.center);
     this.controls.target.copy(sphere.center);
     this.camera.position.copy(cam);
@@ -296,7 +299,17 @@ export class ModelStage {
     this.camera.far = dist * 100;
     this.camera.updateProjectionMatrix();
     this.fly = null;
+    this.cameraMoved = false;
     this.dirty = true;
+  }
+
+  /** Width / height of the view one side is drawn in: half the canvas side by side. */
+  private viewAspect(): number {
+    if (!this.width || !this.height) {
+      return 1;
+    }
+    const w = this.sides[0] && this.mode === "side" ? Math.floor(this.width / 2) : this.width;
+    return w / this.height;
   }
 
   /** Flies the camera to `obj` over a quarter second. */
@@ -306,8 +319,9 @@ export class ModelStage {
       return;
     }
     const sphere = box.getBoundingSphere(new Sphere());
-    const dist = Math.max(sphere.radius, 0.05) / Math.sin(MathUtils.degToRad(FOV / 2)) * 1.4;
+    const dist = fitDistance(Math.max(sphere.radius, 0.05), this.viewAspect()) * 1.4;
     const dir = this.camera.position.clone().sub(this.controls.target).normalize();
+    this.cameraMoved = true;
     this.fly = {
       from: this.controls.target.clone(),
       to: sphere.center,
