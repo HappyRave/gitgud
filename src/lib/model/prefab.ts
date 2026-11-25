@@ -150,6 +150,7 @@ export async function assemblePrefab(scene: ModelScene, materials: ModelMaterial
               loadTexture,
               name: path.slice(path.lastIndexOf("/") + 1),
               onProgress: report,
+              geometryOnly: true,
             }),
           )
         : Promise.reject(new Error(`${path} is not a model file the viewer reads`));
@@ -247,10 +248,10 @@ export async function assemblePrefab(scene: ModelScene, materials: ModelMaterial
   const clips: AnimationClip[] = [];
   for (const c of scene.clips) {
     const clip = await sceneClip(c, objects[c.node], model);
-    if (clip) {
+    if (clip instanceof AnimationClip) {
       clips.push(clip);
     } else {
-      missing.push(`Clip ${c.name} couldn't be read`);
+      missing.push(`Clip ${c.name} couldn't be read: ${clip}`);
     }
   }
   await textures.idle();
@@ -267,15 +268,18 @@ function byPath(from: Object3D, path: string): Object3D | null {
   return cur ?? null;
 }
 
-async function sceneClip(c: SceneClip, animator: Object3D, model: (path: string) => Promise<LoadedModel>): Promise<AnimationClip | null> {
+/** The clip, or why it couldn't be read. */
+async function sceneClip(c: SceneClip, animator: Object3D, model: (path: string) => Promise<LoadedModel>): Promise<AnimationClip | string> {
   if (c.source.type === "model") {
-    const take = c.source.take;
+    const { path, take } = c.source;
     try {
-      const loaded = await model(c.source.path);
+      const loaded = await model(path);
       const found = loaded.clips.find((x) => x.name === take) ?? (loaded.clips.length === 1 ? loaded.clips[0] : null);
-      return found ? Object.assign(found.clone(), { name: c.name }) : null;
-    } catch {
-      return null;
+      return found
+        ? Object.assign(found.clone(), { name: c.name })
+        : `${path} has no take "${take}" (it has ${loaded.clips.map((x) => `"${x.name}"`).join(", ") || "none"})`;
+    } catch (e) {
+      return `${path}: ${e instanceof Error ? e.message : String(e)}`;
     }
   }
   const tracks = c.source.tracks.flatMap((t) => {

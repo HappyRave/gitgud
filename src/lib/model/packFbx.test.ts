@@ -1,0 +1,74 @@
+import { AnimationClip, BufferAttribute, BufferGeometry, Group, Mesh, VectorKeyframeTrack } from "three";
+import { describe, expect, it } from "vitest";
+import { parseFbxGeometry } from "./fbxPool";
+import { packFbx, unpackFbx } from "./packFbx";
+
+const tri = (name: string) => {
+  const g = new BufferGeometry();
+  g.setAttribute("position", new BufferAttribute(new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]), 3));
+  g.setAttribute("skinIndex", new BufferAttribute(new Uint16Array(12), 4));
+  g.setIndex([0, 1, 2]);
+  g.addGroup(0, 3, 1);
+  return Object.assign(new Mesh(g), { name });
+};
+
+describe("packFbx", () => {
+  it("keeps meshes in order with names, pivots, groups, scale and clips, and drops what prefabs don't use", () => {
+    const root = new Group();
+    const a = tri("Hull_Mesh");
+    a.userData.originalName = "Hull";
+    a.userData.transformData = { rotationPivot: [1, 2, 3] };
+    const holder = new Group();
+    holder.add(tri("Hull_Mesh"));
+    root.add(a, holder);
+    const clip = new AnimationClip("Take 001", 1, [new VectorKeyframeTrack("Hull_Mesh.position", [0, 1], [0, 0, 0, 1, 0, 0])]);
+
+    const { packed, transfer } = packFbx(root, 0.01, [clip]);
+    expect(transfer.length).toBe(4);
+    const model = unpackFbx(structuredClone(packed), 2);
+
+    const file = model.root.children[0];
+    expect(file.scale.x).toBeCloseTo(0.02);
+    const meshes = file.children as Mesh[];
+    expect(meshes.map((m) => [m.name, m.userData.originalName ?? null])).toEqual([
+      ["Hull_Mesh", "Hull"],
+      ["Hull_Mesh", null],
+    ]);
+    expect(meshes[0].userData.transformData).toEqual({ rotationPivot: [1, 2, 3] });
+    expect(meshes[0].geometry.getAttribute("position").count).toBe(3);
+    expect(meshes[0].geometry.getAttribute("skinIndex")).toBeUndefined();
+    expect(meshes[0].geometry.index?.count).toBe(3);
+    expect(meshes[0].geometry.groups).toEqual([{ start: 0, count: 3, materialIndex: 1 }]);
+    expect(model.clips[0].name).toBe("Take 001");
+    expect(model.clips[0].tracks[0].name).toBe("Hull_Mesh.position");
+  });
+
+  it("parses an FBX in place when there are no workers", async () => {
+    const fbx = `; FBX 7.3.0 project file
+FBXHeaderExtension:  {
+	FBXHeaderVersion: 1003
+	FBXVersion: 7300
+}
+Objects:  {
+	Geometry: 100, "Geometry::Tri", "Mesh" {
+		Vertices: *9 {
+			a: 0,0,0,1,0,0,0,1,0
+		}
+		PolygonVertexIndex: *3 {
+			a: 0,1,-3
+		}
+	}
+	Model: 300, "Model::Tri", "Mesh" {
+		Version: 232
+	}
+}
+Connections:  {
+	C: "OO",300,0
+	C: "OO",100,300
+}
+`;
+    const packed = await parseFbxGeometry(new TextEncoder().encode(fbx).buffer);
+    expect(packed.meshes.map((m) => m.name)).toEqual(["Tri"]);
+    expect(packed.scale).toBeCloseTo(0.01);
+  });
+});

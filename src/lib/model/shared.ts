@@ -13,7 +13,7 @@ export function loadShared(src: LoadSource, cache: ModelCache = modelCache): Pro
   if (!src.info?.key) {
     return loadModel(src);
   }
-  const key = `${src.kind}|${prefs.textureMax}|${JSON.stringify({ ...src.info, materials: src.info.materials.map(withBase) })}`;
+  const key = `${src.kind}|${src.geometryOnly ? "geo" : "full"}|${prefs.textureMax}|${JSON.stringify({ ...src.info, materials: src.info.materials.map(withBase) })}`;
   return cache.model(key, () => loadModel(src)).then((m) => {
     src.onProgress?.({ phase: "done" });
     return m;

@@ -27,6 +27,11 @@ export interface LoadSource {
   /** The model file's name, for "Waiting for …". */
   name?: string;
   onProgress?: (step: Step) => void;
+  /**
+   * Only the meshes, their pivots and the clips (prefabs draw with Unity's materials):
+   * an FBX then parses in a worker, without its own materials and textures.
+   */
+  geometryOnly?: boolean;
 }
 
 /** Thrown when the protocol answers with an error; `message` is the backend's reason. */
@@ -133,6 +138,14 @@ export async function loadModel(src: LoadSource): Promise<LoadedModel> {
   const report = src.onProgress ?? (() => {});
   const approximated = new Set<string>();
   const bytes = await fetchBytes(src.url, src.name ?? "model", report);
+  if (src.kind === "fbx" && src.geometryOnly) {
+    report({ phase: "parse" });
+    const { parseFbxGeometry } = await import("./fbxPool");
+    const { unpackFbx } = await import("./packFbx");
+    const model = unpackFbx(await parseFbxGeometry(bytes.buffer as ArrayBuffer), src.info?.scale ?? 1);
+    report({ phase: "done" });
+    return model;
+  }
   const files = new TrackedFiles(src.refUrl, report);
   const manager = files.manager;
   const text = () => new TextDecoder().decode(bytes);

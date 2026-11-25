@@ -79,6 +79,22 @@ const ctx = {
 };
 
 describe("assemblePrefab", () => {
+  it("says why a clip from a model file couldn't be read", async () => {
+    const scene: ModelScene = {
+      nodes: [node("Skiff")],
+      missing: [],
+      clips: [
+        { node: 0, name: "Gone", source: { type: "model", path: "Assets/gone.fbx", take: "Take 001" } },
+        { node: 0, name: "Wave", source: { type: "model", path: "Assets/hull.fbx", take: "Wave" } },
+      ],
+    };
+    const model = await assemblePrefab(scene, [], ctx);
+    expect(model.missing).toEqual([
+      "Clip Gone couldn't be read: Assets/gone.fbx: Assets/gone.fbx is not in that version",
+    ]);
+    expect(model.clips.map((c) => c.name)).toEqual(["Wave"]);
+  });
+
   it("takes a Mesh .asset's one mesh whatever fileID points at it", async () => {
     const scene: ModelScene = {
       nodes: [node("Floor", { mesh: { type: "asset", path: "Assets/Meshes/Floor.asset", name: null, id: "4300000", scale: 1 } })],

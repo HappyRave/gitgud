@@ -1,5 +1,6 @@
-// three.js r170 examples/jsm/loaders/FBXLoader.js (MIT, © three.js authors) with two
-// "gitgud:" fixes for FBX files Unity reads; still unfixed in r187. Re-copy on a three upgrade.
+// three.js r170 examples/jsm/loaders/FBXLoader.js (MIT, © three.js authors) with "gitgud:"
+// changes: two fixes for FBX files Unity reads (still unfixed in r187), and a geometryOnly mode
+// that runs in a worker. Re-copy and re-apply them on a three upgrade.
 import {
 	AmbientLight,
 	AnimationClip,
@@ -145,7 +146,10 @@ class FBXLoader extends Loader {
 
 		const textureLoader = new TextureLoader( this.manager ).setPath( this.resourcePath || path ).setCrossOrigin( this.crossOrigin );
 
-		return new FBXTreeParser( textureLoader, this.manager ).parse( fbxTree );
+		const parser = new FBXTreeParser( textureLoader, this.manager );
+		// gitgud: geometryOnly skips images and textures, so the parse can run in a worker.
+		parser.geometryOnly = this.geometryOnly === true;
+		return parser.parse( fbxTree );
 
 	}
 
@@ -165,8 +169,8 @@ class FBXTreeParser {
 
 		connections = this.parseConnections();
 
-		const images = this.parseImages();
-		const textures = this.parseTextures( images );
+		const images = this.geometryOnly ? {} : this.parseImages();
+		const textures = this.geometryOnly ? new Map() : this.parseTextures( images );
 		const materials = this.parseMaterials( textures );
 		const deformers = this.parseDeformers();
 		const geometryMap = new GeometryParser().parse( deformers );
@@ -1078,8 +1082,9 @@ class FBXTreeParser {
 			}
 
 
-			let width = window.innerWidth;
-			let height = window.innerHeight;
+			// gitgud: no window in a worker; the aspect only matters for drawing through the camera.
+			let width = typeof window === 'undefined' ? 1 : window.innerWidth;
+			let height = typeof window === 'undefined' ? 1 : window.innerHeight;
 
 			if ( cameraAttribute.AspectWidth !== undefined && cameraAttribute.AspectHeight !== undefined ) {
 

@@ -42,6 +42,23 @@ Connections:  {
 `;
 
 describe("vendored FBXLoader", () => {
+  it("reads a file with a camera where there is no window (a worker)", () => {
+    const withCamera = fbx
+      .replace(/\t\tLayerElementNormal: 0 \{[\s\S]*?\n\t\t\}\n/, "")
+      .replace(/\tGeometry: 200, [\s\S]*?\n\t\}\n/, "")
+      .replace('Model: 300, "Model::Tri", "Mesh" {', 'NodeAttribute: 400, "NodeAttribute::Cam", "Camera" {\n\t\tCameraProjectionType: 0\n\t}\n\tModel: 500, "Model::Cam", "Camera" {\n\t\tVersion: 232\n\t}\n\tModel: 300, "Model::Tri", "Mesh" {')
+      .replace('C: "OO",100,300', 'C: "OO",100,300\n\tC: "OO",500,0\n\tC: "OO",400,500');
+    const saved = globalThis.window;
+    // @ts-expect-error: a worker has no window
+    delete globalThis.window;
+    try {
+      const root = new FBXLoader().parse(new TextEncoder().encode(withCamera).buffer, "");
+      expect(root.getObjectByName("Cam")).toBeTruthy();
+    } finally {
+      globalThis.window = saved;
+    }
+  });
+
   it("reads files with an empty normals layer and a geometry no model uses", () => {
     const bytes = new TextEncoder().encode(fbx);
     const root = new FBXLoader().parse(bytes.buffer, "");
