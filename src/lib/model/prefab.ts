@@ -1,10 +1,12 @@
 import {
   AnimationClip,
+  Box3,
   BoxGeometry,
-  type BufferGeometry,
+  BufferGeometry,
   CapsuleGeometry,
   CylinderGeometry,
   EdgesGeometry,
+  Float32BufferAttribute,
   Group,
   LineBasicMaterial,
   LineSegments,
@@ -13,7 +15,10 @@ import {
   MeshStandardMaterial,
   type Object3D,
   PlaneGeometry,
+  Points,
+  PointsMaterial,
   QuaternionKeyframeTrack,
+  Sphere,
   SphereGeometry,
   Vector3,
   VectorKeyframeTrack,
@@ -27,6 +32,7 @@ import type { Step } from "./progress";
 import { type LoadTexture, MISSING_COLOR, materialFrom } from "./materials";
 import { meshFileKind } from "./source";
 import { unityFileId } from "./unityId";
+import { framingCamera } from "./view";
 
 export interface PrefabContext {
   modelUrl: (path: string) => string;
@@ -38,6 +44,41 @@ export interface PrefabContext {
   loadTexture?: LoadTexture;
   /** Where to report the progress of the file `key`. */
   progress?: (key: string) => (step: Step) => void;
+  /** A node's mesh arrived and replaced its placeholder, while the rest still loads. */
+  onPiece?: (obj: Object3D) => void;
+}
+
+/**
+ * A prefab that can show before its meshes load. `load()` starts loading them (once;
+ * later calls return the same promise) and settles once all of them are in.
+ */
+export interface BuildingModel extends LoadedModel {
+  load: () => Promise<LoadedModel>;
+}
+
+/** Faint dots marking where meshes will appear, one shared geometry and material for all. */
+const placeholderGeometry = new BufferGeometry().setAttribute("position", new Float32BufferAttribute([0, 0, 0], 3));
+const placeholderMaterial = new PointsMaterial({ color: "#9aa3ad", size: 4, sizeAttenuation: false, transparent: true, opacity: 0.55 });
+placeholderGeometry.userData.shared = true;
+placeholderMaterial.userData.shared = true;
+
+function placeholder(): Points {
+  const dot = new Points(placeholderGeometry, placeholderMaterial);
+  dot.userData.placeholder = true;
+  dot.raycast = () => {};
+  return dot;
+}
+
+/** Node indices with a mesh, nearest to the default camera first, so what's in view fills in first. */
+function nearestFirst(scene: ModelScene, objects: Object3D[]): number[] {
+  const at = objects.map((o) => o.getWorldPosition(new Vector3()));
+  const withMesh = scene.nodes.flatMap((n, i) => (n.mesh ? [i] : []));
+  if (withMesh.length === 0) {
+    return withMesh;
+  }
+  const camera = framingCamera(new Box3().setFromPoints(withMesh.map((i) => at[i])).getBoundingSphere(new Sphere()));
+  const dist = at.map((p) => p.distanceToSquared(camera));
+  return withMesh.sort((a, b) => dist[a] - dist[b]);
 }
 
 /** Unity's built-in primitive meshes, sized as Unity makes them. */
@@ -114,8 +155,16 @@ function findMesh(root: Object3D, name: string | null, id: string | null): Mesh 
   return found;
 }
 
-/** Turns a backend `ModelScene` into three.js objects, loading the model files it uses. */
-export async function assemblePrefab(scene: ModelScene, materials: ModelMaterial[], ctx: PrefabContext): Promise<LoadedModel> {
+/** Turns a backend `ModelScene` into three.js objects, once every model file it uses has loaded. */
+export function assemblePrefab(scene: ModelScene, materials: ModelMaterial[], ctx: PrefabContext): Promise<LoadedModel> {
+  return buildPrefab(scene, materials, ctx).load();
+}
+
+/**
+ * Turns a backend `ModelScene` into three.js objects at once, each mesh a
+ * placeholder dot until `load()` brings its model file (nearest to the camera first).
+ */
+export function buildPrefab(scene: ModelScene, materials: ModelMaterial[], ctx: PrefabContext): BuildingModel {
   const models = new Map<string, Promise<LoadedModel>>();
   const made = new Map<number, Material>();
   const approximated = new Set<string>();
@@ -233,32 +282,47 @@ export async function assemblePrefab(scene: ModelScene, materials: ModelMaterial
   });
   const root = new Group();
   root.name = "(prefab)";
-  await Promise.all(
-    scene.nodes.map(async (n, i) => {
-      (n.parent === null ? root : objects[n.parent]).add(objects[i]);
-      if (n.mesh) {
-        const body = await drawn(n.mesh, n.materials);
+  scene.nodes.forEach((n, i) => (n.parent === null ? root : objects[n.parent]).add(objects[i]));
+  root.updateMatrixWorld(true);
+  const order = nearestFirst(scene, objects);
+  const dots = new Map(order.map((i) => [i, placeholder()]));
+  for (const [i, dot] of dots) {
+    objects[i].add(dot);
+  }
+
+  let loading: Promise<LoadedModel> | null = null;
+  const load = () =>
+    (loading ??= Promise.all(
+      order.map(async (i) => {
+        const n = scene.nodes[i];
+        const body = await drawn(n.mesh!, n.materials);
+        objects[i].remove(dots.get(i)!);
         if (body) {
           body.name = n.name;
           objects[i].add(body);
+          ctx.onPiece?.(body);
+        }
+      }),
+    ).then(async () => {
+      const clips: AnimationClip[] = [];
+      const clipRoots = new Map<AnimationClip, Object3D>();
+      for (const c of scene.clips) {
+        const clip = await sceneClip(c, objects[c.node], model);
+        if (clip instanceof AnimationClip) {
+          clips.push(clip);
+          clipRoots.set(clip, objects[c.node]);
+        } else {
+          missing.push(`Clip ${c.name} couldn't be read: ${clip}`);
         }
       }
-    }),
-  );
-  const clips: AnimationClip[] = [];
-  const clipRoots = new Map<AnimationClip, Object3D>();
-  for (const c of scene.clips) {
-    const clip = await sceneClip(c, objects[c.node], model);
-    if (clip instanceof AnimationClip) {
-      clips.push(clip);
-      clipRoots.set(clip, objects[c.node]);
-    } else {
-      missing.push(`Clip ${c.name} couldn't be read: ${clip}`);
-    }
-  }
-  await textures.idle();
-  ctx.progress?.("textures")({ phase: "done" });
-  return { root, clips, approximated: [...approximated], missing, clipRoots };
+      await textures.idle();
+      ctx.progress?.("textures")({ phase: "done" });
+      Object.assign(building, { clips, clipRoots, approximated: [...approximated], missing });
+      return building;
+    }));
+
+  const building: BuildingModel = { root, clips: [], approximated: [], missing: [], clipRoots: new Map(), load };
+  return building;
 }
 
 /** The object at Unity animation path `path` ("Body/Arm") under `from`. */

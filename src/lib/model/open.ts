@@ -1,10 +1,11 @@
 import { modelInfo } from "$lib/api";
 import { type ImageAt, imageUrl } from "$lib/images";
 import { previewTexture } from "$lib/prefs.svelte";
+import type { Object3D } from "three";
 import { clone as cloneSkinned } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { loadShared } from "./shared";
 import type { LoadedModel } from "./load";
-import { assemblePrefab } from "./prefab";
+import { buildPrefab } from "./prefab";
 import { LoadProgress } from "./progress";
 import { meshFileKind, modelUrl, refUrl, toVersion } from "./source";
 
@@ -14,7 +15,13 @@ export interface ModelSide {
   at: ImageAt;
 }
 
-export type Opened = { model: LoadedModel; error: null } | { model: null; error: string };
+/**
+ * A loaded side, or why it couldn't load. A scene's `model` can show before its
+ * meshes are in; `load` brings them and settles with the same model once it has.
+ */
+export type Opened =
+  | { model: LoadedModel; error: null; load?: () => Promise<LoadedModel> }
+  | { model: null; error: string; load?: undefined };
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const fileName = (p: string) => p.slice(p.lastIndexOf("/") + 1);
@@ -32,6 +39,7 @@ export async function openSide(
   side: ModelSide,
   bust: number,
   progress: LoadProgress = new LoadProgress(),
+  onPiece?: (obj: Object3D) => void,
 ): Promise<Opened> {
   const kind = meshFileKind(path);
   if (!kind) {
@@ -44,15 +52,17 @@ export async function openSide(
     const info = await modelInfo(repoId, path, version);
     progress.report(key("info"), { phase: "done" });
     if (info.scene) {
-      const model = await assemblePrefab(info.scene, info.materials, {
+      const model = buildPrefab(info.scene, info.materials, {
         modelUrl: (p) => modelUrl(repoId, p, side.at, bust),
         meshUrl: (p, id) => `${modelUrl(repoId, p, side.at, bust)}&mesh=${encodeURIComponent(id)}`,
         refUrl: (near) => (ref) => previewTexture(refUrl(repoId, near, ref, side.at, bust)),
         imageUrl: (p) => previewTexture(imageUrl(repoId, p, side.at, bust)),
         info: (p) => modelInfo(repoId, p, version),
         progress: (p) => progress.reporter(key(p)),
+        onPiece,
       });
-      return { model: { ...model, fromDisk: info.fromDisk }, error: null };
+      model.fromDisk = info.fromDisk;
+      return { model, error: null, load: model.load };
     }
     const shared = await loadShared({
       kind,

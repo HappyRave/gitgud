@@ -23,14 +23,15 @@ interface Item {
 /**
  * Folds the steps of every file a model load touches (both versions, every
  * model a prefab uses) into one label and one bar. A scene reports thousands of
- * steps, so `onchange` runs at most once per `schedule` (an animation frame).
+ * steps, so `onchange` runs at most once per `schedule` (a quarter second): each
+ * change repaints the page, which a loading scene can't spare every frame.
  */
 export class LoadProgress {
   onchange: (s: Summary) => void = () => {};
   private items = new Map<string, Item>();
   private pending = false;
 
-  constructor(private readonly schedule: (flush: () => void) => void = (flush) => requestAnimationFrame(flush)) {}
+  constructor(private readonly schedule: (flush: () => void) => void = (flush) => setTimeout(flush, 250)) {}
 
   report(key: string, step: Step) {
     const prev = this.items.get(key);

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, type Snippet } from "svelte";
+  import type { Object3D } from "three";
   import type { BinaryMeta, BinarySide } from "$lib/api";
   import { type Change, type ModelStats, stats, TINT } from "$lib/model/compare";
   import type { ModelSide, Opened } from "$lib/model/open";
@@ -43,6 +44,8 @@
   let viewport = $state<HTMLDivElement>();
   let stage: ModelStage | null = null;
   let loading = $state(true);
+  /** Shown, with meshes still arriving. */
+  let filling = $state(false);
   let status = $state<Summary>({ label: "Loading model…", value: null });
   let errors = $state<{ before: string | null; after: string | null }>({ before: null, after: null });
   let lfsMissing = $state(false);
@@ -86,10 +89,18 @@
         status = s;
       }
     };
+    const piece = (o: Object3D) => {
+      if (token === seq) {
+        stage?.added(o);
+      }
+    };
+    // The stage gets ready while the sides' structure is read: both are waited on before anything shows.
+    const staged = stage ? Promise.resolve() : import("$lib/model/stage");
     const [b, a]: [Opened | null, Opened] = await Promise.all([
-      before ? (opener ? opener(before) : openSide(repoId, path, before, bust, progress)) : Promise.resolve(null),
-      opener ? opener(after) : openSide(repoId, path, after, bust, progress),
+      before ? (opener ? opener(before) : openSide(repoId, path, before, bust, progress, piece)) : Promise.resolve(null),
+      opener ? opener(after) : openSide(repoId, path, after, bust, progress, piece),
     ]);
+    const stageModule = await staged;
     if (token !== seq) {
       return;
     }
@@ -100,17 +111,49 @@
       loading = false;
       return;
     }
-    if (!stage) {
-      const { ModelStage } = await import("$lib/model/stage");
-      if (token !== seq) {
-        return;
-      }
-      stage = new ModelStage(canvas);
+    if (!stage && stageModule) {
+      stage = new stageModule.ModelStage(canvas);
       stage.ontime = (t) => (time = t);
       resize();
     }
+    if (!stage) {
+      return;
+    }
     stage.setModels(b?.model ?? null, a.model);
     single = stage.single;
+    // A scene shows at once and fills in; what depends on all of it waits until then.
+    changes = [];
+    counts = { before: null, after: null };
+    notes = [];
+    clips = [];
+    clip = null;
+    loading = false;
+    const growing = !!(b?.load || a.load);
+    filling = growing;
+    sync();
+    try {
+      if (growing) {
+        // Let the placeholders paint before hundreds of requests take the main thread.
+        await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve)));
+        if (token !== seq) {
+          return;
+        }
+        await Promise.all([b?.load?.(), a.load?.()]);
+      }
+    } catch (e) {
+      if (token === seq) {
+        errors = { ...errors, after: e instanceof Error ? e.message : String(e) };
+        filling = false;
+      }
+      return;
+    }
+    if (token !== seq) {
+      return;
+    }
+    if (growing) {
+      stage.refresh();
+    }
+    filling = false;
     changes = stage.comparison.changes;
     counts = { before: b?.model ? stats(b.model.root) : null, after: stats(a.model.root) };
     const shaders = new Set([...(b?.model?.approximated ?? []), ...a.model.approximated]);
@@ -139,6 +182,7 @@
   $effect(() => {
     void inputs;
     loading = true;
+    filling = false;
     status = { label: "Loading model…", value: null };
     void load(++seq);
   });
@@ -405,6 +449,9 @@
       {/if}
     {/if}
 
+    {#if filling && !errors.after}
+      <p class="filling" aria-live="polite"><LoadingBar label={status.label} value={status.value} /></p>
+    {/if}
     {#if loading}
       <p class="state loading"><LoadingBar label={status.label} value={status.value} /></p>
     {:else if lfsMissing}
@@ -736,6 +783,19 @@
     margin: 0;
     color: var(--muted);
     font-size: 12px;
+  }
+  .filling {
+    position: absolute;
+    left: 10px;
+    bottom: 46px;
+    width: min(320px, calc(100% - 96px));
+    margin: 0;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    color: var(--muted);
+    background: color-mix(in srgb, var(--panel) 80%, transparent);
+    pointer-events: none;
   }
   .state.loading {
     background: color-mix(in srgb, var(--panel) 70%, transparent);

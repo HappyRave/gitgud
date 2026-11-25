@@ -12,7 +12,8 @@ import {
 } from "three";
 import { describe, expect, it, vi } from "vitest";
 import type { ModelInfo, ModelMaterial, ModelNode, ModelScene } from "$lib/api";
-import { assemblePrefab, builtinGeometry, pivotOffset } from "./prefab";
+import { loadModel } from "./load";
+import { assemblePrefab, buildPrefab, builtinGeometry, pivotOffset } from "./prefab";
 import { unityFileId } from "./unityId";
 
 vi.mock("./load", async (orig) => ({
@@ -78,6 +79,38 @@ const ctx = {
   info: async (): Promise<ModelInfo> => ({ kind: "fbx", key: null, materials: [], remaps: {}, scale: 1, scene: null, fromDisk: 0 }),
   loadTexture: () => new Texture(),
 };
+
+describe("buildPrefab", () => {
+  it("shows dots at once, loads on request nearest the camera first, and swaps each dot for its mesh", async () => {
+    const scene: ModelScene = {
+      nodes: [
+        node("Far", { position: [-10, 0, -10], mesh: { type: "inline", path: "Assets/Room.unity", id: "1" } }),
+        node("Near", { position: [10, 0, 10], mesh: { type: "inline", path: "Assets/Room.unity", id: "2" } }),
+        node("Empty", { position: [0, 5, 0] }),
+      ],
+      missing: [],
+      clips: [],
+    };
+    vi.mocked(loadModel).mockClear();
+    const pieces: string[] = [];
+    const built = buildPrefab(scene, [], { ...ctx, onPiece: (o) => pieces.push(o.name) });
+
+    const dots = (name: string) => built.root.getObjectByName(name)!.children.filter((c) => c.userData.placeholder).length;
+    expect([dots("Far"), dots("Near"), dots("Empty")]).toEqual([1, 1, 0]);
+    expect(loadModel).not.toHaveBeenCalled();
+
+    const loading = built.load();
+    expect(built.load()).toBe(loading);
+    expect(vi.mocked(loadModel).mock.calls.map(([src]) => src.url)).toEqual([
+      "m://Assets/Room.unity?mesh=2",
+      "m://Assets/Room.unity?mesh=1",
+    ]);
+    expect(await loading).toBe(built);
+    expect([dots("Far"), dots("Near")]).toEqual([0, 0]);
+    expect(pieces.sort()).toEqual(["Far", "Near"]);
+    expect((built.root.getObjectByName("Near")!.children[0] as Mesh).isMesh).toBe(true);
+  });
+});
 
 describe("assemblePrefab", () => {
   it("says why a clip from a model file couldn't be read", async () => {
