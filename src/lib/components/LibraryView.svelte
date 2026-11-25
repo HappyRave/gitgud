@@ -555,7 +555,7 @@
                     {repo.pinned ? "★" : "☆"}
                   </button>
                   <span class="rname">{repo.name}</span>
-                  {#if c?.isUnity}<span class="unity"><UnityIcon title="Unity project" /></span>{/if}
+                  {#if c?.isUnity}<span class="unity"><UnityIcon size={10} title="Unity project" /></span>{/if}
                 </span>
                 <span class="pa" title={repo.path}>
                   {#if missing}
@@ -837,7 +837,7 @@
   }
   .unity {
     display: inline-flex;
-    color: var(--fg);
+    color: var(--muted);
   }
   .pa,
   .br {
