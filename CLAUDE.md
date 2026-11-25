@@ -252,8 +252,12 @@ replaying at most 255 rows (spike 4.3).
   prefabs are read and parsed together ahead of the walk, model `.meta`s once per build, and `.mat`
   files after the walk, read together (`Files::prefetch`, rayon). On disk (`disk_cache.rs`,
   `.git/gitgud/cache/`, keys include the app version, LRU-pruned to 1 GB in the background on
-  open): scene / prefab `model_info` at commit trees, and shrunk textures by content
-  (`Repo::shrink_texture`); Settings › Caches › 3D previews shows and clears it. Reopening a repo
+  open): scene / prefab `model_info` at commit trees, shrunk textures by content
+  (`Repo::shrink_texture`), and model files' meshes as the viewer's workers parsed them
+  (`geometryCache.ts` / `packedBytes.ts`, protocol `/geometry?key=<kind>|<content key>|<PARSER_VERSION>`:
+  a GET hit skips the fetch and the parse; fresh parses are POSTed back only once the worker pool
+  has been idle 1 s, since the protocol serves one request at a time); Settings › Caches › 3D
+  previews shows and clears it. Reopening a repo
   that is already open (a reloaded window) shares its `Repo` and caches (`Session::reuse_or_open`)
   unless its config changed. `Repo::inline_mesh` indexes each scene version's Mesh documents
   once (`InlineSource`) and keeps both sides of a compare. Every `model_info` carries a

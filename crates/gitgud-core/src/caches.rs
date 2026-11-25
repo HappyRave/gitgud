@@ -25,7 +25,8 @@ pub struct CacheStats {
     pub commit_graph_bytes: Option<u64>,
     /// Where Git LFS keeps downloaded objects (sizes come from `lfs_cache_stats`).
     pub lfs_objects_path: String,
-    /// The 3D preview cache on disk: scene and prefab infos at commits, shrunk textures.
+    /// The 3D preview cache on disk: scene and prefab infos at commits, shrunk textures,
+    /// and model files' parsed meshes (counted in `preview_bytes`).
     pub preview_cache_path: String,
     pub preview_models: usize,
     pub preview_textures: usize,

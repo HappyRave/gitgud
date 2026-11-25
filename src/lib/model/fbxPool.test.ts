@@ -44,4 +44,29 @@ describe("loadGeometry", () => {
     await expect(jobs[8]).rejects.toThrow("gone");
     expect(b.sent.map((s) => s.url).at(-1)).toBe("m://17");
   });
+
+  it("passes the cache URL on, and has workers keep their parses only once the pool has been idle", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("Worker", FakeWorker);
+    vi.stubGlobal("navigator", { hardwareConcurrency: 3 });
+    const { loadGeometry } = await import("./fbxPool");
+    const flushes = () => FakeWorker.all[0].sent.filter((s) => "flush" in s).length;
+    const one = loadGeometry("m://a", "fbx", "g://a");
+    const two = loadGeometry("m://b", "fbx");
+    const [w] = FakeWorker.all;
+    expect(w.sent.map((s) => (s as { cache?: string }).cache)).toEqual(["g://a", undefined]);
+
+    w.answer(w.sent[0].id, { scale: 1, meshes: [], clips: [] });
+    await one;
+    vi.advanceTimersByTime(5000);
+    expect(flushes(), "a job still runs").toBe(0);
+
+    w.answer(w.sent[1].id, { scale: 1, meshes: [], clips: [] });
+    await two;
+    vi.advanceTimersByTime(500);
+    expect(flushes()).toBe(0);
+    vi.advanceTimersByTime(600);
+    expect(flushes()).toBe(1);
+    vi.useRealTimers();
+  });
 });

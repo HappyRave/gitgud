@@ -13,6 +13,8 @@ import {
 import { describe, expect, it, vi } from "vitest";
 import type { ModelInfo, ModelMaterial, ModelNode, ModelScene } from "$lib/api";
 import { loadMeshBundle } from "./fbxPool";
+import { PARSER_VERSION } from "./geometryCache";
+import { loadModel } from "./load";
 import { assemblePrefab, buildPrefab, builtinGeometry, pivotOffset } from "./prefab";
 import { unityFileId } from "./unityId";
 
@@ -219,6 +221,25 @@ describe("assemblePrefab", () => {
     expect(one.map).not.toBeNull();
     expect(drawn("Terrain 2").material).toBe(one);
     expect(model.approximated).toEqual(["Custom/Ground"]);
+  });
+
+  it("keeps a model file's parsed meshes under its content, kind and parser version", async () => {
+    vi.mocked(loadModel).mockClear();
+    const scene: ModelScene = {
+      nodes: [node("Rock", { mesh: { type: "asset", path: "Assets/rock.fbx", name: null, id: null, scale: 1 } })],
+      missing: [],
+      clips: [],
+    };
+    const info = async (): Promise<ModelInfo> => ({ ...(await ctx.info()), key: "blob-rock" });
+    await assemblePrefab(scene, [], { ...ctx, info, geometryUrl: (key: string) => `g://${key}` });
+    expect(vi.mocked(loadModel).mock.calls[0][0]).toMatchObject({ geometryOnly: true, geometryCache: `g://fbx|blob-rock|${PARSER_VERSION}` });
+
+    vi.mocked(loadModel).mockClear();
+    await assemblePrefab({ ...scene, nodes: [node("Rock 2", { mesh: { type: "asset", path: "Assets/rock2.fbx", name: null, id: null, scale: 1 } })] }, [], {
+      ...ctx,
+      geometryUrl: (key: string) => `g://${key}`,
+    });
+    expect(vi.mocked(loadModel).mock.calls[0][0].geometryCache, "no content key: nothing kept").toBeUndefined();
   });
 
   it("draws meshes stored inside the scene, loading each one once", async () => {

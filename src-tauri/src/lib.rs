@@ -1704,11 +1704,15 @@ fn app_with_library<R: Runtime>(builder: Builder<R>, library: Option<LibraryStor
         .register_asynchronous_uri_scheme_protocol("gitgud", |ctx, request, responder| {
             let app = ctx.app_handle().clone();
             let uri = request.uri().to_string();
+            let method = request.method().to_string();
+            let body = request.into_body();
             let arrived = std::time::Instant::now();
             std::thread::spawn(move || {
                 responder.respond(images::respond_timed(
                     &app.state::<Session>(),
+                    &method,
                     &uri,
+                    &body,
                     arrived,
                 ));
             });

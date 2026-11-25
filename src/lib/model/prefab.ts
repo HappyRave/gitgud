@@ -30,6 +30,7 @@ import { loadShared, materialKey } from "./shared";
 import { inlineBatcher } from "./inlineBatch";
 import { type LoadedModel, remapMaterials, TrackedFiles } from "./load";
 import { Approximations } from "./approximations";
+import { PARSER_VERSION } from "./geometryCache";
 import type { Step } from "./progress";
 import { type LoadTexture, MISSING_COLOR, materialFrom } from "./materials";
 import { meshFileKind } from "./source";
@@ -43,6 +44,8 @@ export interface PrefabContext {
   refUrl: (near: string) => (ref: string) => string;
   imageUrl: (path: string) => string;
   info: (path: string) => Promise<ModelInfo>;
+  /** Where gitgud keeps a model file's parsed meshes under `key`; without it nothing is kept. */
+  geometryUrl?: (key: string) => string;
   loadTexture?: LoadTexture;
   /** Where to report the progress of the file `key`. */
   progress?: (key: string) => (step: Step) => void;
@@ -207,6 +210,8 @@ export function buildPrefab(scene: ModelScene, materials: ModelMaterial[], ctx: 
               name: path.slice(path.lastIndexOf("/") + 1),
               onProgress: report,
               geometryOnly: true,
+              geometryCache:
+                info.key && ctx.geometryUrl ? ctx.geometryUrl(`${kind}|${info.key}|${PARSER_VERSION}`) : undefined,
             });
           })
         : Promise.reject(new Error(`${path} is not a model file the viewer reads`));

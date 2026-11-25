@@ -41,6 +41,7 @@ struct Stored {
 pub(crate) struct DiskStats {
     pub models: usize,
     pub textures: usize,
+    pub geometry: usize,
     pub bytes: u64,
 }
 
@@ -69,6 +70,28 @@ impl DiskCache {
             0,
         );
         self.models().join(format!("{key:016x}.json"))
+    }
+
+    fn geometry_dir(&self) -> PathBuf {
+        self.root.join("geometry")
+    }
+
+    fn geometry_file(&self, key: &str) -> PathBuf {
+        let hash = xxhash_rust::xxh64::xxh64(
+            format!("{}\0{FORMAT}\0{key}", env!("CARGO_PKG_VERSION")).as_bytes(),
+            0,
+        );
+        self.geometry_dir().join(format!("{hash:016x}.geo"))
+    }
+
+    /// A model file's meshes as the viewer parsed and packed them, by the key it gave
+    /// (the file's content, its kind and the parser's version).
+    pub fn geometry(&self, key: &str) -> Option<Vec<u8>> {
+        read(&self.geometry_file(key))
+    }
+
+    pub fn put_geometry(&self, key: &str, bytes: &[u8]) {
+        write(&self.geometry_file(key), bytes);
     }
 
     fn texture_file(&self, key: u64) -> PathBuf {
@@ -119,6 +142,10 @@ impl DiskCache {
             stats.textures += 1;
             stats.bytes += size;
         }
+        for (_, _, size) in files(&self.geometry_dir()) {
+            stats.geometry += 1;
+            stats.bytes += size;
+        }
         stats
     }
 
@@ -126,6 +153,7 @@ impl DiskCache {
     pub fn prune(&self, budget: u64) {
         let mut all = files(&self.models());
         all.extend(files(&self.textures()));
+        all.extend(files(&self.geometry_dir()));
         let mut total: u64 = all.iter().map(|f| f.2).sum();
         if total <= budget {
             return;
@@ -251,6 +279,26 @@ mod tests {
         cache.clear().unwrap();
         assert_eq!(cache.stats(), DiskStats::default());
         cache.clear().unwrap();
+    }
+
+    #[test]
+    fn keeps_parsed_geometry_by_its_key() {
+        let repo = TestRepo::init();
+        let r = crate::repo::open(repo.path()).unwrap();
+        let cache = DiskCache::new(&r);
+        assert_eq!(cache.geometry("fbx|blob1|1"), None);
+        cache.put_geometry("fbx|blob1|1", b"meshes");
+        assert_eq!(cache.geometry("fbx|blob1|1"), Some(b"meshes".to_vec()));
+        assert_eq!(cache.geometry("fbx|blob2|1"), None, "other content");
+        assert_eq!(cache.geometry("fbx|blob1|2"), None, "another parser");
+        let stats = cache.stats();
+        assert_eq!(stats.geometry, 1);
+        assert_eq!(stats.bytes, 6);
+        cache.prune(0);
+        assert_eq!(cache.geometry("fbx|blob1|1"), None, "pruned with the rest");
+        cache.put_geometry("k", b"x");
+        cache.clear().unwrap();
+        assert_eq!(cache.stats(), DiskStats::default());
     }
 
     #[test]

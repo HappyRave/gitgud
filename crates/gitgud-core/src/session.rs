@@ -1630,6 +1630,26 @@ impl Session {
         })
     }
 
+    /// A model file's meshes as the viewer packed them, kept in repo `id`'s preview cache
+    /// under `key` (the file's content, kind and parser version, chosen by the viewer).
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`].
+    pub fn kept_geometry(&self, id: u32, key: &str) -> Result<Option<Vec<u8>>, Error> {
+        let repo = self.get(id)?.repo;
+        Ok(crate::disk_cache::DiskCache::new(&repo).geometry(key))
+    }
+
+    /// Keeps `bytes` as the packed meshes for `key`; see [`Session::kept_geometry`].
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`].
+    pub fn keep_geometry(&self, id: u32, key: &str, bytes: &[u8]) -> Result<(), Error> {
+        let repo = self.get(id)?.repo;
+        crate::disk_cache::DiskCache::new(&repo).put_geometry(key, bytes);
+        Ok(())
+    }
+
     /// See [`Repo::compressed_texture`].
     ///
     /// # Errors

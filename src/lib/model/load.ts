@@ -38,6 +38,8 @@ export interface LoadSource {
    * an FBX then parses in a worker, without its own materials and textures.
    */
   geometryOnly?: boolean;
+  /** With `geometryOnly`, where gitgud keeps the parsed meshes by content (a `/geometry` URL). */
+  geometryCache?: string;
 }
 
 /** Thrown when the protocol answers with an error; `message` is the backend's reason. */
@@ -153,7 +155,7 @@ export async function loadModel(src: LoadSource): Promise<LoadedModel> {
     // Fetched and parsed in a worker: the main thread only gets the finished buffers.
     report({ phase: "request", name: src.name ?? "model" });
     const [{ loadGeometry }, { unpackFbx }] = await Promise.all([import("./fbxPool"), import("./packFbx")]);
-    const model = unpackFbx(await loadGeometry(src.url, workerKind), workerKind === "fbx" ? (src.info?.scale ?? 1) : 1);
+    const model = unpackFbx(await loadGeometry(src.url, workerKind, src.geometryCache), workerKind === "fbx" ? (src.info?.scale ?? 1) : 1);
     report({ phase: "done" });
     return model;
   }

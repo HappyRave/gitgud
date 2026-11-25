@@ -16,14 +16,22 @@ use tauri::http::{Response, StatusCode, header};
 /// serves the file that model refers to as `ref` (a texture, a glTF buffer);
 /// `/file` serves any file as stored (audio, video, PDF, fonts, data); `/audio`
 /// a sound file decoded to WAV, for formats the webview can't play (AIFF).
+/// `/geometry?repo=1&key=<key>` answers a model file's meshes as the viewer packed
+/// them (404 when none were kept); a POST with the packed bytes as body keeps them.
 ///
 /// `arrived` is when the request came in; the `Server-Timing` header gives `queue`
 /// (waiting for a thread), `read` (the file's bytes as stored), `shrink` (texture work,
 /// reading an LFS object and decoding included when the texture wasn't kept) and `total`.
-pub fn respond_timed(session: &Session, uri: &str, arrived: Instant) -> Response<Vec<u8>> {
+pub fn respond_timed(
+    session: &Session,
+    method: &str,
+    uri: &str,
+    body: &[u8],
+    arrived: Instant,
+) -> Response<Vec<u8>> {
     let started = Instant::now();
     let mut steps = Steps::default();
-    let answer = read(session, uri, &mut steps);
+    let answer = read(session, method, uri, body, &mut steps);
     let timing = format!(
         "queue;dur={:.1}, read;dur={:.1}, shrink;dur={:.1}, total;dur={:.1}",
         ms(started - arrived),
@@ -54,7 +62,7 @@ pub fn respond_timed(session: &Session, uri: &str, arrived: Instant) -> Response
 
 #[cfg(test)]
 pub fn respond(session: &Session, uri: &str) -> Response<Vec<u8>> {
-    respond_timed(session, uri, Instant::now())
+    respond_timed(session, "GET", uri, &[], Instant::now())
 }
 
 #[derive(Default)]
@@ -77,7 +85,9 @@ fn timed<T>(into: &mut Duration, f: impl FnOnce() -> T) -> T {
 
 fn read(
     session: &Session,
+    method: &str,
     uri: &str,
+    body: &[u8],
     steps: &mut Steps,
 ) -> Result<(Vec<u8>, &'static str), (StatusCode, String)> {
     let bad = |m: &str| (StatusCode::BAD_REQUEST, m.to_owned());
@@ -90,6 +100,23 @@ fn read(
     let repo: u32 = param("repo")
         .and_then(|r| r.parse().ok())
         .ok_or_else(|| bad("missing repo"))?;
+    if url.path() == "/geometry" {
+        let key = param("key").ok_or_else(|| bad("missing key"))?;
+        if method == "POST" {
+            session.keep_geometry(repo, &key, body).map_err(fail)?;
+            return Ok((Vec::new(), "text/plain"));
+        }
+        let kept = timed(&mut steps.read, || session.kept_geometry(repo, &key)).map_err(fail)?;
+        return kept
+            .map(|bytes| (bytes, "application/octet-stream"))
+            .ok_or_else(|| (StatusCode::NOT_FOUND, format!("no meshes kept for {key}")));
+    }
+    if method != "GET" {
+        return Err((
+            StatusCode::METHOD_NOT_ALLOWED,
+            format!("{method} {}", url.path()),
+        ));
+    }
     let path = param("path").ok_or_else(|| bad("missing path"))?;
     let commit = || param("commit").ok_or_else(|| bad("missing commit"));
     let version = match param("at").as_deref() {
@@ -466,6 +493,32 @@ mod tests {
             png.get_ref(),
             "only 3D previews (max) are compressed"
         );
+    }
+
+    #[test]
+    fn keeps_and_serves_packed_meshes_by_key() {
+        let repo = TestRepo::init();
+        repo.write("a.txt", "x").commit_all("one");
+        let session = Session::default();
+        let id = session.open(repo.path()).unwrap().id;
+        let url = format!("http://gitgud.localhost/geometry?repo={id}&key=fbx%7Cblob1%7C1");
+        let at = Instant::now();
+
+        let missing = respond_timed(&session, "GET", &url, &[], at);
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+        let kept = respond_timed(&session, "POST", &url, b"packed", at);
+        assert_eq!(kept.status(), StatusCode::OK);
+        let hit = respond_timed(&session, "GET", &url, &[], at);
+        assert_eq!(hit.status(), StatusCode::OK);
+        assert_eq!(hit.body(), b"packed");
+        assert_eq!(
+            hit.headers()[header::CONTENT_TYPE],
+            "application/octet-stream"
+        );
+
+        let other = format!("http://gitgud.localhost/image?repo={id}&path=a.png&at=head");
+        let refused = respond_timed(&session, "POST", &other, b"x", at);
+        assert_eq!(refused.status(), StatusCode::METHOD_NOT_ALLOWED);
     }
 
     #[test]
