@@ -33,6 +33,8 @@ pub struct Repo {
     /// The scene or prefab last read for its inline meshes, so a scene's hundreds of
     /// meshes don't each re-read it; see `Repo::inline_mesh`.
     pub(crate) inline_source: Mutex<Option<(String, Arc<Vec<u8>>)>>,
+    /// Recent versions' file listings; see `model::tree::Files::new`.
+    pub(crate) listings: Mutex<Vec<(crate::model::cache::Origin, Arc<crate::model::tree::Listed>)>>,
 }
 
 /// GUID -> asset path, from one tree's `.meta` files.
@@ -59,6 +61,7 @@ pub fn open(path: impl AsRef<Path>) -> Result<Repo, Error> {
         model_infos: Mutex::new(InfoCache::default()),
         ignored: Mutex::new(HashMap::new()),
         inline_source: Mutex::new(None),
+        listings: Mutex::new(Vec::new()),
     })
 }
 

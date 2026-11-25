@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap};
+use std::sync::Arc;
 
 use gix::traverse::tree::Recorder;
 
@@ -16,32 +17,33 @@ pub(crate) struct Files<'a> {
     git: Option<&'a GitCli>,
     /// The version's tree when it is a commit, so what is read from it can be cached.
     pub tree: Option<gix::ObjectId>,
-    paths: Vec<String>,
-    /// Each path's blob when the version is a commit, so reads skip the tree lookup.
-    blobs: Vec<gix::ObjectId>,
-    by_name: HashMap<String, Vec<usize>>,
+    listed: Arc<Listed>,
     /// Gitignored files used from disk, for the viewer's note.
     from_disk: RefCell<BTreeSet<String>>,
 }
 
+/// A version's file list with a lookup by file name; built once per commit tree (and
+/// once for the index until the next refresh), since a scene asks for it per model.
+pub(crate) struct Listed {
+    paths: Vec<String>,
+    /// Each path's blob when the version is a commit, so reads skip the tree lookup.
+    blobs: Vec<gix::ObjectId>,
+    by_name: HashMap<String, Vec<usize>>,
+    tree: Option<gix::ObjectId>,
+}
+
+/// How many listings a repo keeps: both sides of a few recent comparisons.
+const KEPT_LISTINGS: usize = 6;
+
 impl<'a> Files<'a> {
     pub fn new(repo: &'a Repo, version: &'a Version) -> Result<Self, Error> {
-        let Listing { paths, blobs, tree } = paths_at(repo, version)?;
-        let mut by_name: HashMap<String, Vec<usize>> = HashMap::new();
-        for (i, p) in paths.iter().enumerate() {
-            by_name
-                .entry(base_name(p).to_ascii_lowercase())
-                .or_default()
-                .push(i);
-        }
+        let listed = listed(repo, version)?;
         Ok(Self {
             repo,
             version,
             git: None,
-            tree,
-            paths,
-            blobs,
-            by_name,
+            tree: listed.tree,
+            listed,
             from_disk: RefCell::new(BTreeSet::new()),
         })
     }
@@ -65,20 +67,21 @@ impl<'a> Files<'a> {
     }
 
     pub fn paths(&self) -> &[String] {
-        &self.paths
+        &self.listed.paths
     }
 
     /// The blob of `paths()[i]`, when the version is a commit.
     pub fn blob(&self, i: usize) -> Option<gix::ObjectId> {
-        self.blobs.get(i).copied()
+        self.listed.blobs.get(i).copied()
     }
 
     fn index_of(&self, path: &str) -> Option<usize> {
-        self.by_name
+        self.listed
+            .by_name
             .get(&base_name(path).to_ascii_lowercase())?
             .iter()
             .copied()
-            .find(|&i| self.paths[i] == path)
+            .find(|&i| self.listed.paths[i] == path)
     }
 
     pub fn contains(&self, path: &str) -> bool {
@@ -87,21 +90,29 @@ impl<'a> Files<'a> {
 
     /// A name for `path`'s content at this version that changes whenever the
     /// content does, so the viewer can reuse what it loaded: the blob id, or for
-    /// the work tree the file's size and modified time. `None` when there is none.
+    /// the work tree the file's size and modified time. A gitignored file read from
+    /// disk gets its disk key in every version, so both sides share one load.
+    /// `None` when there is none.
     pub fn key(&self, path: &str) -> Option<String> {
-        if !self.blobs.is_empty() {
-            return self.index_of(path).map(|i| self.blobs[i].to_string());
+        let disk_key = || {
+            let meta = std::fs::metadata(self.repo.root().join(path)).ok()?;
+            let modified = meta
+                .modified()
+                .ok()?
+                .duration_since(std::time::UNIX_EPOCH)
+                .ok()?;
+            Some(format!("wt:{path}:{}:{}", meta.len(), modified.as_nanos()))
+        };
+        if !self.contains(path) && self.repo.ignored_on_disk(path) {
+            return disk_key();
+        }
+        if !self.listed.blobs.is_empty() {
+            return self
+                .index_of(path)
+                .map(|i| self.listed.blobs[i].to_string());
         }
         match self.version {
-            Version::Worktree => {
-                let meta = std::fs::metadata(self.repo.root().join(path)).ok()?;
-                let modified = meta
-                    .modified()
-                    .ok()?
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .ok()?;
-                Some(format!("wt:{path}:{}:{}", meta.len(), modified.as_nanos()))
-            }
+            Version::Worktree => disk_key(),
             Version::Index => {
                 let index = self.repo.gix().index_or_empty().ok()?;
                 index.entry_by_path(path.into()).map(|e| e.id.to_string())
@@ -122,7 +133,7 @@ impl<'a> Files<'a> {
     /// # Errors
     /// [`Error::Refused`] when the LFS object isn't downloaded and can't be fetched.
     pub fn read(&self, path: &str) -> Result<Option<Vec<u8>>, Error> {
-        let blob = if self.blobs.is_empty() {
+        let blob = if self.listed.blobs.is_empty() {
             None
         } else {
             match self.index_of(path).and_then(|i| self.blob(i)) {
@@ -167,9 +178,9 @@ impl<'a> Files<'a> {
         if !reference.contains(':') && !reference.starts_with('/') && self.contains(&relative) {
             return Some(relative);
         }
-        let ix = self.by_name.get(&name.to_ascii_lowercase())?;
+        let ix = self.listed.by_name.get(&name.to_ascii_lowercase())?;
         ix.iter()
-            .map(|&i| &self.paths[i])
+            .map(|&i| &self.listed.paths[i])
             .max_by_key(|p| (shared_dirs(parent(p), dir), std::cmp::Reverse(p.len())))
             .cloned()
     }
@@ -219,6 +230,43 @@ pub(crate) fn origin(repo: &Repo, version: &Version) -> Result<Origin, Error> {
             _ => "worktree",
         }),
     })
+}
+
+/// `version`'s listing, built on first use: a commit tree's for good, the index's and
+/// work tree's until the next refresh.
+fn listed(repo: &Repo, version: &Version) -> Result<Arc<Listed>, Error> {
+    let key = origin(repo, version)?;
+    let hit = repo
+        .listings
+        .lock()
+        .expect("listings lock poisoned")
+        .iter()
+        .find(|(k, _)| *k == key)
+        .map(|(_, l)| l.clone());
+    if let Some(hit) = hit {
+        return Ok(hit);
+    }
+    let Listing { paths, blobs, tree } = paths_at(repo, version)?;
+    let mut by_name: HashMap<String, Vec<usize>> = HashMap::new();
+    for (i, p) in paths.iter().enumerate() {
+        by_name
+            .entry(base_name(p).to_ascii_lowercase())
+            .or_default()
+            .push(i);
+    }
+    let built = Arc::new(Listed {
+        paths,
+        blobs,
+        by_name,
+        tree,
+    });
+    let mut kept = repo.listings.lock().expect("listings lock poisoned");
+    kept.retain(|(k, _)| *k != key);
+    if kept.len() >= KEPT_LISTINGS {
+        kept.remove(0);
+    }
+    kept.push((key, built.clone()));
+    Ok(built)
 }
 
 fn paths_at(repo: &Repo, version: &Version) -> Result<Listing, Error> {

@@ -8,7 +8,7 @@ mod meta;
 mod prefab;
 mod scriptable;
 mod sprites;
-mod tree;
+pub(crate) mod tree;
 mod yaml;
 
 use std::collections::BTreeMap;
@@ -566,6 +566,30 @@ mod tests {
             );
             assert!(info.from_disk >= 2, "{v:?}: {}", info.from_disk);
         }
+        let key = |v: Version| {
+            r.model_info(None, "Assets/Packs/crate.fbx", &v)
+                .unwrap()
+                .key
+        };
+        let disk = key(Version::Worktree);
+        assert!(
+            disk.as_deref()
+                .is_some_and(|k| k.starts_with("wt:Assets/Packs/crate.fbx:"))
+        );
+        assert_eq!(key(Version::Head), disk, "one load serves both sides");
+        let listings = || r.listings.lock().unwrap().len();
+        let before = listings();
+        tree::Files::new(&r, &Version::Head).unwrap();
+        assert_eq!(listings(), before, "a version's listing is built once");
+        crate::unity_yaml::forget_guid_index(&r);
+        assert!(
+            r.listings
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|(o, _)| matches!(o, cache::Origin::Tree(_))),
+            "the work tree's listing goes on refresh, commits' stay"
+        );
         assert_eq!(
             r.file_at("Assets/Packs/crate.fbx", &Version::Head).unwrap(),
             b"fbx"

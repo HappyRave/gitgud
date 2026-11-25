@@ -1322,6 +1322,10 @@ pub(crate) fn forget_guid_index(repo: &Repo) {
         .inline_source
         .lock()
         .expect("inline source lock poisoned") = None;
+    repo.listings
+        .lock()
+        .expect("listings lock poisoned")
+        .retain(|(origin, _)| matches!(origin, crate::model::cache::Origin::Tree(_)));
 }
 
 pub(crate) fn parse_doc_header(line: &str) -> Option<(u32, String, bool)> {

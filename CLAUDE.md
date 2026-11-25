@@ -220,8 +220,10 @@ replaying at most 255 rows (spike 4.3).
   file cached for the burst of requests).
   Gitignored assets (asset packs kept out of git): `Repo::file_at` reads them from disk in every
   version when a version lacks them (`Repo::ignored_on_disk`, cached per path and per ignored folder,
-  cleared on refresh); `Files::has` lets GUIDs resolve to them, and `ModelInfo.from_disk` counts them
-  for the viewer's note.
+  cleared on refresh); `Files::has` lets GUIDs resolve to them, `Files::key` gives them the same disk
+  key in every version (so both sides share one load), and `ModelInfo.from_disk` counts them for the
+  viewer's note. `Files::new` takes its listing from `Repo::listings` (per commit tree; the index's
+  until refresh), since a scene builds one per model.
 - **Caches** (`caches.rs`, Settings › Caches): the GUID index is updated from changed `.meta` files
   (size + mtime), saved to `.git/gitgud/guid-index`, built in the background when a Unity repo opens,
   and marked stale (not dropped) on refresh; `.meta` GUIDs are kept per blob and per commit tree;
