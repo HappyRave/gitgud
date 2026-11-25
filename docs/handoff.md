@@ -79,6 +79,17 @@ The v0.1.1 / v0.1.2 commits don't record which checks ran; re-run the full list 
 
 ## Things to do next (recommended first session order)
 
+0. **Next task (Max, 2026-11-25): speed up the backend requests for 3D scenes.** After v0.1.3's
+   front-end work (texture shrinking, LOD0 only, shared listings and disk meshes, FBX parsed on
+   workers), escape1's `Escape 4 - Mirror.unity` at `0dc209d` opens in about 16.5 s, and the main
+   thread is idle for about 10 s of that, waiting on the backend. Per open (both sides): 1,632
+   `model_info` IPC calls (one per model file per side), 406 `/model` requests, 1,048
+   `/model?…&mesh=` inline-mesh requests (each side loads the scene's embedded meshes separately,
+   even unchanged ones) and about 100 `/image` requests. Ideas to measure first: one batched
+   `model_info` call for all of a scene's model files; inline meshes keyed by content so both sides
+   share them, or served in one batch; per-request timing in `images.rs` to find the slow route.
+   Measure with the CDP profile used for v0.1.3 (debug build launched with
+   `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9334`).
 1. Build with `pnpm package` and test `target/release/bundle/nsis/gitgud_0.1.2_x64-setup.exe` interactively on a Windows user profile (install, CLI `PATH`, uninstall).
 2. Start `pnpm tauri dev`, open a real Unity + LFS repo plus a multi-repo Library folder, and do a structured walkthrough of M1–M9 themes/density, WebView2 accelerator keys (`Ctrl+P`/`Ctrl+F`/`Ctrl+R`), Settings' **Local latency** timings, and the v0.1.1/v0.1.2 pieces (splitters, multi-select staging, texture viewer on real DDS/EXR/PSD, LFS auto-fetch, LFS conflict inspector).
 3. Address any layout polish or Unity YAML parser edge cases uncovered on real `.unity`/`.prefab` assets, plus live GitHub/Bitbucket remote LFS lock checks (`O1`) and Sourcetree baseline (`O9`).
