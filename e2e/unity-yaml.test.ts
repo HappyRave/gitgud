@@ -54,7 +54,7 @@ test("unity repo setup, structural prefab diff, and R4-A property conflict merge
   const changes = page.getByRole("list", { name: "Changes" });
   await changes.waitFor(WAIT);
   await changes.getByRole("button", { name: "Assets/Prefabs/Enemy.prefab", exact: true }).click();
-  await page.getByRole("button", { name: "Structural" }).click();
+  await page.getByRole("radiogroup", { name: "View" }).getByRole("radio", { name: "Structure" }).click();
   const udiff = page.getByLabel("Structural Unity diff for Assets/Prefabs/Enemy.prefab");
   await udiff.waitFor(WAIT);
   await page.getByLabel("Filter objects or properties").fill("EnemyAI");
