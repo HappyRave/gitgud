@@ -31,7 +31,7 @@ describe("SidePick", () => {
     });
 
     const region = await screen.findByRole("region", { name: "Pick a side for Art/Hero_D.dds" });
-    expect(region).toHaveTextContent("🔒 Locked by Ada");
+    expect(region).toHaveTextContent("Locked by Ada");
     expect(region).toHaveTextContent("LFS binary");
     expect(screen.getByRole("region", { name: "Image diff" })).toBeInTheDocument();
 

@@ -19,6 +19,7 @@
   import Splitter from "$lib/components/Splitter.svelte";
   import UnityIcon from "$lib/components/UnityIcon.svelte";
   import HostIcon from "$lib/components/HostIcon.svelte";
+  import LockIcon from "$lib/components/LockIcon.svelte";
   import { inTextField, opLogKey } from "$lib/keys";
   import { prefs, setPaneSize } from "$lib/prefs.svelte";
   import {
@@ -86,7 +87,7 @@
   const SMART_ITEMS: { id: SmartFilter; label: string; icon: string }[] = [
     { id: "uncommitted", label: "Uncommitted", icon: "●" },
     { id: "notPushed", label: "Not pushed", icon: "↑" },
-    { id: "locks", label: "Locks I hold", icon: "🔒" },
+    { id: "locks", label: "Locks I hold", icon: "" },
     { id: "unity", label: "Unity projects", icon: "" },
     { id: "missing", label: "Missing on disk", icon: "⚠" },
   ];
@@ -418,7 +419,7 @@
             class:sel={selection.kind === "smart" && selection.filter === item.id}
             onclick={() => (selection = { kind: "smart", filter: item.id })}
           >
-            <span class="ic">{#if item.id === "unity"}<UnityIcon size={10} />{:else}{item.icon}{/if}</span>{item.label}<span class="r">{counts[item.id] || ""}</span>
+            <span class="ic">{#if item.id === "unity"}<UnityIcon size={10} />{:else if item.id === "locks"}<LockIcon size={10} />{:else}{item.icon}{/if}</span>{item.label}<span class="r">{counts[item.id] || ""}</span>
           </button>
         {/each}
       </section>
@@ -573,7 +574,7 @@
                     {c.ahead ? `↑${c.ahead} ` : ""}{c.behind ? `↓${c.behind}` : ""}{#if c.behind && c.fetchedAt} · {age(c.fetchedAt)}{/if}
                   {/if}
                 </span>
-                <span>{c && c.locksHeld > 0 ? `🔒 ${c.locksHeld}` : ""}</span>
+                <span class="lk">{#if c && c.locksHeld > 0}<LockIcon size={10} /> {c.locksHeld}{/if}</span>
                 <span class="la">{c?.lastActivity ? age(c.lastActivity) : ""}</span>
                 <span class="host">{#if c}<HostIcon host={c.host} />{/if}</span>
               </div>
@@ -844,6 +845,7 @@
   }
   .ch,
   .ab2,
+  .lk,
   .la,
   .host {
     font: 11.5px var(--mono);

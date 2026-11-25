@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Change, Entry, Head, LfsLock, MetaIssue, Side, Status } from "$lib/api";
   import { fileKey, fileOrder, selectedPathsForSide } from "$lib/working";
+  import LockIcon from "./LockIcon.svelte";
 
   let {
     status,
@@ -254,7 +255,7 @@
           {/if}
           {#if lock}
             <span class="lock-tag" class:theirs={!lock.ours} title="Locked by {lock.owner} since {lock.lockedAt}"
-              >🔒 {lock.ours ? "Locked (you)" : `Locked by ${lock.owner}`}</span
+              ><LockIcon size={10} /> {lock.ours ? "Locked (you)" : `Locked by ${lock.owner}`}</span
             >
           {/if}
           {#if locksSupported && (lock || lfs) && (onlock || onunlock)}

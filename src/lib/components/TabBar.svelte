@@ -1,5 +1,6 @@
 <script lang="ts">
   import { pathKey } from "$lib/library/filter";
+  import LockIcon from "./LockIcon.svelte";
 
   export interface RepoTabInfo {
     path: string;
@@ -109,7 +110,7 @@
           {/if}
           <span class="nm">{tab.name}</span>
           {#if tab.locksHeld > 0}
-            <span class="lk" aria-label="{tab.locksHeld} locks held">🔒</span>
+            <span class="lk" aria-label="{tab.locksHeld} locks held"><LockIcon size={10} /></span>
           {/if}
         </button>
         <button

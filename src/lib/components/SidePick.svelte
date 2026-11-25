@@ -5,6 +5,7 @@
   import { formatSize } from "$lib/merge/resolve";
   import { viewerFor } from "$lib/viewers/route";
   import FilePreview from "./FilePreview.svelte";
+  import LockIcon from "./LockIcon.svelte";
   import ImageDiff from "./ImageDiff.svelte";
 
   let {
@@ -109,7 +110,7 @@
     <span class="ct">· {conflictKindLabel} · can't be merged, pick a side</span>
     {#if lock}
       <span class="lockpill" class:theirs={!lock.ours} title="Locked by {lock.owner} since {lock.lockedAt}">
-        🔒 {lock.ours ? "Locked by you" : `Locked by ${lock.owner}`}
+        <LockIcon size={10} /> {lock.ours ? "Locked by you" : `Locked by ${lock.owner}`}
       </span>
     {/if}
   </div>

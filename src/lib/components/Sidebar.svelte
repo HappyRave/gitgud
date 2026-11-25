@@ -15,6 +15,7 @@
   } from "$lib/api";
   import { aheadBehind, branchTree, visibleRows } from "$lib/sidebar/tree";
   import ContextMenu, { type MenuItem } from "./ContextMenu.svelte";
+  import LockIcon from "./LockIcon.svelte";
 
   let {
     repoId,
@@ -530,7 +531,7 @@
             {@const base = lock.path.split("/").pop() ?? lock.path}
             <li>
               <div class="it" title="{lock.path} · {lock.owner}">
-                <span class="ic">🔒</span>
+                <span class="ic"><LockIcon size={10} /></span>
                 <span class="nm">{base}</span>
                 <span class="r">{lock.ours ? "you" : lock.owner}</span>
                 {#if onunlock}
