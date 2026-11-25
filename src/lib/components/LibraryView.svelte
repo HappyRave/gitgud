@@ -757,7 +757,7 @@
   }
   .lr {
     display: grid;
-    grid-template-columns: 20px 180px minmax(140px, 1.2fr) 150px 85px 96px 60px 65px 38px;
+    grid-template-columns: 20px 180px minmax(140px, 1.2fr) 150px 85px 96px 60px 80px 38px;
     align-items: center;
     gap: 8px;
     min-height: var(--row-h, 24px);
@@ -854,6 +854,9 @@
   .host {
     font: 11.5px var(--mono);
     color: var(--muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .host {
     text-align: right;
