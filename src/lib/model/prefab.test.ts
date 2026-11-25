@@ -179,6 +179,18 @@ describe("assemblePrefab", () => {
     expect(model.missing).toEqual([]);
   });
 
+  it("takes a model file's one mesh when it isn't named as Unity names it", async () => {
+    // An OBJ without `o` / `g` lines: Unity calls its mesh "default", three.js leaves it unnamed.
+    const scene: ModelScene = {
+      nodes: [node("Table", { mesh: { type: "asset", path: "Assets/Table.obj", name: "default", id: "4300000", scale: 1 } })],
+      missing: [],
+      clips: [],
+    };
+    const model = await assemblePrefab(scene, [], ctx);
+    expect((model.root.getObjectByName("Table")!.children[0] as Mesh).isMesh).toBe(true);
+    expect(model.missing).toEqual([]);
+  });
+
   it("draws meshes stored inside the scene, loading each one once", async () => {
     vi.mocked(loadMeshBundle).mockClear();
     const scene: ModelScene = {

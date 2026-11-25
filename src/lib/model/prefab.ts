@@ -138,12 +138,20 @@ function firstMesh(root: Object3D): Mesh | null {
   return found;
 }
 
+/** The mesh Unity means by `name` or `id`; a file's only mesh is the one whatever it is called (an OBJ without `o` / `g` lines). */
 function findMesh(root: Object3D, name: string | null, id: string | null): Mesh | null {
   let found: Mesh | null = null;
+  let only: Mesh | null = null;
+  let count = 0;
   const seen = new Map<string, number>();
   root.traverse((o) => {
     const mesh = o as Mesh;
-    if (found || !mesh.isMesh) {
+    if (!mesh.isMesh) {
+      return;
+    }
+    count++;
+    only = mesh;
+    if (found) {
       return;
     }
     const raw = (o.userData.originalName as string | undefined) ?? o.name;
@@ -153,7 +161,7 @@ function findMesh(root: Object3D, name: string | null, id: string | null): Mesh 
       found = mesh;
     }
   });
-  return found;
+  return found ?? (count === 1 ? only : null);
 }
 
 /** Turns a backend `ModelScene` into three.js objects, once every model file it uses has loaded. */
