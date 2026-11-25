@@ -54,12 +54,16 @@ class FakeStage {
 }
 
 const opened = new Map<string, Opened>();
+/** What each load asked to open: path and side. */
+const asked: string[] = [];
 
 vi.mock("$lib/model/stage", () => ({ ModelStage: FakeStage }));
 vi.mock("$lib/model/open", async (orig) => ({
   ...(await orig<typeof import("$lib/model/open")>()),
-  openSide: async (_repo: number, _path: string, side: ModelSide) =>
-    opened.get(side.label) ?? { model: null, error: "Assets/boat.fbx is not in that version" },
+  openSide: async (_repo: number, path: string, side: ModelSide) => {
+    asked.push(`${path} ${side.label}`);
+    return opened.get(side.label) ?? { model: null, error: "Assets/boat.fbx is not in that version" };
+  },
 }));
 
 function boat(cabinX: number, withMast: boolean): LoadedModel {
@@ -79,12 +83,27 @@ const DISK: ModelSide = { label: "On disk", at: { at: "worktree" } };
 beforeEach(() => {
   stages.length = 0;
   opened.clear();
+  asked.length = 0;
   localStorage.clear();
   prefs.modelShading = "textured";
   prefs.modelPlaying = false;
 });
 
 describe("ModelViewer", () => {
+  it("opens the file it was asked for, even when another comes before its first load starts", async () => {
+    opened.set("HEAD", { model: boat(0, true), error: null });
+    opened.set("On disk", { model: boat(0, true), error: null });
+    const view = render(ModelViewer, { repoId: 1, path: "Assets/gun.prefab", before: HEAD, after: DISK });
+    await view.rerender({ repoId: 1, path: "Assets/Scenes/Big.unity", before: HEAD, after: DISK });
+    expect(await screen.findByText("On disk", {}, { timeout: 5000 })).toBeInTheDocument();
+    expect(asked.sort()).toEqual([
+      "Assets/Scenes/Big.unity HEAD",
+      "Assets/Scenes/Big.unity On disk",
+      "Assets/gun.prefab HEAD",
+      "Assets/gun.prefab On disk",
+    ]);
+  });
+
   it("compares two versions and remembers the Changes shading", async () => {
     opened.set("HEAD", { model: boat(0, true), error: null });
     opened.set("On disk", { model: boat(-0.35, false), error: null });

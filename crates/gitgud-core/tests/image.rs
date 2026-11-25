@@ -153,6 +153,40 @@ fn reopening_a_repo_keeps_its_caches_until_its_config_changes() {
 }
 
 #[test]
+fn warms_textures_in_the_background() {
+    let repo = TestRepo::init();
+    let mut png = std::io::Cursor::new(Vec::new());
+    image::RgbaImage::from_fn(1200, 64, |x, _| image::Rgba([x as u8, 0, 0, 255]))
+        .write_to(&mut png, image::ImageFormat::Png)
+        .unwrap();
+    std::fs::create_dir_all(repo.path().join("Assets")).unwrap();
+    put(&repo, "Assets/wall.png", png.get_ref());
+    repo.commit_all("one");
+    let session = Session::default();
+    let id = session.open(repo.path()).unwrap().id;
+    session
+        .warm_textures(
+            id,
+            Version::Head,
+            vec!["Assets/wall.png".into(), "Assets/gone.png".into()],
+            512,
+            true,
+        )
+        .unwrap();
+    let start = Instant::now();
+    while session.cache_stats(id).unwrap().preview_textures == 0 {
+        assert!(start.elapsed().as_secs() < 20, "nothing was warmed");
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let r = session.get(id).unwrap().repo.clone();
+    assert!(r.compressed_texture(png.get_ref(), 512).is_some());
+    assert!(matches!(
+        session.warm_textures(99, Version::Head, vec![], 512, true),
+        Err(Error::UnknownRepo(99))
+    ));
+}
+
+#[test]
 fn reads_both_sides_of_a_conflict() {
     let repo = TestRepo::init();
     put(&repo, "t.png", V1);

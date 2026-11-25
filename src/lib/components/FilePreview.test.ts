@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/svelte";
+import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ModelSide } from "$lib/model/open";
 import { AUTO_3D_DEFAULT, prefs, setAuto3dLimit, viewModeFor } from "$lib/prefs.svelte";
@@ -28,6 +28,17 @@ describe("FilePreview", () => {
     });
     render(FilePreview, { repoId: 1, path: "Data/Boats.asset", before: HEAD, after: DISK });
     expect(await screen.findByText("No table in this file.")).toBeInTheDocument();
+  });
+
+  it("gets a big scene ready while its card waits: both sides' scene info", async () => {
+    const calls = mockCommands({
+      unity_asset_info: () => ({ binary: false, classId: 29, size: 900, objects: 9_000 }),
+      model_info: () => ({ kind: "prefab", key: null, materials: [], remaps: {}, scale: 1, scene: null, fromDisk: 0 }),
+    });
+    render(FilePreview, { repoId: 1, path: "Scenes/Big.unity", before: HEAD, after: DISK });
+    expect(await screen.findByText("9,000 objects.")).toBeInTheDocument();
+    await waitFor(() => expect(calls.filter((c) => c.cmd === "model_info")).toHaveLength(2));
+    expect(calls.filter((c) => c.cmd === "model_info").map((c) => (c.args as { version: unknown }).version)).toEqual(["head", "worktree"]);
   });
 
   it("opens scenes and prefabs in 3D up to the Settings limit, bigger ones on request", async () => {

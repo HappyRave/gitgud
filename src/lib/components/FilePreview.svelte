@@ -3,6 +3,7 @@
   import { type BinaryMeta, type BinarySide, type UnityAssetInfo, unityAssetInfo } from "$lib/api";
   import type { ModelSide } from "$lib/model/open";
   import { toVersion } from "$lib/model/source";
+  import { warmScene } from "$lib/model/warm";
   import { formatSize } from "$lib/merge/resolve";
   import { prefs, setViewMode } from "$lib/prefs.svelte";
   import { metaTarget, type ViewerKind, viewerFor } from "$lib/viewers/route";
@@ -88,6 +89,14 @@
     info ? [info.before?.size, info.after?.size].filter((s): s is number => s != null).map(formatSize).join(" → ") : "",
   );
   const openSides = $derived([...(before ? [before] : []), after]);
+
+  // While the card waits for a click, the scene gets ready (its info, then its textures).
+  $effect(() => {
+    void probeKey;
+    if (heavy && !binary) {
+      untrack(() => warmScene(repoId, target, openSides));
+    }
+  });
 </script>
 
 <div class="preview">

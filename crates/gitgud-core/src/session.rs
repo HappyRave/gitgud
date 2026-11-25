@@ -1555,6 +1555,45 @@ impl Session {
         Ok(self.get(id)?.repo.shrink_texture(bytes, max))
     }
 
+    /// Prepares the images at `paths` (`version`) for 3D previews in the background, as
+    /// the protocol will be asked for them (`max=…`, `gpu=bc`), so opening a scene finds
+    /// them ready. Best effort: an image that can't be read now is left for that request
+    /// to report; nothing is downloaded from LFS here.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`].
+    pub fn warm_textures(
+        &self,
+        id: u32,
+        version: crate::image::Version,
+        paths: Vec<String>,
+        max: u32,
+        bc: bool,
+    ) -> Result<(), Error> {
+        let repo = self.get(id)?.repo.clone();
+        std::thread::spawn(move || {
+            let threads = std::thread::available_parallelism()
+                .map_or(1, std::num::NonZero::get)
+                .min(4);
+            let chunk = paths.len().div_ceil(threads).max(1);
+            std::thread::scope(|s| {
+                for part in paths.chunks(chunk) {
+                    let (repo, version) = (&repo, &version);
+                    s.spawn(move || {
+                        for p in part {
+                            if let Ok(bytes) = repo.image_bytes(p, version)
+                                && !(bc && repo.compressed_texture(&bytes, max).is_some())
+                            {
+                                let _ = repo.shrink_texture(&bytes, max);
+                            }
+                        }
+                    });
+                }
+            });
+        });
+        Ok(())
+    }
+
     /// See [`Repo::compressed_texture`].
     ///
     /// # Errors

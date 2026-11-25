@@ -1303,6 +1303,18 @@ async fn clear_preview_cache(session: State<'_, Session>, id: u32) -> Result<Cac
 }
 
 #[tauri::command]
+async fn warm_textures(
+    session: State<'_, Session>,
+    id: u32,
+    version: gitgud_core::image::Version,
+    paths: Vec<String>,
+    max: u32,
+    bc: bool,
+) -> Result<(), Error> {
+    session.warm_textures(id, version, paths, max, bc)
+}
+
+#[tauri::command]
 async fn worktree_unity_diff(
     session: State<'_, Session>,
     id: u32,
@@ -1822,6 +1834,7 @@ fn app_with_library<R: Runtime>(builder: Builder<R>, library: Option<LibraryStor
             cache_stats,
             clear_unity_caches,
             clear_preview_cache,
+            warm_textures,
             worktree_unity_diff,
             commit_unity_diff,
             model_info,
@@ -2023,6 +2036,11 @@ mod tests {
         let previews = ipc
             .call("clear_preview_cache", json!({ "id": id }))
             .unwrap();
+        ipc.call(
+            "warm_textures",
+            json!({ "id": id, "version": "head", "paths": ["Assets/none.png"], "max": 1024, "bc": true }),
+        )
+        .unwrap();
         assert_eq!(previews["previewModels"], 0);
         assert_eq!(previews["previewBytes"], 0);
         assert!(

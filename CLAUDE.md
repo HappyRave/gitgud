@@ -229,7 +229,10 @@ replaying at most 255 rows (spike 4.3).
   so both sides and reopenings share them) are served as GLB by `fileID` through the protocol's
   `/model?…&mesh=`, or several per answer with `&meshes=a,b` (`Repo::inline_meshes`,
   `meshBundle.ts`; `inlineBatch.ts` asks 32 at a time). A scene's or prefab's `model_info`
-  carries its model files' infos (`models`), so the viewer doesn't ask for each.
+  carries its model files' infos (`models`), so the viewer doesn't ask for each. While a big
+  scene's "Open in 3D" card shows, `warm.ts` starts both sides' `model_info` (`sceneInfo.ts`,
+  taken once by the opening) and then `warm_textures` for their materials' maps; a texture being
+  prepared sits in the cache as an in-flight entry, so concurrent requests share one result.
   Gitignored assets (asset packs kept out of git): `Repo::file_at` reads them from disk in every
   version when a version lacks them (`Repo::ignored_on_disk`, cached per path and per ignored folder,
   cleared on refresh); `Files::has` lets GUIDs resolve to them, `Files::key` gives them the same disk

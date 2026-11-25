@@ -79,6 +79,8 @@
   }
 
   async function load(token: number) {
+    // Read now: props are live, and after an await they may already be the next file's.
+    const at = { repoId, path, before, after, bust, opener };
     const [{ openSide, needsLfsFetch }, { LoadProgress }] = await Promise.all([
       import("$lib/model/open"),
       import("$lib/model/progress"),
@@ -97,8 +99,12 @@
     // The stage gets ready while the sides' structure is read: both are waited on before anything shows.
     const staged = stage ? Promise.resolve() : import("$lib/model/stage");
     const [b, a]: [Opened | null, Opened] = await Promise.all([
-      before ? (opener ? opener(before) : openSide(repoId, path, before, bust, progress, piece)) : Promise.resolve(null),
-      opener ? opener(after) : openSide(repoId, path, after, bust, progress, piece),
+      at.before
+        ? at.opener
+          ? at.opener(at.before)
+          : openSide(at.repoId, at.path, at.before, at.bust, progress, piece)
+        : Promise.resolve(null),
+      at.opener ? at.opener(at.after) : openSide(at.repoId, at.path, at.after, at.bust, progress, piece),
     ]);
     const stageModule = await staged;
     if (token !== seq) {

@@ -6,6 +6,7 @@ import { clone as cloneSkinned } from "three/examples/jsm/utils/SkeletonUtils.js
 import { loadShared } from "./shared";
 import type { LoadedModel } from "./load";
 import { buildPrefab } from "./prefab";
+import { sceneInfo } from "./sceneInfo";
 import { LoadProgress } from "./progress";
 import { meshFileKind, modelUrl, refUrl, toVersion } from "./source";
 
@@ -49,7 +50,7 @@ export async function openSide(
   try {
     const version = toVersion(side.at);
     progress.report(key("info"), { phase: "info" });
-    const info = await modelInfo(repoId, path, version);
+    const info = await sceneInfo(repoId, path, version);
     progress.report(key("info"), { phase: "done" });
     if (info.scene) {
       const model = buildPrefab(info.scene, info.materials, {

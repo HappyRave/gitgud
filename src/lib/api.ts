@@ -1157,6 +1157,7 @@ export interface Commands {
   cache_stats: { args: { id: number }; result: CacheStats };
   clear_unity_caches: { args: { id: number }; result: CacheStats };
   clear_preview_cache: { args: { id: number }; result: CacheStats };
+  warm_textures: { args: { id: number; version: FileVersion; paths: string[]; max: number; bc: boolean }; result: null };
   write_commit_graph: { args: { id: number }; result: null };
   worktree_unity_diff: { args: { id: number; path: string; side: Side }; result: UnityYamlDiff };
   commit_unity_diff: { args: { id: number; commit: string; path: string }; result: UnityYamlDiff };
@@ -1461,6 +1462,8 @@ export const hasCommitGraph = (id: number) => call("has_commit_graph", { id });
 export const cacheStats = (id: number) => call("cache_stats", { id });
 export const clearUnityCaches = (id: number) => call("clear_unity_caches", { id });
 export const clearPreviewCache = (id: number) => call("clear_preview_cache", { id });
+export const warmTextures = (id: number, version: FileVersion, paths: string[], max: number, bc: boolean) =>
+  call("warm_textures", { id, version, paths, max, bc });
 export const writeCommitGraph = (id: number) => call("write_commit_graph", { id });
 export const worktreeUnityDiff = (id: number, path: string, side: Side) => call("worktree_unity_diff", { id, path, side });
 export const commitUnityDiff = (id: number, commit: string, path: string) =>

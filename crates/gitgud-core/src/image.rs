@@ -46,8 +46,18 @@ pub fn image_type(path: &str) -> Option<&'static str> {
     })
 }
 
-/// Bytes held, and each shrunk texture (or `None`: left as is) by content hash and size limit.
-type ShrunkCache = (usize, std::collections::HashMap<u64, Option<Vec<u8>>>);
+/// Bytes held, and each prepared texture (or `None`: left as is) by content hash, size
+/// limit and kind. An entry is there while it is being prepared, so concurrent requests
+/// for the same texture (both sides of a compare, a warm-up) wait for one result.
+type ShrunkCache = (
+    usize,
+    std::collections::HashMap<u64, std::sync::Arc<std::sync::OnceLock<Option<Vec<u8>>>>>,
+);
+
+/// How many times each texture was actually prepared (not found in a cache), for tests.
+#[cfg(test)]
+static PREPARED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<u64, usize>>> =
+    std::sync::LazyLock::new(Default::default);
 
 /// Dropped as a whole past [`SHRUNK_BUDGET`].
 static SHRUNK: std::sync::LazyLock<std::sync::Mutex<ShrunkCache>> =
@@ -79,29 +89,43 @@ fn prepare_through(
     disk: Option<&crate::disk_cache::DiskCache>,
 ) -> Option<Vec<u8>> {
     let key = xxhash_rust::xxh64::xxh64(bytes, u64::from(max) | ((kind as u64) << 32));
-    if let Some(hit) = SHRUNK.lock().expect("shrunk lock poisoned").1.get(&key) {
-        return hit.clone();
-    }
-    let out = match disk.and_then(|d| d.texture(key)) {
-        Some(hit) => hit,
-        None => {
-            let out = match kind {
-                Prepared::Png => shrink_uncached(bytes, max),
-                Prepared::Bc => crate::gpu_texture::bc_dds(bytes, max),
-            };
-            if let Some(d) = disk {
-                d.put_texture(key, out.as_deref());
+    let (slot, first) = {
+        let mut cache = SHRUNK.lock().expect("shrunk lock poisoned");
+        match cache.1.get(&key) {
+            Some(slot) => (slot.clone(), false),
+            None => {
+                let slot = std::sync::Arc::new(std::sync::OnceLock::new());
+                cache.1.insert(key, slot.clone());
+                (slot, true)
             }
-            out
         }
     };
-    let mut cache = SHRUNK.lock().expect("shrunk lock poisoned");
-    let size = out.as_ref().map_or(0, Vec::len);
-    if cache.0 + size > SHRUNK_BUDGET {
-        *cache = Default::default();
+    let out = slot
+        .get_or_init(|| match disk.and_then(|d| d.texture(key)) {
+            Some(hit) => hit,
+            None => {
+                #[cfg(test)]
+                {
+                    *PREPARED.lock().unwrap().entry(key).or_default() += 1;
+                }
+                let out = match kind {
+                    Prepared::Png => shrink_uncached(bytes, max),
+                    Prepared::Bc => crate::gpu_texture::bc_dds(bytes, max),
+                };
+                if let Some(d) = disk {
+                    d.put_texture(key, out.as_deref());
+                }
+                out
+            }
+        })
+        .clone();
+    if first {
+        let mut cache = SHRUNK.lock().expect("shrunk lock poisoned");
+        cache.0 += out.as_ref().map_or(0, Vec::len);
+        if cache.0 > SHRUNK_BUDGET {
+            *cache = Default::default();
+        }
     }
-    cache.0 += size;
-    cache.1.insert(key, out.clone());
     out
 }
 
@@ -902,6 +926,27 @@ mod tests {
             Some(small),
             "read back from disk"
         );
+    }
+
+    #[test]
+    fn prepares_a_texture_once_for_concurrent_requests() {
+        let repo = crate::testing::TestRepo::init();
+        let r = crate::repo::open(repo.path()).unwrap();
+        let mut png = Cursor::new(Vec::new());
+        image::RgbaImage::from_fn(1500, 40, |x, y| image::Rgba([x as u8, y as u8, 99, 255]))
+            .write_to(&mut png, ImageFormat::Png)
+            .unwrap();
+        let png = png.into_inner();
+        let outs: Vec<_> = std::thread::scope(|s| {
+            let handles: Vec<_> = (0..8)
+                .map(|_| s.spawn(|| r.compressed_texture(&png, 512)))
+                .collect();
+            handles.into_iter().map(|h| h.join().unwrap()).collect()
+        });
+        assert!(outs[0].is_some());
+        assert!(outs.iter().all(|o| *o == outs[0]));
+        let key = xxhash_rust::xxh64::xxh64(&png, 512 | ((Prepared::Bc as u64) << 32));
+        assert_eq!(PREPARED.lock().unwrap().get(&key), Some(&1));
     }
 
     #[test]
