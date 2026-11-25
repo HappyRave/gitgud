@@ -1698,6 +1698,7 @@ name = "gitgud"
 version = "0.1.2"
 dependencies = [
  "gitgud-core",
+ "image",
  "serde",
  "serde_json",
  "tauri",
@@ -3209,6 +3210,8 @@ dependencies = [
  "ravif",
  "rayon",
  "tiff",
+ "zune-core",
+ "zune-jpeg",
 ]
 
 [[package]]

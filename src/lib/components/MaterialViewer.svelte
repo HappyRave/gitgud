@@ -4,7 +4,7 @@
   import { imageUrl } from "$lib/images";
   import type { ModelSide, Opened } from "$lib/model/open";
   import { toVersion } from "$lib/model/source";
-  import { setShaderBase, setViewerChoice, shaderBase, viewerChoice } from "$lib/prefs.svelte";
+  import { previewTexture, setShaderBase, setViewerChoice, shaderBase, viewerChoice } from "$lib/prefs.svelte";
   import { diffMaterial, type MaterialShape, materialPill, SHAPE_LABEL, SHAPES } from "$lib/viewers/material";
   import LoadingBar from "./LoadingBar.svelte";
   import ModelViewer from "./ModelViewer.svelte";
@@ -87,7 +87,7 @@
     }
     const { primitiveModel } = await import("$lib/model/primitive");
     const prim = shown === "mesh" ? "sphere" : shown;
-    return { model: primitiveModel(prim, view, (p) => imageUrl(repoId, p, side.at, bust)), error: null };
+    return { model: primitiveModel(prim, view, (p) => previewTexture(imageUrl(repoId, p, side.at, bust))), error: null };
   }
 
   const swatch = (c: [number, number, number, number] | null) =>

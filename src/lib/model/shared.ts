@@ -2,6 +2,7 @@ import type { ModelMaterial } from "$lib/api";
 import { type ModelCache, modelCache } from "./cache";
 import { type LoadedModel, type LoadSource, loadModel } from "./load";
 import { withBase } from "./materials";
+import { prefs } from "$lib/prefs.svelte";
 
 /**
  * Loads a model file through `cache` when the backend named its content
@@ -12,7 +13,7 @@ export function loadShared(src: LoadSource, cache: ModelCache = modelCache): Pro
   if (!src.info?.key) {
     return loadModel(src);
   }
-  const key = `${src.kind}|${JSON.stringify({ ...src.info, materials: src.info.materials.map(withBase) })}`;
+  const key = `${src.kind}|${prefs.textureMax}|${JSON.stringify({ ...src.info, materials: src.info.materials.map(withBase) })}`;
   return cache.model(key, () => loadModel(src)).then((m) => {
     src.onProgress?.({ phase: "done" });
     return m;
@@ -25,5 +26,5 @@ export function materialKey(given: ModelMaterial): string | null {
   if ((desc.baseMap && !desc.baseMapKey) || (desc.normalMap && !desc.normalMapKey)) {
     return null;
   }
-  return `mat|${JSON.stringify(desc)}`;
+  return `mat|${prefs.textureMax}|${JSON.stringify(desc)}`;
 }

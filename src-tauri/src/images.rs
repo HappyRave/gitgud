@@ -1,4 +1,4 @@
-use gitgud_core::image::{Version, image_type};
+use gitgud_core::image::{Version, image_type, shrink_image};
 use gitgud_core::model::{model_kind, model_mime};
 use gitgud_core::preview::file_mime;
 use gitgud_core::repo::Error;
@@ -56,6 +56,7 @@ fn read(session: &Session, uri: &str) -> Result<(Vec<u8>, &'static str), (Status
         Some("parent") => Version::Parent(commit()?),
         _ => return Err(bad("unknown version")),
     };
+    let max = param("max").and_then(|m| m.parse::<u32>().ok());
     match url.path() {
         "/model" if param("mesh").is_some() => {
             let mesh = param("mesh").unwrap_or_default();
@@ -83,7 +84,7 @@ fn read(session: &Session, uri: &str) -> Result<(Vec<u8>, &'static str), (Status
             let bytes = session
                 .model_ref_bytes(repo, &path, &reference, &version)
                 .map_err(fail)?;
-            Ok((bytes, mime))
+            Ok(shrunk(bytes, mime, max))
         }
         _ => {
             let mime = image_type(&path).ok_or_else(|| bad("not an image"))?;
@@ -91,8 +92,16 @@ fn read(session: &Session, uri: &str) -> Result<(Vec<u8>, &'static str), (Status
             let bytes = session
                 .image_bytes(repo, &path, &version, auto_fetch)
                 .map_err(fail)?;
-            Ok((bytes, mime))
+            Ok(shrunk(bytes, mime, max))
         }
+    }
+}
+
+/// With `max=<px>` (3D previews), an image bigger than that comes back shrunk, as PNG.
+fn shrunk(bytes: Vec<u8>, mime: &'static str, max: Option<u32>) -> (Vec<u8>, &'static str) {
+    match max.and_then(|m| shrink_image(&bytes, m)) {
+        Some(small) => (small, "image/png"),
+        None => (bytes, mime),
     }
 }
 
@@ -261,6 +270,30 @@ mod tests {
             assert_eq!(r.status(), status, "{query}: {}", body(&r));
             assert_eq!(r.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN], "*");
         }
+    }
+
+    #[test]
+    fn shrinks_textures_on_request() {
+        let repo = TestRepo::init();
+        let img = image::RgbaImage::new(3000, 1500);
+        let mut png = std::io::Cursor::new(Vec::new());
+        img.write_to(&mut png, image::ImageFormat::Png).unwrap();
+        std::fs::write(repo.path().join("big.png"), png.get_ref()).unwrap();
+        repo.commit_all("one");
+        let session = Session::default();
+        let id = session.open(repo.path()).unwrap().id;
+        let get = |q: &str| {
+            respond(
+                &session,
+                &format!("http://gitgud.localhost/image?repo={id}&path=big.png&at=head{q}"),
+            )
+        };
+        let full = get("");
+        assert_eq!(full.body(), png.get_ref());
+        let small = get("&max=1024");
+        assert_eq!(small.headers()[header::CONTENT_TYPE], "image/png");
+        let back = image::load_from_memory(small.body()).unwrap();
+        assert_eq!((back.width(), back.height()), (1024, 512));
     }
 
     #[test]

@@ -1,5 +1,6 @@
 import { modelInfo } from "$lib/api";
 import { type ImageAt, imageUrl } from "$lib/images";
+import { previewTexture } from "$lib/prefs.svelte";
 import { clone as cloneSkinned } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { loadShared } from "./shared";
 import type { LoadedModel } from "./load";
@@ -46,8 +47,8 @@ export async function openSide(
       const model = await assemblePrefab(info.scene, info.materials, {
         modelUrl: (p) => modelUrl(repoId, p, side.at, bust),
         meshUrl: (p, id) => `${modelUrl(repoId, p, side.at, bust)}&mesh=${encodeURIComponent(id)}`,
-        refUrl: (near) => (ref) => refUrl(repoId, near, ref, side.at, bust),
-        imageUrl: (p) => imageUrl(repoId, p, side.at, bust),
+        refUrl: (near) => (ref) => previewTexture(refUrl(repoId, near, ref, side.at, bust)),
+        imageUrl: (p) => previewTexture(imageUrl(repoId, p, side.at, bust)),
         info: (p) => modelInfo(repoId, p, version),
         progress: (p) => progress.reporter(key(p)),
       });
@@ -56,8 +57,8 @@ export async function openSide(
     const shared = await loadShared({
       kind,
       url: modelUrl(repoId, path, side.at, bust),
-      refUrl: (ref) => refUrl(repoId, path, ref, side.at, bust),
-      imageUrl: (p) => imageUrl(repoId, p, side.at, bust),
+      refUrl: (ref) => previewTexture(refUrl(repoId, path, ref, side.at, bust)),
+      imageUrl: (p) => previewTexture(imageUrl(repoId, p, side.at, bust)),
       info,
       name: fileName(path),
       onProgress: progress.reporter(key(path)),

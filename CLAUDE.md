@@ -211,7 +211,11 @@ replaying at most 255 rows (spike 4.3).
   changed / removed meshes as amber wire ghosts); the change list gets a filter past 8 entries and
   "Changed only" fades the unchanged clay. `unity_asset_info.objects` counts GameObjects: scenes and
   prefabs above Settings › Previews' limit (`prefs.auto3dLimit`, default 2,000) open on a card
-  ("Open in 3D" / "Show Structure"). Meshes stored inside a scene or prefab (`MeshRef::Inline`) are
+  ("Open in 3D" / "Show Structure"). Textures in 3D come through `previewTexture()`: the protocol's
+  `/image` and `/ref` take `max=<px>` and return the image shrunk (`image::shrink_image`, fast PNG,
+  cached by content hash) per Settings › Previews' "Texture size in 3D" (`prefs.textureMax`: Native /
+  4096 / 2048 / 1024, default 1024); model and material cache keys include it. Only LOD0 of a LOD
+  Group is drawn. Meshes stored inside a scene or prefab (`MeshRef::Inline`) are
   served as GLB by `fileID` through the protocol's `/model?…&mesh=` (`Repo::inline_mesh`, the source
   file cached for the burst of requests).
   Gitignored assets (asset packs kept out of git): `Repo::file_at` reads them from disk in every

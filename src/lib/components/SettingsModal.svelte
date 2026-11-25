@@ -27,6 +27,9 @@
     prefs,
     setAuto3dLimit,
     setDensity,
+    setTextureMax,
+    TEXTURE_MAXES,
+    type TextureMax,
     setDiffLayout,
     setTheme,
     toggleIgnoreWhitespace,
@@ -424,6 +427,19 @@
               Objects in the scene or prefab file itself (nested prefabs not counted). Bigger ones open on a card with
               “Open in 3D”; 0 asks every time.
             </p>
+            <label>
+              <span>Texture size in 3D</span>
+              <select
+                value={prefs.textureMax}
+                aria-label="Texture size in 3D"
+                onchange={(e) => setTextureMax(Number(e.currentTarget.value) as TextureMax)}
+              >
+                {#each TEXTURE_MAXES as m (m)}
+                  <option value={m}>{m === 0 ? "Native" : `${m} px`}</option>
+                {/each}
+              </select>
+            </label>
+            <p class="hint">Bigger textures are shrunk before they reach the 3D view: faster to load and lighter on the GPU.</p>
           </div>
         </section>
 

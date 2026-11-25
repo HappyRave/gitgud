@@ -13,6 +13,18 @@ const VIEWS_KEY = "gitgud.views";
 const VIEWER_KEY = "gitgud.viewer";
 const VOLUME_KEY = "gitgud.media.volume";
 const AUTO_3D_KEY = "gitgud.preview.auto3d";
+const TEXTURE_MAX_KEY = "gitgud.preview.textureMax";
+
+/** Largest texture side in 3D previews; 0 keeps textures at their native size. */
+export type TextureMax = 0 | 4096 | 2048 | 1024;
+export const TEXTURE_MAXES: readonly TextureMax[] = [0, 4096, 2048, 1024];
+/** Max's pick, 2026-11-25. */
+export const TEXTURE_MAX_DEFAULT: TextureMax = 1024;
+
+function readTextureMax(): TextureMax {
+  const v = Number(readStorage(TEXTURE_MAX_KEY) ?? TEXTURE_MAX_DEFAULT);
+  return TEXTURE_MAXES.find((m) => m === v) ?? TEXTURE_MAX_DEFAULT;
+}
 
 export type DiffLayout = "auto" | "unified" | "split";
 export type Density = "standard" | "compact";
@@ -142,6 +154,8 @@ export const prefs = $state({
   volume: readVolume(),
   /** Scenes and prefabs open in 3D by themselves up to this many objects; above it, on request. */
   auto3dLimit: readAuto3d(),
+  /** Textures in 3D previews are shrunk to this many px on their longer side; 0 = native. */
+  textureMax: readTextureMax(),
 });
 
 export type ModelShading = "textured" | "changes";
@@ -177,6 +191,16 @@ export function shaderBase(shader: string): string | null {
 export function setShaderBase(shader: string, property: string) {
   prefs.viewer[`shader:${shader}.base`] = property;
   writeStorage(VIEWER_KEY, JSON.stringify(prefs.viewer));
+}
+
+export function setTextureMax(max: TextureMax) {
+  prefs.textureMax = TEXTURE_MAXES.includes(max) ? max : TEXTURE_MAX_DEFAULT;
+  writeStorage(TEXTURE_MAX_KEY, String(prefs.textureMax));
+}
+
+/** `url` of a texture for a 3D preview, asking the backend to shrink it per the setting. */
+export function previewTexture(url: string): string {
+  return prefs.textureMax ? `${url}&max=${prefs.textureMax}` : url;
 }
 
 export function setAuto3dLimit(limit: number) {

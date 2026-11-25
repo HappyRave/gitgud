@@ -3,7 +3,14 @@ import { BufferAttribute, BufferGeometry, Group, Mesh, MeshBasicMaterial } from 
 import { describe, expect, it, vi } from "vitest";
 import type { CacheStats } from "$lib/api";
 import { modelCache } from "$lib/model/cache";
-import { prefs } from "$lib/prefs.svelte";
+import {
+  AUTO_3D_DEFAULT,
+  prefs,
+  previewTexture,
+  setAuto3dLimit,
+  setTextureMax,
+  TEXTURE_MAX_DEFAULT,
+} from "$lib/prefs.svelte";
 import { mockCommands } from "$lib/test/ipc";
 import SettingsModal from "./SettingsModal.svelte";
 
@@ -21,6 +28,27 @@ const stats = (over: Partial<CacheStats> = {}): CacheStats => ({
 });
 
 describe("SettingsModal", () => {
+  it("sets the 3D object limit and texture size, remembered", async () => {
+    mockCommands({
+      config_get_identity: () => ({ userName: "Max", userEmail: "max@example.com" }),
+      tool_diagnostics: () => ({ gitPath: "C:/Git/git.exe", gitVersion: "2.56.1", lfsVersion: "git-lfs/3.6.0" }),
+    });
+    render(SettingsModal, { onclose: () => {} });
+    const size = (await screen.findByLabelText("Texture size in 3D")) as HTMLSelectElement;
+    expect([...size.options].map((o) => o.textContent)).toEqual(["Native", "4096 px", "2048 px", "1024 px"]);
+    expect(size.value).toBe("1024");
+    await fireEvent.change(size, { target: { value: "0" } });
+    expect(prefs.textureMax).toBe(0);
+    expect(localStorage.getItem("gitgud.preview.textureMax")).toBe("0");
+    expect(previewTexture("http://gitgud.localhost/image?path=a.png")).toBe("http://gitgud.localhost/image?path=a.png");
+    await fireEvent.change(size, { target: { value: "2048" } });
+    expect(previewTexture("http://gitgud.localhost/image?path=a.png")).toBe("http://gitgud.localhost/image?path=a.png&max=2048");
+    await fireEvent.change(screen.getByLabelText("Open 3D automatically up to this many objects"), { target: { value: "5000" } });
+    expect(prefs.auto3dLimit).toBe(5000);
+    setTextureMax(TEXTURE_MAX_DEFAULT);
+    setAuto3dLimit(AUTO_3D_DEFAULT);
+  });
+
   it("loads diagnostics and identity and saves repo-local or global config", async () => {
     let graph: number | null = null;
     const calls = mockCommands({

@@ -2,7 +2,7 @@ use std::io::Cursor;
 use std::path::Path;
 
 use gix::bstr::BStr;
-use image::{ImageFormat, ImageReader};
+use image::{ImageEncoder, ImageFormat, ImageReader};
 use image_dds::{ImageFormat as DdsImageFormat, Surface, ddsfile::Dds};
 use serde::Deserialize;
 
@@ -44,6 +44,54 @@ pub fn image_type(path: &str) -> Option<&'static str> {
         "tga" | "psd" | "dds" | "exr" | "hdr" | "tif" | "tiff" => "image/png",
         _ => return None,
     })
+}
+
+/// Bytes held, and each shrunk texture (or `None`: left as is) by content hash and size limit.
+type ShrunkCache = (usize, std::collections::HashMap<u64, Option<Vec<u8>>>);
+
+/// Dropped as a whole past [`SHRUNK_BUDGET`].
+static SHRUNK: std::sync::LazyLock<std::sync::Mutex<ShrunkCache>> =
+    std::sync::LazyLock::new(Default::default);
+const SHRUNK_BUDGET: usize = 256 * 1024 * 1024;
+
+/// An encoded image shrunk so its longer side is at most `max` px, as fast-compressed
+/// PNG, for 3D previews: big textures cost gigabytes and seconds of GPU upload there.
+/// `None` when it is already small enough or can't be decoded, so the original is used.
+#[must_use]
+pub fn shrink_image(bytes: &[u8], max: u32) -> Option<Vec<u8>> {
+    let key = xxhash_rust::xxh64::xxh64(bytes, u64::from(max));
+    if let Some(hit) = SHRUNK.lock().expect("shrunk lock poisoned").1.get(&key) {
+        return hit.clone();
+    }
+    let out = image::load_from_memory(bytes).ok().and_then(|img| {
+        let (w, h) = (img.width(), img.height());
+        if w.max(h) <= max {
+            return None;
+        }
+        let scale = f64::from(max) / f64::from(w.max(h));
+        let (sw, sh) = (
+            ((f64::from(w) * scale).round() as u32).max(1),
+            ((f64::from(h) * scale).round() as u32).max(1),
+        );
+        let small = image::imageops::thumbnail(&img, sw, sh);
+        let mut png = Vec::new();
+        image::codecs::png::PngEncoder::new_with_quality(
+            &mut png,
+            image::codecs::png::CompressionType::Fast,
+            image::codecs::png::FilterType::Adaptive,
+        )
+        .write_image(small.as_raw(), sw, sh, image::ExtendedColorType::Rgba8)
+        .ok()
+        .map(|()| png)
+    });
+    let mut cache = SHRUNK.lock().expect("shrunk lock poisoned");
+    let size = out.as_ref().map_or(0, Vec::len);
+    if cache.0 + size > SHRUNK_BUDGET {
+        *cache = Default::default();
+    }
+    cache.0 += size;
+    cache.1.insert(key, out.clone());
+    out
 }
 
 const LFS_HEADER_LF: &[u8] = b"version https://git-lfs.github.com/spec/v1\n";
@@ -748,6 +796,33 @@ fn crc32_update(mut crc: u32, data: &[u8]) -> u32 {
 mod tests {
     use super::*;
     use image::GenericImageView;
+
+    #[test]
+    fn shrinks_big_textures_for_3d_and_leaves_small_ones() {
+        let encode = |w: u32, h: u32| {
+            let img =
+                image::RgbaImage::from_fn(w, h, |x, _| image::Rgba([(x % 256) as u8, 0, 0, 255]));
+            let mut out = Cursor::new(Vec::new());
+            img.write_to(&mut out, ImageFormat::Png).unwrap();
+            out.into_inner()
+        };
+        let big = encode(4096, 2048);
+        let small = shrink_image(&big, 1024).unwrap();
+        let back = image::load_from_memory(&small).unwrap();
+        assert_eq!((back.width(), back.height()), (1024, 512));
+        assert_eq!(shrink_image(&big, 1024), Some(small), "cached");
+        assert_eq!(shrink_image(&encode(800, 600), 1024), None, "already small");
+        assert_eq!(shrink_image(b"not an image", 1024), None);
+        let mut jpg = Cursor::new(Vec::new());
+        image::RgbImage::new(2000, 10)
+            .write_to(&mut jpg, ImageFormat::Jpeg)
+            .unwrap();
+        let shrunk = shrink_image(&jpg.into_inner(), 1024).unwrap();
+        assert!(
+            shrunk.starts_with(b"\x89PNG"),
+            "JPEG decodes and comes back as PNG"
+        );
+    }
 
     #[test]
     fn image_types_by_extension() {
