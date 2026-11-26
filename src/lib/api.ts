@@ -962,6 +962,41 @@ export interface LfsPlan {
   fetchedToRead: number;
 }
 
+/** One side of a comparison (R12): a branch, tag, stash, commit id, or the working copy. */
+export type ComparePoint = { kind: "rev"; rev: string } | { kind: "worktree" };
+/** "brings": B against where A and B split; "snapshot": the two snapshots. */
+export type CompareMode = "brings" | "snapshot";
+
+export interface CompareCommit {
+  id: string;
+  shortId: string;
+  subject: string;
+  author: string;
+  time: number;
+}
+
+export interface CommitList {
+  /** All commits only on this side, merges left out. */
+  count: number;
+  /** The newest 500. */
+  commits: CompareCommit[];
+}
+
+export interface Comparison {
+  /** A's commit (HEAD's for the working copy). */
+  a: string;
+  b: string;
+  /** Where A and B split; null when they share no history. */
+  base: string | null;
+  /** The mode used: snapshot when "brings" can't apply. */
+  mode: CompareMode;
+  /** The commit the "before" versions come from. */
+  from: string;
+  onlyA: CommitList;
+  onlyB: CommitList;
+  files: FileChange[];
+}
+
 /** How a file both sides changed will merge (R11). */
 export type Risk = "wontMerge" | "mayConflict" | "merges";
 
@@ -1365,6 +1400,13 @@ export interface Commands {
   lfs_partial_plan: { args: { id: number; state: PartialState | null }; result: LfsPlan };
   lfs_partial_apply: { args: { id: number; state: PartialState | null }; result: LfsPlan };
   lfs_partial_download: { args: { id: number; paths: string[] }; result: LfsPlan };
+  compare: { args: { id: number; a: ComparePoint; b: ComparePoint; mode: CompareMode }; result: Comparison };
+  compare_file_diff: {
+    args: { id: number; from: ComparePoint; to: ComparePoint; path: string; ignoreWhitespace?: boolean };
+    result: FileDiff;
+  };
+  compare_unity_diff: { args: { id: number; from: ComparePoint; to: ComparePoint; path: string }; result: UnityYamlDiff };
+  take_version: { args: { id: number; rev: string; path: string }; result: Opened };
   overlap: { args: { id: number }; result: Overlap | null };
   notify: { args: { title: string; body: string }; result: null };
   lfs_fetch_object: { args: { id: number; oid: string; size: number; path?: string | null }; result: boolean };
@@ -1743,6 +1785,15 @@ export const lfsPartialPlan = (id: number, state: PartialState | null) => call("
 export const lfsPartialApply = (id: number, state: PartialState | null) => call("lfs_partial_apply", { id, state });
 /** Downloads files or folders and keeps them in the partial repo's list. */
 export const lfsPartialDownload = (id: number, paths: string[]) => call("lfs_partial_download", { id, paths });
+/** Compares two points (R12 compare view). */
+export const compare = (id: number, a: ComparePoint, b: ComparePoint, mode: CompareMode) =>
+  call("compare", { id, a, b, mode });
+export const compareFileDiff = (id: number, from: ComparePoint, to: ComparePoint, path: string, ignoreWhitespace?: boolean) =>
+  call("compare_file_diff", { id, from, to, path, ignoreWhitespace });
+export const compareUnityDiff = (id: number, from: ComparePoint, to: ComparePoint, path: string) =>
+  call("compare_unity_diff", { id, from, to, path });
+/** Takes `path` as it is at `rev` into the working copy, staged; undoable. */
+export const takeVersion = (id: number, rev: string, path: string) => call("take_version", { id, rev, path });
 /** Files changed both in your work and on the upstream as last fetched; null: nothing to compare with. */
 export const overlap = (id: number) => call("overlap", { id });
 /** A Windows notification. */

@@ -3,6 +3,30 @@
 Verdicts from the lab rounds (`docs/lab/index.html`), newest first. Each entry: date, Max's words in
 quotes, what came with it, and what isn't applied yet. Feeds the decision log in `docs/spec.md`.
 
+## R12 · Compare any two (2026-11-26)
+
+Brief (Max, 2026-11-26): "Compare any two", picked from the gap list against Fork, Sourcetree,
+GitKraken and Tower. Round: `docs/lab/compare.html`, built on pairs measured in the VEX repos
+(35 to 73,162 files; escape1's Dev_Sam: 23 files as snapshots, 0 as "what it brings").
+
+- **Decided (2026-11-26):** **B, a compare view of its own.** Max: "B Compare view". Two pickers
+  (branch, tag, commit, working copy, stash), the mode, Swap; commits only on each side, files by
+  folder with a kind summary, the existing viewers. A's Ctrl+click and "Compare with current" open it
+  (Claude's pick, came with B).
+- **Rejected for now:** A as the whole feature (kept as a way in), C (pin a base), D (branch card).
+- **Decided (2026-11-26, Max: "Go" on Claude's picks):** two branches open in "What B brings"
+  (question 2); "Take B's version of this file", undoable, is in, cherry-pick from the view later
+  (question 3); the merge prediction shows when B is a branch (question 4).
+- **Claude's picks while building (2026-11-26):** a tag's "Compare with current" puts the tag on the A
+  side (so B shows what changed since that build); a branch's puts the current branch on A. A commit
+  row offers "Compare with <current>" (the commit as A) and "Compare with working copy". Ctrl+K opens
+  the current branch against its upstream (else the working copy). The picker finds branches, tags,
+  stashes and the working copy by name, and takes a typed hash; searching commits by subject isn't in.
+- **Built (2026-11-26):** core compare + file / Unity diffs + take version, the view, the pickers, the
+  four ways in.
+- **Not built:** commit search by subject in the picker; clicking a listed commit; cherry-pick from the
+  view (question 3: later); an empty state for 0 files in snapshot mode beyond "0 files".
+
 ## R11 · Overlap radar (2026-11-26)
 
 Brief (Max, 2026-11-26): "1 Overlap radar", picked from an analysis of the VEX repos (14 people on

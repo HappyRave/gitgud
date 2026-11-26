@@ -8,6 +8,7 @@ use gitgud_core::blame::{BlameLine, FileCommit};
 use gitgud_core::branches::Branches;
 use gitgud_core::caches::{CacheStats, RepoCache};
 use gitgud_core::clone::{CloneProgress, clone_repo as core_clone_repo};
+use gitgud_core::compare::{Comparison, Mode as CompareMode, Point};
 use gitgud_core::config::{self, IdentityConfig, ToolDiagnostics};
 use gitgud_core::diff::{CommitDetail, FileDiff};
 use gitgud_core::git::{self, GitInfo};
@@ -1765,6 +1766,50 @@ async fn lfs_partial_plan(
 }
 
 #[tauri::command]
+async fn compare(
+    session: State<'_, Session>,
+    id: u32,
+    a: Point,
+    b: Point,
+    mode: CompareMode,
+) -> Result<Comparison, Error> {
+    session.compare(id, &a, &b, mode)
+}
+
+#[tauri::command]
+async fn compare_file_diff(
+    session: State<'_, Session>,
+    id: u32,
+    from: Point,
+    to: Point,
+    path: String,
+    ignore_whitespace: Option<bool>,
+) -> Result<FileDiff, Error> {
+    session.compare_file_diff(id, &from, &to, &path, ignore_whitespace.unwrap_or(false))
+}
+
+#[tauri::command]
+async fn compare_unity_diff(
+    session: State<'_, Session>,
+    id: u32,
+    from: Point,
+    to: Point,
+    path: String,
+) -> Result<UnityYamlDiff, Error> {
+    session.compare_unity_diff(id, &from, &to, &path)
+}
+
+#[tauri::command]
+async fn take_version(
+    session: State<'_, Session>,
+    id: u32,
+    rev: String,
+    path: String,
+) -> Result<Opened, Error> {
+    session.take_version(id, &rev, &path)
+}
+
+#[tauri::command]
 async fn overlap(session: State<'_, Session>, id: u32) -> Result<Option<Overlap>, Error> {
     session.overlap(id)
 }
@@ -2097,6 +2142,10 @@ fn app_with_library<R: Runtime>(builder: Builder<R>, library: Option<LibraryStor
             lfs_partial_plan,
             overlap,
             notify,
+            compare,
+            compare_file_diff,
+            compare_unity_diff,
+            take_version,
             lfs_partial_apply,
             lfs_partial_download,
             lfs_fetch_object,
@@ -3810,6 +3859,59 @@ mod tests {
                 .unwrap()
                 .len(),
             0
+        );
+    }
+
+    #[test]
+    fn compares_two_branches_and_takes_a_file_through_ipc() {
+        let ipc = Ipc::new();
+        let repo = TestRepo::init();
+        repo.write("a.txt", "a\n").commit_all("base");
+        repo.git(&["checkout", "-q", "-b", "Feature"]);
+        repo.write("a.txt", "feature\n").commit_all("feature: a");
+        repo.git(&["checkout", "-q", "main"]);
+        let id = open(&ipc, &repo)["id"].clone();
+        let main = json!({ "kind": "rev", "rev": "main" });
+        let feature = json!({ "kind": "rev", "rev": "Feature" });
+
+        let c = ipc
+            .call(
+                "compare",
+                json!({ "id": id, "a": main, "b": feature, "mode": "brings" }),
+            )
+            .unwrap();
+        assert_eq!(c["mode"], "brings");
+        assert_eq!(
+            c["files"],
+            json!([{ "path": "a.txt", "change": "modified" }])
+        );
+        assert_eq!(c["onlyB"]["count"], 1);
+        assert_eq!(c["onlyB"]["commits"][0]["subject"], "feature: a");
+
+        let d = ipc
+            .call(
+                "compare_file_diff",
+                json!({ "id": id, "from": main, "to": feature, "path": "a.txt" }),
+            )
+            .unwrap();
+        assert_eq!(d["hunks"][0]["lines"][1]["text"], "feature");
+
+        let wc = ipc
+            .call(
+                "compare",
+                json!({ "id": id, "a": feature, "b": { "kind": "worktree" }, "mode": "snapshot" }),
+            )
+            .unwrap();
+        assert_eq!(wc["files"][0]["path"], "a.txt");
+
+        ipc.call(
+            "take_version",
+            json!({ "id": id, "rev": "Feature", "path": "a.txt" }),
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(repo.path().join("a.txt")).unwrap(),
+            "feature\n"
         );
     }
 

@@ -247,7 +247,10 @@ pub(crate) fn file_diff_in_repo(
     }
 }
 
-fn find_commit<'r>(repo: &'r gix::Repository, id: &str) -> Result<gix::Commit<'r>, Error> {
+pub(crate) fn find_commit<'r>(
+    repo: &'r gix::Repository,
+    id: &str,
+) -> Result<gix::Commit<'r>, Error> {
     let oid = ObjectId::from_hex(id.as_bytes())
         .map_err(|_| Error::Read(format!("{id:?} is not a commit id")))?;
     repo.find_commit(oid).map_err(read_err)
@@ -261,7 +264,7 @@ fn person(sig: &gix::actor::SignatureRef<'_>) -> Result<Person, Error> {
     })
 }
 
-fn file_change(change: &ChangeDetached) -> Option<FileChange> {
+pub(crate) fn file_change(change: &ChangeDetached) -> Option<FileChange> {
     let (location, kind) = match change {
         ChangeDetached::Addition {
             location,

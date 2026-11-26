@@ -10,7 +10,9 @@ use serde::Serialize;
 use crate::ai::{self, AiProviderStatus};
 use crate::blame::{BlameLine, FileCommit};
 use crate::cli::GitCli;
+use crate::compare::{self, Comparison, Mode as CompareMode, Point};
 use crate::config;
+use crate::diff::FileDiff;
 use crate::git;
 use crate::graph::{Graph, Row};
 use crate::history::{Action, HistoryPlan, PlanPrediction, Step};
@@ -1385,6 +1387,62 @@ impl Session {
         } else {
             Ok(false)
         }
+    }
+
+    /// Compares two points of repo `id` (R12-B compare view).
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`], [`Error::Refused`] for a side that isn't a commit, or git errors.
+    pub fn compare(
+        &self,
+        id: u32,
+        a: &Point,
+        b: &Point,
+        mode: CompareMode,
+    ) -> Result<Comparison, Error> {
+        let open = self.get(id)?;
+        compare::compare(&*self.git()?, &open.repo, a, b, mode)
+    }
+
+    /// The text diff of `path` between two points of repo `id`.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`], or [`Error::Read`] when neither side has `path`.
+    pub fn compare_file_diff(
+        &self,
+        id: u32,
+        from: &Point,
+        to: &Point,
+        path: &str,
+        ignore_whitespace: bool,
+    ) -> Result<FileDiff, Error> {
+        compare::file_diff(&self.get(id)?.repo, from, to, path, ignore_whitespace)
+    }
+
+    /// The structural Unity YAML diff of `path` between two points of repo `id`.
+    ///
+    /// # Errors
+    /// [`Error::Refused`] for a file that isn't text Unity YAML.
+    pub fn compare_unity_diff(
+        &self,
+        id: u32,
+        from: &Point,
+        to: &Point,
+        path: &str,
+    ) -> Result<UnityYamlDiff, Error> {
+        compare::unity_diff(&self.get(id)?.repo, from, to, path)
+    }
+
+    /// Takes `path` as it is at `rev` into the working copy, staged; undoable.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`], or git's error.
+    pub fn take_version(&self, id: u32, rev: &str, path: &str) -> Result<Opened, Error> {
+        let short: String = rev.chars().take(40).collect();
+        let action = format!("Take {path} from {short}");
+        self.write_destructive(id, &action, &[path.to_owned()], |repo, git| {
+            compare::take_version(git, repo, rev, path)
+        })
     }
 
     /// Files changed both in repo `id`'s work and on its upstream (R11-B overlap radar),

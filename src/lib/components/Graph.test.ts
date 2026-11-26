@@ -124,6 +124,23 @@ describe("Graph", () => {
     expect(selectedSubjects()).toHaveLength(1);
   });
 
+  it("Ctrl+click on a second row compares the selected row with it", async () => {
+    serve(3);
+    const oncompare = vi.fn();
+    render(Graph, { repoId: 1, rowCount: 3, oncompare });
+
+    const first = (await screen.findByText("commit 0")).closest("li")!;
+    const second = screen.getByText("commit 2").closest("li")!;
+    await fireEvent.click(second, { ctrlKey: true });
+    expect(oncompare, "nothing selected yet: a plain select").not.toHaveBeenCalled();
+    await fireEvent.click(first);
+    await fireEvent.click(second, { ctrlKey: true });
+
+    expect(oncompare).toHaveBeenCalledTimes(1);
+    expect(oncompare.mock.calls[0].map((r: Row) => r.subject)).toEqual(["commit 0", "commit 2"]);
+    expect(first).toHaveAttribute("aria-selected", "true");
+  });
+
   it("moves the selection with the arrow keys, within the history", async () => {
     serve(3);
     render(Graph, { repoId: 1, rowCount: 3 });

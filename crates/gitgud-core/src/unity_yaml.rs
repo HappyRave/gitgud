@@ -714,7 +714,21 @@ pub fn commit_unity_diff(repo: &Repo, id: &str, path: &str) -> Result<UnityYamlD
     if !is_unity_yaml_path(path) {
         return Err(Error::Refused(format!("{path} is not a Unity YAML file")));
     }
-    let v = repo.commit_file_versions(id, path)?;
+    unity_diff_of(repo, path, repo.commit_file_versions(id, path)?)
+}
+
+/// The structural diff between two versions of Unity YAML `path` (LFS resolved locally).
+///
+/// # Errors
+/// [`Error::Refused`] if binary / not Unity YAML, [`Error::Read`] on a read failure.
+pub(crate) fn unity_diff_of(
+    repo: &Repo,
+    path: &str,
+    v: crate::worktree::Versions,
+) -> Result<UnityYamlDiff, Error> {
+    if !is_unity_yaml_path(path) {
+        return Err(Error::Refused(format!("{path} is not a Unity YAML file")));
+    }
     let old = resolve_lfs(repo, path, v.old)?;
     let new = resolve_lfs(repo, path, v.new)?;
     let old_bytes = old.as_deref().unwrap_or(&[]);

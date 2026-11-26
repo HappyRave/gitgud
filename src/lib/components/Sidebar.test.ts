@@ -133,6 +133,17 @@ describe("Sidebar", () => {
     expect(onrebase).toHaveBeenCalledWith("feature/stack");
   });
 
+  it("compares a branch with the current one when asked", async () => {
+    mockCommands({ branches: () => DATA, stashes: () => [] });
+    const oncompare = vi.fn();
+    render(Sidebar, { repoId: 4, revision: 0, oncheckout: vi.fn(), onmerge: vi.fn(), onrebase: vi.fn(), onoplog: vi.fn(), oncompare });
+    await screen.findByText("stack");
+
+    await fireEvent.contextMenu(screen.getByRole("button", { name: /stack/ }), { clientX: 30, clientY: 40 });
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Compare with master" }));
+    expect(oncompare).toHaveBeenCalledWith("feature/stack");
+  });
+
   it("offers merge on remote branches, and Esc closes the menu", async () => {
     const { onmerge } = setup();
     const remotes = await screen.findByRole("region", { name: "Remotes" });

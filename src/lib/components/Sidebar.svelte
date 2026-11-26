@@ -32,6 +32,8 @@
     oncheckout,
     onmerge,
     onrebase,
+    oncompare,
+    oncomparetag,
     onworking,
     onoplog,
     oncreatebranch,
@@ -81,6 +83,10 @@
     oncheckout: (branch: string) => void;
     /** "Merge into current" from a branch's context menu. */
     onmerge: (branch: string) => void;
+    /** "Compare with current": the current branch as A, this one as B (R12). */
+    oncompare?: (branch: string) => void;
+    /** "Compare with current" on a tag: the tag as A, the current branch as B, so B shows what changed since. */
+    oncomparetag?: (tag: string) => void;
     onworking?: () => void;
     onoplog: () => void;
     oncreatebranch?: (at?: string) => void;
@@ -141,6 +147,9 @@
         run: () => onrebase(branch.name),
       },
     ];
+    if (oncompare && current && !branch.current) {
+      items.push({ label: `Compare with ${current}`, run: () => oncompare(branch.name) });
+    }
     if (oncreatebranch) {
       items.push({ label: `New branch from ${branch.name}…`, disabled: busy || merging, run: () => oncreatebranch(branch.name) });
     }
@@ -182,6 +191,9 @@
       disabled: busy || merging || !current,
       run: () => onrebase(branch),
     });
+    if (oncompare && current) {
+      items.push({ label: `Compare with ${current}`, run: () => oncompare(branch) });
+    }
     if (ondeletebranch) {
       const short = branch.slice(remoteName.length + 1);
       items.push({ label: `Delete ${branch}…`, disabled: busy, run: () => ondeletebranch(short, remoteName) });
@@ -211,6 +223,9 @@
     const items: MenuItem[] = [];
     if (onselecttag) {
       items.push({ label: `Jump to ${tag.shortTarget}`, run: () => onselecttag(tag.target) });
+    }
+    if (oncomparetag) {
+      items.push({ label: `Compare ${tag.name} with ${current ?? "HEAD"}`, run: () => oncomparetag(tag.name) });
     }
     if (onpushtag) {
       for (const remote of data?.remotes ?? []) {

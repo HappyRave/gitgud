@@ -1013,6 +1013,67 @@ export function installMock(scenario: string) {
       mockLib = { ...mockLib, repos: mockLib.repos.filter((r) => !removeIds.includes(r.id)), undoAction: "Rescan" };
       return mockLib;
     },
+    compare: ({ a, b, mode }) => {
+      const merged = b.kind === "rev" && b.rev === "hotfix/buoyancy" && mode === "brings";
+      const files = merged
+        ? []
+        : [
+            { path: "Assets/Prefabs/ReplayCameras.prefab", change: "modified" as const },
+            { path: "Assets/Scripts/Camera/ClearShot.cs", change: "added" as const },
+            { path: "Assets/Scripts/Boat/Engine.cs", change: "modified" as const },
+            { path: "Assets/Scripts/Boat/Buoyancy.cs", change: "deleted" as const },
+            { path: "Assets/Art/Trees/Maps/TreeBillBoards_albedo.png", change: "modified" as const },
+            { path: "Assets/scenes/_levels/level_Island.unity", change: "modified" as const },
+            ...(mode === "snapshot" ? [{ path: "ProjectSettings/TagManager.asset", change: "modified" as const }] : []),
+          ];
+      const commit = (i: number, subject: string, author: string) => ({
+        id: `${i}`.padStart(40, "c"),
+        shortId: `${i}`.padStart(7, "c"),
+        subject,
+        author,
+        time: now - i * 3600,
+      });
+      return {
+        a: "a".repeat(40),
+        b: "b".repeat(40),
+        base: "c".repeat(40),
+        mode: a.kind === "worktree" ? "snapshot" : mode,
+        from: mode === "brings" ? "c".repeat(40) : "a".repeat(40),
+        onlyA: { count: 1, commits: [commit(9, "Tune foam shader falloff", "Lea")] },
+        onlyB: merged
+          ? { count: 0, commits: [] }
+          : {
+              count: 3,
+              commits: [
+                commit(1, "Raise ClearShot camera rig", "Max"),
+                commit(2, "Move blimp camera right", "Lea"),
+                commit(3, "WIP engine thrust tweak", "Max"),
+              ],
+            },
+        files,
+      };
+    },
+    compare_file_diff: ({ path }) => ({
+      path,
+      binary: false,
+      hunks: [
+        {
+          oldStart: 10,
+          oldLines: 2,
+          newStart: 10,
+          newLines: 2,
+          lines: [
+            { kind: "context", old: 10, new: 10, text: "    public float thrust = 4f;" },
+            { kind: "removed", old: 11, new: null, text: "    public float drag = 0.2f;" },
+            { kind: "added", old: null, new: 11, text: "    public float drag = 0.35f;" },
+          ],
+        },
+      ],
+    }),
+    compare_unity_diff: () => {
+      throw "not in the mock";
+    },
+    take_version: () => opened(),
     overlap: () => ({
       against: ["origin/main"],
       files: [

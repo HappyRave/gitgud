@@ -3189,6 +3189,48 @@ describe("Unity, LFS locks, Smart Merge verify, and open-editor guard", () => {
   });
 });
 
+describe("compare view (R12-B)", () => {
+  it("opens from a commit's menu, takes B's version of a file, and closes back to the history", async () => {
+    const calls = app({
+      launch_path: () => "C:/work/repo",
+      tags: () => [],
+      compare: () => ({
+        a: "a".repeat(40),
+        b: "b".repeat(40),
+        base: "a".repeat(40),
+        mode: "brings",
+        from: "a".repeat(40),
+        onlyA: { count: 0, commits: [] },
+        onlyB: { count: 1, commits: [{ id: "b".repeat(40), shortId: "bbbbbbb", subject: "later work", author: "JG", time: 1_700_000_100 }] },
+        files: [{ path: "a.txt", change: "modified" }],
+      }),
+      compare_file_diff: () => ({ path: "a.txt", binary: false, hunks: [] }),
+      predict_merge: () => [],
+      take_version: () => ({ id: 1, root: "C:/work/repo", rows: 1, graphVersion: 0 }),
+    });
+    render(Page);
+    await fireEvent.contextMenu(await screen.findByText("first commit"), { clientX: 5, clientY: 5 });
+    await fireEvent.click(screen.getByRole("menuitem", { name: /Compare with main/ }));
+
+    const view = await screen.findByRole("region", { name: "Compare" });
+    expect(await within(view).findByText("later work")).toBeInTheDocument();
+    expect(calls.find((c) => c.cmd === "compare")?.args).toEqual({
+      id: 1,
+      a: { kind: "rev", rev: "a".repeat(40) },
+      b: { kind: "rev", rev: "main" },
+      mode: "brings",
+    });
+    expect(screen.queryByRole("listbox", { name: "Commits" })).not.toBeInTheDocument();
+
+    await fireEvent.click(await within(view).findByRole("button", { name: "Take B's version" }));
+    await vi.waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Took a.txt from main · Ctrl+Z undoes it"));
+    expect(calls.find((c) => c.cmd === "take_version")?.args).toEqual({ id: 1, rev: "main", path: "a.txt" });
+
+    await fireEvent.keyDown(window, { key: "Escape" });
+    expect(await screen.findByRole("listbox", { name: "Commits" })).toBeInTheDocument();
+  });
+});
+
 describe("overlap radar (R11-B)", () => {
   const SCENE: OverlapFile = {
     path: "a.txt",

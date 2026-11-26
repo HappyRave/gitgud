@@ -6,6 +6,7 @@ pub mod branches;
 pub mod caches;
 pub mod cli;
 pub mod clone;
+pub mod compare;
 pub mod config;
 pub mod diff;
 mod disk_cache;

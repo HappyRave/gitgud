@@ -18,6 +18,7 @@
     rows: fetchRows = (start, count) => graphRows(repoId, start, count),
     onedit,
     onmenu,
+    oncompare,
     renaming = null,
     onrename,
     rowsVersion = 0,
@@ -43,6 +44,8 @@
     onedit?: (row: Row, edit: "reword" | "fixup" | "drop" | "plan") => void;
     /** Right-click on a commit row. */
     onmenu?: (row: Row, x: number, y: number) => void;
+    /** Ctrl+click on a second row: compare the selected row (A) with it (B) (R12). */
+    oncompare?: (a: Row, b: Row) => void;
     /** Row whose subject is being renamed inline (R on the tip). */
     renaming?: number | null;
     /** The new subject on Enter, `null` on Esc. */
@@ -171,9 +174,19 @@
 
   function onClick(event: MouseEvent) {
     const li = (event.target as HTMLElement).closest<HTMLElement>("li[data-index]");
-    if (li) {
-      select(Number(li.dataset.index));
+    if (!li) {
+      return;
     }
+    const index = Number(li.dataset.index);
+    if ((event.ctrlKey || event.metaKey) && oncompare && selected !== null && selected !== index) {
+      const a = store.get(selected);
+      const b = store.get(index);
+      if (a && b) {
+        oncompare(a, b);
+        return;
+      }
+    }
+    select(index);
   }
 
   /** A selected row that wasn't loaded yet: reported once its chunk arrives. */

@@ -134,10 +134,14 @@
     overlap as readOverlap,
     notify,
     graphFind,
+    takeVersion,
+    type ComparePoint,
     type Overlap,
     type OverlapFile,
   } from "$lib/api";
   import OverlapHeadsUp from "$lib/components/OverlapHeadsUp.svelte";
+  import CompareView from "$lib/components/CompareView.svelte";
+  import { rev as compareRev, WORKING_COPY } from "$lib/compare/tree";
   import { advice, freshHeadsUps, headline, headsUpKey, stripLabel } from "$lib/overlap/radar";
   import BranchDialog from "$lib/components/BranchDialog.svelte";
   import type { PaletteRepoActions } from "$lib/components/CommandPalette.svelte";
@@ -268,6 +272,24 @@
   let radarRepo: number | null = null;
   /** "Commit, then pull": the next commit pulls. */
   let pullAfterCommit = $state(false);
+
+  /** The open compare view (R12-B); `key` remounts it for a new pair. */
+  let comparing = $state<{ a: ComparePoint; b: ComparePoint; key: number } | null>(null);
+  let compareKey = 0;
+
+  function openCompare(a: ComparePoint, b: ComparePoint) {
+    rowMenu = null;
+    comparing = { a, b, key: ++compareKey };
+  }
+
+  const rowPoint = (row: Row): ComparePoint => (row.wip ? WORKING_COPY : compareRev(row.id));
+
+  function takeFromCompare(rev: string, path: string) {
+    write((id) => takeVersion(id, rev, path), `Took ${path} from ${rev} · Ctrl+Z undoes it`, `Taking ${path} from ${rev}…`);
+  }
+
+  /** The checked-out branch, else HEAD: the other side of every "Compare with current". */
+  const currentPoint = (): ComparePoint => compareRev(currentBranch?.name ?? "HEAD");
 
   /** The merge in progress; while set, the conflict view replaces graph and inspector. */
   let merging = $state<MergeState | null>(null);
@@ -874,6 +896,8 @@
           }),
         onoptimizegraph: optimizeCommitGraph,
         onlfsdownloads: () => (lfsAsk = true),
+        oncompare: () =>
+          openCompare(currentPoint(), currentBranch?.upstream ? compareRev(currentBranch.upstream) : WORKING_COPY),
       },
     };
   }
@@ -1287,6 +1311,12 @@
       disabled: busy || status?.head.kind !== "branch",
       run: () => (resetAsk = { id: row.id, shortId: row.shortId, subject: row.subject }),
     },
+    {
+      label: `Compare with ${currentBranch?.name ?? "HEAD"}`,
+      hint: "Ctrl+click",
+      run: () => openCompare(compareRev(row.id), currentPoint()),
+    },
+    { label: "Compare with working copy", run: () => openCompare(compareRev(row.id), WORKING_COPY) },
     { label: "Copy hash", hint: "Ctrl+C", run: () => copyHash(row) },
   ];
 
@@ -1895,7 +1925,7 @@
     <div
       class="body"
       bind:this={bodyEl}
-      class:merging={!!conflicted}
+      class:merging={!!conflicted || !!comparing}
       style:--side-w={prefs.panes.sidebarWidth != null ? `${prefs.panes.sidebarWidth}px` : undefined}
       style:--insp-w={prefs.panes.inspectorWidth != null ? `${prefs.panes.inspectorWidth}px` : undefined}
     >
@@ -1929,6 +1959,8 @@
           oncheckout={guardedCheckout}
           onmerge={(branch) => (mergeAsk = { rev: branch, label: branch })}
           onrebase={(branch) => (rebaseAsk = branch)}
+          oncompare={(branch) => openCompare(currentPoint(), compareRev(branch))}
+          oncomparetag={(tag) => openCompare(compareRev(tag), currentPoint())}
           oncreatebranch={(at) => (branchAsk = { mode: "create", at: at ?? null, atLabel: at ?? null })}
           onrenamebranch={(branch) => (branchAsk = { mode: "rename", currentName: branch })}
           ondeletebranch={onDeleteBranch}
@@ -2040,6 +2072,21 @@
           children={inspector === "oplog" ? () => opLog(repoId, () => (inspector = "working")) : undefined}
           whenResolved={merging ? undefined : continueOp}
         />
+      {:else if comparing}
+        {#key comparing.key}
+          <CompareView
+            repoId={opened.id}
+            a={comparing.a}
+            b={comparing.b}
+            currentBranch={currentBranch?.name ?? null}
+            {busy}
+            ontake={takeFromCompare}
+            onclose={() => {
+              comparing = null;
+              tick().then(() => graph?.focus());
+            }}
+          />
+        {/key}
       {:else}
         <section class="pane center" aria-label="History" data-pane="graph">
           <div class="ph">
@@ -2112,6 +2159,7 @@
               fadedIds={staleOriginIds}
               onedit={planning ? undefined : editRow}
               onmenu={planning ? undefined : (row, x, y) => (rowMenu = { row, x, y })}
+              oncompare={planning ? undefined : (ra, rb) => openCompare(rowPoint(ra), rowPoint(rb))}
               renaming={renaming?.index ?? null}
               onrename={renameTip}
             />
@@ -2231,7 +2279,7 @@
           {/if}
         </aside>
       {/if}
-      {#if headsUp.length && !conflicted}
+      {#if headsUp.length && !conflicted && !comparing}
         <OverlapHeadsUp
           files={headsUp}
           busy={busy || !!fetching}

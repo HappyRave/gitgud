@@ -1,0 +1,401 @@
+<title>R12 Compare any two</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+:root {
+  --bg: #f4f5f8; --panel: #ffffff; --line: #dde1e8; --fg: #18202c; --muted: #5a6577;
+  --accent: #e0561f; --pick: #efe6ff; --pick-ink: #5b2fa6; --open: #fff1d6; --open-ink: #8a5a00;
+  --dec-bg: #ddf3e6; --dec-ink: #1d6b3f; --fact-bg: #e3edf9; --fact-ink: #1f4f86;
+  --a-bg: #14181f; --a-panel: #1a1f28; --a-line: #2a313c; --a-fg: #dde2ea; --a-muted: #8b95a5; --a-hover: #20262f;
+  --a-sel: #22324b; --a-warn: #3a2b12; --a-warn-ink: #f2c46a; --a-bad: #3d1f1a; --a-bad-ink: #ff9d80;
+  --a-add: #173326; --a-add-ink: #7fd9a6; --a-blue: #56b4e9; --a-mod: #e8b84a;
+  --side-a: #56b4e9; --side-b: #e8a15a;
+  --body: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --mono: "Cascadia Mono", Consolas, "Courier New", monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #10141b; --panel: #171d26; --line: #29313d; --fg: #e4e8ef; --muted: #96a0b0;
+  --accent: #ff7a45; --pick: #2c2141; --pick-ink: #cdb4ff; --open: #3a2d12; --open-ink: #f5c86a;
+  --dec-bg: #173326; --dec-ink: #7fd9a6; --fact-bg: #1a2b40; --fact-ink: #9cc6f2; color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #10141b; --panel: #171d26; --line: #29313d; --fg: #e4e8ef; --muted: #96a0b0;
+  --accent: #ff7a45; --pick: #2c2141; --pick-ink: #cdb4ff; --open: #3a2d12; --open-ink: #f5c86a;
+  --dec-bg: #173326; --dec-ink: #7fd9a6; --fact-bg: #1a2b40; --fact-ink: #9cc6f2; color-scheme: dark; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.55 var(--body); }
+.wrap { max-width: 1240px; margin: 0 auto; padding-block: 28px 72px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+h1, h2 { text-wrap: balance; }
+h1 { font-size: 34px; line-height: 1.1; margin: 4px 0 10px; }
+h2 { font-size: 22px; margin: 0; } h3 { font-size: 15px; margin: 0; } h4 { margin: 0 0 4px; font-size: 13px; }
+p { margin: 0; max-width: 84ch; }
+code { font: 13px var(--mono); }
+.eyebrow { font: 600 11.5px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.tag { display: inline-block; font: 600 11px var(--mono); padding: 2px 7px; border-radius: 4px; white-space: nowrap; vertical-align: 1px; }
+.t-pick { background: var(--pick); color: var(--pick-ink); }
+.t-prop { background: var(--open); color: var(--open-ink); }
+.t-dec { background: var(--dec-bg); color: var(--dec-ink); }
+.t-fact { background: var(--fact-bg); color: var(--fact-ink); }
+.brief { display: grid; gap: 6px; font-size: 14px; padding: 12px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; margin: 14px 0; }
+.sec { padding-top: 40px; display: grid; gap: 14px; }
+.sec > * { min-width: 0; }
+.sec > .fh { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; border-bottom: 2px solid var(--line); padding-bottom: 8px; }
+.lab { font: 700 14px var(--mono); color: var(--accent); }
+.idea { color: var(--muted); font-size: 14px; }
+.cols { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; font-size: 14px; }
+.cols ul, ul.notes { margin: 0; padding-left: 20px; display: grid; gap: 3px; font-size: 14px; }
+.pickline { font-size: 14px; padding: 10px 12px; border-left: 3px solid var(--pick-ink); background: var(--panel); border-radius: 0 6px 6px 0; }
+ol.q { margin: 0; padding-left: 22px; display: grid; gap: 10px; font-size: 14.5px; }
+table.data { display: block; overflow-x: auto; max-width: 100%; border-collapse: collapse; font-size: 13.5px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+table.data th, table.data td { padding: 5px 12px; text-align: right; border-bottom: 1px solid var(--line); white-space: nowrap; }
+table.data th:first-child, table.data td:first-child { text-align: left; }
+table.data th { font-size: 12px; color: var(--muted); font-weight: 600; }
+.states { display: grid; gap: 22px; }
+.state { display: grid; gap: 8px; }
+.state > p { font-size: 14px; color: var(--muted); }
+@media (max-width: 720px) { .cols { grid-template-columns: 1fr; } h1 { font-size: 28px; } }
+
+/* ---------- the app, dark, at real size ---------- */
+.app { background: var(--a-bg); color: var(--a-fg); border: 1px solid var(--a-line); border-radius: 8px; overflow-x: auto; overflow-y: hidden; font: 12.5px/1.4 var(--body); }
+.app > * { min-width: 860px; }
+.app .m { font-family: var(--mono); font-size: 11.5px; }
+.app button { all: unset; box-sizing: border-box; cursor: pointer; font: 12px var(--body); padding: 3px 9px; border-radius: 4px;
+  border: 1px solid var(--a-line); background: var(--a-panel); color: var(--a-fg); white-space: nowrap; }
+.app button.pri { background: #2f6fd6; border-color: #2f6fd6; color: #fff; font-weight: 600; }
+.app button.sm { padding: 1px 7px; font-size: 11.5px; }
+.app .k { font: 600 9.5px var(--mono); border: 1px solid var(--a-line); border-radius: 3px; padding: 0 3px; color: var(--a-muted); margin-left: 3px; }
+.ph { display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-bottom: 1px solid var(--a-line); background: var(--a-panel); flex-wrap: wrap; }
+.ph .name { font-weight: 600; } .ph .ct { color: var(--a-muted); } .ph .r { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+.mu { color: var(--a-muted); } .bad { color: var(--a-bad-ink); } .ok { color: var(--a-add-ink); } .warn { color: var(--a-warn-ink); }
+.chip { display: inline-flex; align-items: center; gap: 4px; font: 600 10px var(--mono); padding: 1px 6px; border-radius: 9px; white-space: nowrap; background: var(--a-hover); color: var(--a-muted); }
+.ab { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 4px; font: 800 10px var(--mono); color: #10141b; flex: none; }
+.ab.a { background: var(--side-a); } .ab.b { background: var(--side-b); }
+.ref { font: 600 10px var(--mono); padding: 0 5px; border-radius: 3px; background: #23324a; color: #9cc6f2; margin-right: 5px; }
+.ref.o { background: #2b2440; color: #cdb4ff; } .ref.t { background: #3a2d12; color: #f5c86a; }
+.note { margin: 8px 12px; padding: 7px 10px; border-radius: 5px; font-size: 12px; display: grid; gap: 4px; }
+.note.w { background: var(--a-warn); color: var(--a-warn-ink); } .note.w b { color: var(--a-fg); }
+.note.i { background: var(--a-hover); color: var(--a-muted); } .note.i b { color: var(--a-fg); }
+.sub { font: 600 10px var(--mono); color: var(--a-muted); text-transform: uppercase; letter-spacing: .05em; padding: 8px 12px 3px; display: flex; gap: 8px; align-items: center; }
+.sub .r { margin-left: auto; text-transform: none; letter-spacing: 0; }
+.seg { display: inline-flex; border: 1px solid var(--a-line); border-radius: 4px; overflow: hidden; }
+.seg span { padding: 1px 8px; font-size: 11.5px; color: var(--a-muted); white-space: nowrap; } .seg span.on { background: var(--a-sel); color: var(--a-fg); }
+/* graph */
+.shell { display: grid; grid-template-columns: minmax(0, 1fr) 470px; min-height: 280px; }
+.shell > .side { border-left: 1px solid var(--a-line); }
+.g { padding: 4px 0; }
+.gr { display: grid; grid-template-columns: 22px 46px minmax(0, 1fr) 40px 56px; gap: 8px; align-items: center; padding: 2px 12px; white-space: nowrap; }
+.gr .s { overflow: hidden; text-overflow: ellipsis; }
+.gr .d { font: 11px var(--mono); color: var(--a-muted); text-align: right; }
+.gr.sa { background: color-mix(in srgb, var(--side-a) 18%, transparent); }
+.gr.sb { background: color-mix(in srgb, var(--side-b) 18%, transparent); }
+.gr.between .s { color: var(--a-fg); }
+.gr.out { opacity: .45; }
+.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-left: 6px; }
+.gr.wip .s { color: var(--a-muted); font-style: italic; }
+.pin { color: var(--side-b); font-size: 11px; }
+/* files */
+.f { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 2px 12px; }
+.f .p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.f .st { font: 700 11px var(--mono); text-align: center; }
+.st.M { color: var(--a-mod); } .st.A { color: var(--a-add-ink); } .st.D { color: var(--a-bad-ink); }
+.f.sel { background: var(--a-sel); }
+.f .tail { font: 11px var(--mono); color: var(--a-muted); }
+.kinds { display: flex; gap: 6px; flex-wrap: wrap; padding: 6px 12px; border-bottom: 1px solid var(--a-line); }
+.preview { margin: 8px 12px 12px; border: 1px solid var(--a-line); border-radius: 6px; height: 120px; display: grid; grid-template-columns: 1fr 1fr; overflow: hidden; }
+.preview > div { display: grid; place-items: center; color: var(--a-muted); font-size: 11.5px; background: repeating-linear-gradient(45deg, #1b2029 0 8px, #181c24 8px 16px); }
+.preview > div + div { border-left: 1px solid var(--a-line); }
+/* compare view */
+.cmpbar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--a-line); background: var(--a-panel); flex-wrap: wrap; }
+.picker { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border: 1px solid var(--a-line); border-radius: 5px; background: var(--a-bg); min-width: 210px; }
+.picker .caret { margin-left: auto; color: var(--a-muted); }
+.cmpbody { display: grid; grid-template-columns: 290px minmax(0, 1fr) minmax(0, 1.1fr); min-height: 300px; }
+.cmpbody > div + div { border-left: 1px solid var(--a-line); }
+.cm { display: grid; grid-template-columns: 16px minmax(0, 1fr) 30px; gap: 6px; align-items: center; padding: 2px 12px; white-space: nowrap; }
+.cm .s { overflow: hidden; text-overflow: ellipsis; }
+.cm .who { font: 10px var(--mono); color: var(--a-muted); text-align: right; }
+.diffbox { padding: 6px 0; font: 11.5px/1.5 var(--mono); }
+.diffbox .l { padding: 0 12px; white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+.diffbox .l.add { background: var(--a-add); color: var(--a-add-ink); } .diffbox .l.del { background: var(--a-bad); color: var(--a-bad-ink); }
+.diffbox .l.h { color: var(--a-muted); }
+/* card */
+.card { margin: 12px; padding: 12px 14px; border: 1px solid var(--a-line); border-radius: 6px; background: var(--a-panel); display: grid; gap: 8px; max-width: 560px; box-shadow: 0 10px 30px #0008; }
+.card .acts { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.card .hint { color: var(--a-muted); font-size: 11.5px; }
+.card .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.card .stat { background: var(--a-bg); border: 1px solid var(--a-line); border-radius: 5px; padding: 6px 8px; }
+.card .stat b { font-size: 15px; }
+.menu { width: 250px; background: var(--a-panel); border: 1px solid var(--a-line); border-radius: 6px; padding: 4px 0; box-shadow: 0 8px 24px #0009; }
+.menu div { padding: 3px 12px; } .menu .on { background: var(--a-sel); } .menu hr { border: 0; border-top: 1px solid var(--a-line); margin: 4px 0; }
+.sbar { display: grid; grid-template-columns: 210px minmax(0, 1fr); }
+.sbar .sb { border-right: 1px solid var(--a-line); padding: 6px 0; }
+.sbar .br { padding: 2px 12px; display: flex; gap: 6px; }
+.sbar .br.on { background: var(--a-sel); }
+</style>
+<div class="wrap">
+  <div class="eyebrow">Round 12 · 2026-11-26 · decided: B, compare view, Claude's picks for 2–4 · built 2026-11-26</div>
+  <h1>R12 · Compare any two</h1>
+  <div class="brief">
+    <div><b>Brief</b> (Max, 2026-11-26): "Compare any two", picked from the gap list against Fork, Sourcetree, GitKraken and Tower.
+      Today a commit row diffs against its first parent, and the working copy against HEAD; nothing else can be compared.</div>
+    <div class="idea">The pairs and numbers below were measured on 2026-11-26 in your D:\VEX clones (read only). Commit subjects and
+      file lists inside the mocks are <span class="tag t-prop">placeholder</span>s in the shape of those repos.</div>
+  </div>
+
+  <section class="sec" id="facts">
+    <div class="fh"><h2>What the numbers say</h2><span class="tag t-fact">measured 2026-11-26</span></div>
+    <table class="data">
+      <tr><th>Pair</th><th>Commits only on each side</th><th>Files differing (snapshots)</th><th>Files the right side brings (since they split)</th><th>Mostly</th></tr>
+      <tr><td>hyperdash · Prod ↔ PartyGame</td><td>0 · 2,132</td><td>73,162</td><td>73,162</td><td>15,126 .asset · 12,026 .wav · 2,015 .prefab · 1,328 .cs</td></tr>
+      <tr><td>hyperdash · PartyGame ↔ NewPartyGameSelection</td><td>0 · 45</td><td>136</td><td>136</td><td>55 .cs · 11 .unity · 9 .shader</td></tr>
+      <tr><td>playfield · main ↔ DevMax</td><td>4 · 10</td><td>2,880</td><td>2,873</td><td>1,051 .wav · 151 .prefab · 74 .cs</td></tr>
+      <tr><td>playfield · main ↔ DynamicAddPlayer</td><td>4 · 6</td><td>39</td><td>35</td><td>17 .cs · 6 .prefab</td></tr>
+      <tr><td>escape1 · main ↔ Dev_Sam</td><td>9 · 0</td><td>23</td><td><b>0</b></td><td>Dev_Sam is fully merged</td></tr>
+    </table>
+    <ul class="notes">
+      <li><b>There are two different questions</b>, and they give different answers. "How do these two snapshots differ?"
+        (<code>git diff A B</code>) and "what does B bring that A doesn't have?" (<code>git diff A...B</code>, from where they split).
+        escape1's Dev_Sam shows 23 changed files the first way; every one of them is a change <i>main</i> made after Dev_Sam was merged,
+        and none is Dev_Sam's. Shown without a word of explanation, the first answer reads as "Dev_Sam reverts 23 files".</li>
+      <li><b>The sizes run from 35 files to 73,162.</b> The big end (Prod is a year-old release branch) needs a file list
+        grouped by folder and kind, not a flat list, and a summary before any detail.</li>
+      <li><b>Every file viewer already takes two versions</b> (text, image, 3D, Unity YAML, audio, data tables…). Compare only has to
+        hand them two commits instead of a commit and its parent: the viewers come for free.</li>
+    </ul>
+  </section>
+
+  <section class="sec" id="shared">
+    <div class="fh"><h2>What every variant shares</h2><span class="tag t-prop">proposal</span></div>
+    <ul class="notes">
+      <li><b>Any two of:</b> a commit, a branch (local or remote), a tag, the working copy, a stash. <span class="ab a">A</span> is the
+        older or "from" side, <span class="ab b">B</span> the "to" side; <b>Swap</b> flips them.</li>
+      <li><b>Two modes</b>, named in words: <span class="chip">What B brings</span> (from where they split, the default for branches) and
+        <span class="chip">Snapshot difference</span> (the default for two commits on one line, where both agree).</li>
+      <li><b>Files open in the existing viewers</b> with A on the left and B on the right: diff, image compare, 3D side by side / swipe,
+        Unity YAML structure.</li>
+      <li><b>Commits only on each side</b> are listed, so "what's in it" reads as commits, not only as files.</li>
+    </ul>
+  </section>
+
+  <!-- ===================== A ===================== -->
+  <section class="sec" id="a">
+    <div class="fh"><span class="lab">A</span><h2>Ctrl+click a second row</h2><span class="tag t-prop">proposal</span></div>
+    <p class="idea">The Fork way. Select a row, Ctrl+click another: the inspector turns into the comparison of the two. The rows get
+      A / B tags and the commits between them are lit. Works on any two rows the graph shows, the working copy row included.
+      Esc goes back to the normal commit view.</p>
+    <div class="app">
+      <div>
+        <div class="shell">
+          <div class="g">
+            <div class="gr wip"><span></span><span><span class="dot" style="background:#8b95a5"></span></span><span class="s">Working copy · 3 changed</span><span></span><span class="d"></span></div>
+            <div class="gr sb"><span class="ab b">B</span><span><span class="dot" style="background:#e8a15a"></span></span><span class="s"><span class="ref o">origin/DynamicAddPlayer</span>EL - Add players mid-session from the lobby</span><span class="mu m">EL</span><span class="d">2 h</span></div>
+            <div class="gr between"><span></span><span><span class="dot" style="background:#e8a15a"></span></span><span class="s">EL - Seat allocator handles late join</span><span class="mu m">EL</span><span class="d">5 h</span></div>
+            <div class="gr between"><span></span><span><span class="dot" style="background:#e8a15a"></span></span><span class="s">MM - LobbyStates: add Joining state</span><span class="mu m">MM</span><span class="d">1 d</span></div>
+            <div class="gr out"><span></span><span><span class="dot" style="background:#2f6fd6"></span></span><span class="s">JG - Crab: bomb timing</span><span class="mu m">JG</span><span class="d">1 d</span></div>
+            <div class="gr sa"><span class="ab a">A</span><span><span class="dot" style="background:#2f6fd6"></span></span><span class="s"><span class="ref">main</span>MD - Lobby countdown before the first game</span><span class="mu m">MD</span><span class="d">2 d</span></div>
+            <div class="gr out"><span></span><span><span class="dot" style="background:#2f6fd6"></span></span><span class="s">JP - Session activation binding</span><span class="mu m">JP</span><span class="d">3 d</span></div>
+          </div>
+          <div class="side">
+            <div class="ph"><span class="ab a">A</span><span class="m">main</span><span class="mu">→</span><span class="ab b">B</span><span class="m">DynamicAddPlayer</span><span class="r"><button class="sm">Swap</button><button class="sm">Esc</button></span></div>
+            <div class="sub"><span class="seg"><span class="on">What B brings</span><span>Snapshot difference</span></span><span class="r">6 commits · 35 files</span></div>
+            <div class="f"><span class="st M">M</span><span class="p m">Assets/VEX_GAMES/Lobby/Prefabs New/LobbyStates.prefab</span><span class="tail">YAML</span></div>
+            <div class="f sel"><span class="st M">M</span><span class="p m">Assets/VEX_COMMON/LOCAL/SystemManager.prefab</span><span class="tail">3D</span></div>
+            <div class="f"><span class="st A">A</span><span class="p m">Assets/VEX_GAMES/Lobby/SeatAllocator.cs</span><span class="tail">+184</span></div>
+            <div class="f"><span class="st M">M</span><span class="p m">Assets/VEX_GAMES/Lobby/LobbyManager.cs</span><span class="tail">+41 −12</span></div>
+            <div class="f"><span class="st"></span><span class="p m mu">+ 31 more</span><span></span></div>
+            <div class="preview"><div><span class="ab a">A</span>&nbsp;SystemManager.prefab · main</div><div><span class="ab b">B</span>&nbsp;DynamicAddPlayer</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="cols">
+      <div><h4>Good at</h4><ul><li>No new screen: the gesture every Fork / Sourcetree user already tries.</li><li>Fast for nearby rows and for "working copy vs some old commit".</li></ul></div>
+      <div><h4>Costs</h4><ul><li>Both ends must be on screen: Prod is 2,132 commits down. Needs a "Compare with…" picker anyway.</li><li>The inspector is narrow for 73,162 files and has no room for the two commit lists.</li><li>Ctrl+click is already multi-select's key in the working copy; in the graph it's free today.</li></ul></div>
+    </div>
+  </section>
+
+  <!-- ===================== B ===================== -->
+  <section class="sec" id="b">
+    <div class="fh"><span class="lab">B</span><h2>Compare view</h2><span class="tag t-dec">decided 2026-11-26 · "B Compare view"</span></div>
+    <p class="idea">A view of its own that takes over graph and inspector while open, the way the conflict view does. Two pickers
+      on top (branches, tags, commits by hash or subject, working copy), the mode, Swap. Three columns: the commits only on each side,
+      the files grouped by folder with a kind summary, the viewer. Opened from Ctrl+K "Compare…", a branch or tag's right-click
+      "Compare with current", a row's "Compare with…", or A's Ctrl+click, which lands here with both filled in.</p>
+    <div class="app">
+      <div>
+        <div class="cmpbar">
+          <span class="ab a">A</span><span class="picker"><span class="ref">origin/Prod</span><span class="mu m">c41e09a</span><span class="caret">▾</span></span>
+          <button class="sm" title="Swap">⇄</button>
+          <span class="ab b">B</span><span class="picker"><span class="ref o">origin/PartyGame</span><span class="mu m">8d2f3b1</span><span class="caret">▾</span></span>
+          <span class="seg" style="margin-left:6px"><span class="on">What B brings</span><span>Snapshot difference</span></span>
+          <span style="margin-left:auto" class="mu">hyperdash</span><button class="sm">Close <span class="k">Esc</span></button>
+        </div>
+        <div class="cmpbody">
+          <div>
+            <div class="sub">Only in B · 2,132</div>
+            <div class="cm"><span class="ab b" style="width:12px;height:12px;font-size:8px">B</span><span class="s">JG - Kaiju: dance AR celebration</span><span class="who">JG</span></div>
+            <div class="cm"><span class="ab b" style="width:12px;height:12px;font-size:8px">B</span><span class="s">MM - PartyGame catalog: 1min30 rotation</span><span class="who">MM</span></div>
+            <div class="cm"><span class="ab b" style="width:12px;height:12px;font-size:8px">B</span><span class="s">MD - Score submitter basic auth</span><span class="who">MD</span></div>
+            <div class="cm"><span class="ab b" style="width:12px;height:12px;font-size:8px">B</span><span class="s">JB - Bubble missing ref</span><span class="who">JB</span></div>
+            <div class="cm"><span></span><span class="s mu">+ 2,128 more · by person ▾</span><span></span></div>
+            <div class="sub">Only in A · 0</div>
+            <div class="cm"><span></span><span class="s mu">Nothing: Prod has no commits PartyGame lacks.</span><span></span></div>
+          </div>
+          <div>
+            <div class="sub">73,162 files <span class="r"><span class="seg"><span class="on">Folders</span><span>Flat</span></span></span></div>
+            <div class="kinds"><span class="chip">15,126 .asset</span><span class="chip">12,026 .wav</span><span class="chip">2,015 .prefab</span><span class="chip">1,457 .png</span><span class="chip">1,328 .cs</span><span class="chip">+ 31 kinds</span></div>
+            <div class="f"><span class="mu">▾</span><span class="p m">Assets/VEX_GAMES/PartyGame</span><span class="tail">41,880</span></div>
+            <div class="f"><span class="mu">▸</span><span class="p m">&nbsp;&nbsp;Memory/Feedbacks</span><span class="tail">12,904</span></div>
+            <div class="f"><span class="mu">▸</span><span class="p m">&nbsp;&nbsp;Kaiju</span><span class="tail">8,311</span></div>
+            <div class="f"><span class="mu">▸</span><span class="p m">Assets/VEX_GAMES/BitSmash</span><span class="tail">17,045</span></div>
+            <div class="f"><span class="mu">▸</span><span class="p m">Assets/VEX_COMMON</span><span class="tail">9,630</span></div>
+            <div class="f sel"><span class="st M">M</span><span class="p m">Assets/Scenes/Hyper Dash 5 - Party Game - Kaiju.unity</span><span class="tail">3D</span></div>
+            <div class="f"><span class="mu">▸</span><span class="p m">ProjectSettings</span><span class="tail">18</span></div>
+          </div>
+          <div>
+            <div class="sub">Hyper Dash 5 - Party Game - Kaiju.unity <span class="r"><span class="seg"><span class="on">Visual</span><span>Structure</span><span>Source</span></span></span></div>
+            <div class="preview" style="height:200px"><div><span class="ab a">A</span>&nbsp;Prod</div><div><span class="ab b">B</span>&nbsp;PartyGame</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="idea" style="font-size:12.5px">Counts are measured; the per-folder split and commit subjects are <span class="tag t-prop">placeholder</span>s.</p>
+    <div class="cols">
+      <div><h4>Good at</h4><ul><li>Room for the big case: 73,162 files as folders with counts, 2,132 commits as a list, the viewer full size.</li><li>Any two refs, near or far, typed or picked; the gesture (A) and the menus all land here.</li><li>The two commit lists answer "what's in it?" before anyone opens a file.</li></ul></div>
+      <div><h4>Costs</h4><ul><li>A screen of its own to build (pickers, folder tree, two commit lists).</li><li>Hides the graph while open (Esc returns).</li></ul></div>
+    </div>
+    <div class="pickline"><b>Claude's pick: B.</b> Your real pairs are branch to branch, and the ones that matter most are the far and big
+      ones (a release branch, a long feature branch) that neither fit in the inspector nor sit on screen together. B takes A's
+      Ctrl+click as one of its doors, so near rows stay a click away.</div>
+  </section>
+
+  <!-- ===================== C ===================== -->
+  <section class="sec" id="c">
+    <div class="fh"><span class="lab">C</span><h2>Pin a base</h2><span class="tag t-prop">proposal</span></div>
+    <p class="idea">Pin any row (P on a row, or right-click "Pin as base"). From then on, every row you select is shown against the
+      pin instead of its parent, so ↑↓ walks the history and the inspector shows everything since the pin, growing step by step. Unpin
+      with P again. A browsing tool more than a comparing one.</p>
+    <div class="app">
+      <div>
+        <div class="shell">
+          <div class="g">
+            <div class="gr between sb"><span class="ab b">B</span><span><span class="dot" style="background:#2f6fd6"></span></span><span class="s"><span class="ref">main</span>JB - Crab update end flee</span><span class="mu m">JB</span><span class="d">1 h</span></div>
+            <div class="gr between"><span></span><span><span class="dot" style="background:#2f6fd6"></span></span><span class="s">EL - Integrity manager + COM port coins</span><span class="mu m">EL</span><span class="d">4 h</span></div>
+            <div class="gr between"><span></span><span><span class="dot" style="background:#2f6fd6"></span></span><span class="s">MM - Ready set smash audio</span><span class="mu m">MM</span><span class="d">1 d</span></div>
+            <div class="gr sa"><span class="ab a">A</span><span><span class="dot" style="background:#2f6fd6"></span></span><span class="s"><span class="ref t">IAAPA_STABLE_BUILD</span>MD - Stable build for the show <span class="pin">📌 pinned</span></span><span class="mu m">MD</span><span class="d">9 d</span></div>
+            <div class="gr out"><span></span><span><span class="dot" style="background:#2f6fd6"></span></span><span class="s">JP - Licence manager</span><span class="mu m">JP</span><span class="d">10 d</span></div>
+          </div>
+          <div class="side">
+            <div class="ph"><span class="name">Since the pin</span><span class="ct">· IAAPA_STABLE_BUILD → JB's commit · 3 commits</span><span class="r"><button class="sm">Unpin <span class="k">P</span></button></span></div>
+            <div class="f"><span class="st M">M</span><span class="p m">Assets/Scenes/Playfield 5 - Party Game - Crab.unity</span><span class="tail">3D</span></div>
+            <div class="f"><span class="st A">A</span><span class="p m">Assets/VEX_COMMON/SCRIPTS/IntegrityManager.cs</span><span class="tail">+212</span></div>
+            <div class="f"><span class="st M">M</span><span class="p m">Assets/VEX_GAMES/PartyGame/Crab/scripts/SmackEntity.cs</span><span class="tail">+9 −3</span></div>
+            <div class="f"><span class="st"></span><span class="p m mu">+ 14 more</span><span></span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="cols">
+      <div><h4>Good at</h4><ul><li>"What changed since the build we shipped?" with one key, then walk forward.</li><li>Keeps the graph and inspector exactly as they are.</li></ul></div>
+      <div><h4>Costs</h4><ul><li>Only along one line of history; two branches that split need the "what B brings" mode, which a pin can't express.</li><li>A mode you can forget is on: every commit then shows a big diff that isn't its own.</li></ul></div>
+    </div>
+  </section>
+
+  <!-- ===================== D ===================== -->
+  <section class="sec" id="d">
+    <div class="fh"><span class="lab">D</span><h2>Branch card before merging</h2><span class="tag t-prop">proposal</span></div>
+    <p class="idea">Narrow and practical: compare is about branches about to meet. Hovering a branch in the sidebar (or its right-click
+      "Compare with current") opens a card: commits each way, files by kind, and the merge prediction gitgud already runs
+      (which files would conflict). "Open the diff" shows the files; "Merge…" starts the merge dialog.</p>
+    <div class="app">
+      <div class="sbar">
+        <div class="sb">
+          <div class="sub">Branches</div>
+          <div class="br"><span class="ref">main</span><span class="mu m">current</span></div>
+          <div class="br on"><span class="ref o">origin/DevMax</span></div>
+          <div class="br"><span class="ref o">origin/DynamicAddPlayer</span></div>
+          <div class="br"><span class="ref o">origin/PartyGames</span></div>
+        </div>
+        <div>
+          <div class="card">
+            <div><b>origin/DevMax</b> <span class="mu">vs your</span> <b>main</b></div>
+            <div class="row2">
+              <div class="stat"><b>10</b> commits <span class="mu">DevMax brings</span></div>
+              <div class="stat"><b>4</b> commits <span class="mu">main has, DevMax lacks</span></div>
+            </div>
+            <div class="mu">2,873 files: 1,051 .wav · 151 .prefab · 74 .cs · 71 .mat · 21 .fbx</div>
+            <div class="warn"><b>Merging would conflict in 2 files:</b> Playfield 1 - Lobby.unity (LFS: merge by property), SystemStaticSettings.cs</div>
+            <div class="acts"><button class="pri">Open the diff</button><button>Merge into main…</button><button class="sm">Close</button></div>
+            <div class="hint">The 2 conflicting files are a placeholder; the prediction is the existing merge one.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="cols">
+      <div><h4>Good at</h4><ul><li>Answers the question you have before a merge, conflict prediction included, in one glance.</li><li>Small to build: counts, kinds and the prediction exist.</li></ul></div>
+      <div><h4>Costs</h4><ul><li>Branches only: two commits, a tag against the working copy, an old build against today need another way.</li><li>"Open the diff" still needs a place to open: A's inspector or B's view.</li></ul></div>
+    </div>
+  </section>
+
+  <!-- ===================== states ===================== -->
+  <section class="sec" id="states">
+    <div class="fh"><h2>States</h2><span class="tag t-prop">proposal</span><span class="idea">drawn for B.</span></div>
+    <div class="states">
+      <div class="state">
+        <h3>Already merged</h3>
+        <p>escape1, A = main, B = Dev_Sam. Nothing to bring; the snapshot difference is main's own later work, said in words.</p>
+        <div class="app"><div>
+          <div class="cmpbar"><span class="ab a">A</span><span class="picker"><span class="ref">main</span><span class="caret">▾</span></span><button class="sm">⇄</button><span class="ab b">B</span><span class="picker"><span class="ref o">origin/Dev_Sam</span><span class="caret">▾</span></span><span class="seg" style="margin-left:6px"><span class="on">What B brings</span><span>Snapshot difference</span></span></div>
+          <div class="note i"><b>Dev_Sam brings nothing: it's fully merged into main.</b> The snapshots still differ in 23 files, all changed by main's 9 commits since. <button class="sm" style="justify-self:start">Show the snapshot difference</button></div>
+        </div></div>
+      </div>
+      <div class="state">
+        <h3>Picking a side</h3>
+        <p>The picker takes branches, tags, the working copy, stashes, and commits by hash prefix or subject (the history's Ctrl+F search).
+          The tag is hyperdash's real <span class="m">kaiju-voxel-v1</span>; the branch and commit are placeholders.</p>
+        <div class="app"><div style="padding:10px 12px; display:flex; gap:12px; align-items:flex-start">
+          <span class="picker"><span class="ab b">B</span><span class="m">kaiju</span><span class="caret">▾</span></span>
+          <div class="menu">
+            <div class="sub" style="padding:4px 12px">Tags</div>
+            <div class="on"><span class="ref t">kaiju-voxel-v1</span></div>
+            <div class="sub" style="padding:4px 12px">Branches</div>
+            <div><span class="ref o">origin/Kaiju-Dance</span></div>
+            <div class="sub" style="padding:4px 12px">Commits</div>
+            <div class="m">3f1a2c9 JG - Kaiju: dance AR celebration</div>
+            <hr><div class="mu">Working copy · Stash@{0}</div>
+          </div>
+        </div></div>
+      </div>
+      <div class="state">
+        <h3>Working copy against a tag</h3>
+        <p>"Is my working copy still what we shipped?" A = <span class="m">IAAPA_STABLE_BUILD</span>, B = working copy. Snapshot mode only (the working copy has no history of its own). The 17 files are a placeholder.</p>
+        <div class="app"><div>
+          <div class="cmpbar"><span class="ab a">A</span><span class="picker"><span class="ref t">IAAPA_STABLE_BUILD</span><span class="caret">▾</span></span><button class="sm">⇄</button><span class="ab b">B</span><span class="picker"><span class="m">Working copy</span><span class="caret">▾</span></span><span class="seg" style="margin-left:6px"><span>What B brings</span><span class="on">Snapshot difference</span></span><span class="mu">· 17 files · uncommitted changes included</span></div>
+        </div></div>
+      </div>
+      <div class="state">
+        <h3>No shared history</h3>
+        <p>Two refs that never split from a common commit (an imported repo, a rewritten branch): only the snapshot difference exists.</p>
+        <div class="app"><div><div class="note w"><b>These two have no commit in common.</b> Showing the snapshot difference; "What B brings" needs a shared starting point.</div></div></div>
+      </div>
+      <div class="state">
+        <h3>Still counting</h3>
+        <p>73,162 files and 2,132 commits on hyperdash: the summary first, the folder tree filling in.</p>
+        <div class="app"><div><div class="sub">Comparing… <span class="r mu">2,132 commits · 41,000 of ~73,000 files listed</span></div><div class="note i"><b>Open any folder now</b>; its files appear as they're listed.</div></div></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec" id="questions">
+    <div class="fh"><h2>Open questions</h2><span class="tag t-prop">open</span></div>
+    <ol class="q">
+      <li><s>A, B, C or D?</s> <span class="tag t-dec">decided 2026-11-26</span> B (Max: "B Compare view"), with A's Ctrl+click and
+        "Compare with current" as ways in.</li>
+      <li><b>Default mode for two branches:</b> "What B brings" (from where they split) or "Snapshot difference"? Claude's pick: what B
+        brings, since it's the question before a merge and the snapshot reading is the misleading one (escape1's 23 files).</li>
+      <li><b>Acting from the comparison:</b> just looking, or also "Take B's version of this file" (checkout that file from B, undoable)
+        and "Cherry-pick these commits"? Claude's pick: take a file, yes (it's how people copy a fix between branches); cherry-pick
+        later.</li>
+      <li><b>D's merge prediction</b> inside B's view too (a "would conflict" line under the pickers)? Claude's pick: yes, when B is a
+        branch; it's already computed for the merge dialog.</li>
+    </ol>
+  </section>
+</div>

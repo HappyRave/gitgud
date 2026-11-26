@@ -37,6 +37,7 @@
     oncreatetag?: () => void;
     onoptimizegraph?: () => void;
     onlfsdownloads?: () => void;
+    oncompare?: () => void;
   }
 
   type BranchOp = "checkout" | "merge" | "rebase" | "delete";
@@ -96,6 +97,9 @@
         { id: "oplog", label: "Toggle operation history (Op log)", group: repo.repoName, hint: "Ctrl+3", run: repo.onoplog },
         ...(repo.onoptimizegraph
           ? [{ id: "optimize-graph", label: "Optimize commit-graph cache", group: repo.repoName, git: "git commit-graph write", run: repo.onoptimizegraph }]
+          : []),
+        ...(repo.oncompare
+          ? [{ id: "compare", label: "Compare two branches, tags or commits…", group: repo.repoName, git: "git diff A...B", run: repo.oncompare }]
           : []),
         ...(repo.onlfsdownloads
           ? [{ id: "lfs-downloads", label: "LFS downloads: choose what to download…", group: repo.repoName, git: "git lfs pull", run: repo.onlfsdownloads }]
