@@ -32,6 +32,18 @@ const stats = (over: Partial<CacheStats> = {}): CacheStats => ({
 });
 
 describe("SettingsModal", () => {
+  it("checks for updates on request and says when gitgud is up to date", async () => {
+    const calls = mockCommands({
+      config_get_identity: () => ({ userName: "Max", userEmail: "max@example.com" }),
+      tool_diagnostics: () => ({ gitPath: "C:/Git/git.exe", gitVersion: "2.56.1", lfsVersion: "git-lfs/3.6.0" }),
+      update_check: () => null,
+    });
+    render(SettingsModal, { onclose: () => {} });
+    await fireEvent.click(screen.getByRole("button", { name: "Check for updates" }));
+    expect(await screen.findByText("gitgud is up to date.")).toBeInTheDocument();
+    expect(calls.find((c) => c.cmd === "update_check")?.args).toEqual({ manual: true });
+  });
+
   it("sets the 3D object limit and texture size, remembered", async () => {
     mockCommands({
       config_get_identity: () => ({ userName: "Max", userEmail: "max@example.com" }),

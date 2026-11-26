@@ -15,6 +15,7 @@ const VIEWER_KEY = "gitgud.viewer";
 const VOLUME_KEY = "gitgud.media.volume";
 const AUTO_3D_KEY = "gitgud.preview.auto3d";
 const TEXTURE_MAX_KEY = "gitgud.preview.textureMax";
+const SKIPPED_UPDATE_KEY = "gitgud.update.skipped";
 
 /** Largest texture side in 3D previews; 0 keeps textures at their native size. */
 export type TextureMax = 0 | 4096 | 2048 | 1024;
@@ -157,7 +158,14 @@ export const prefs = $state({
   auto3dLimit: readAuto3d(),
   /** Textures in 3D previews are shrunk to this many px on their longer side; 0 = native. */
   textureMax: readTextureMax(),
+  /** The release "Skip this version" was pressed for; the startup check stays quiet about it. */
+  skippedUpdate: readStorage(SKIPPED_UPDATE_KEY),
 });
+
+export function setSkippedUpdate(version: string) {
+  prefs.skippedUpdate = version;
+  writeStorage(SKIPPED_UPDATE_KEY, version);
+}
 
 export type ModelShading = "textured" | "changes";
 

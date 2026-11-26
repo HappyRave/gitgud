@@ -40,6 +40,7 @@ use gitgud_core::worktree::{HunkHeader, LineSelect, Side};
 use tauri::{AppHandle, Builder, Emitter, Manager, Runtime, State};
 
 mod images;
+mod updater;
 
 #[derive(Default)]
 struct ActiveClone(Mutex<Option<Cancel>>);
@@ -1778,6 +1779,7 @@ fn app_with_library<R: Runtime>(builder: Builder<R>, library: Option<LibraryStor
         .manage(Session::default())
         .manage(ActiveClone::default())
         .manage(Monitor::default())
+        .manage(updater::PendingUpdate::default())
         .register_asynchronous_uri_scheme_protocol("gitgud", |ctx, request, responder| {
             let app = ctx.app_handle().clone();
             let uri = request.uri().to_string();
@@ -1968,7 +1970,9 @@ fn app_with_library<R: Runtime>(builder: Builder<R>, library: Option<LibraryStor
             refresh_index,
             recent_timings,
             worktrees_list,
-            propose_from_worktree
+            propose_from_worktree,
+            updater::update_check,
+            updater::update_install
         ])
 }
 
@@ -1976,6 +1980,7 @@ fn app_with_library<R: Runtime>(builder: Builder<R>, library: Option<LibraryStor
 pub fn run() {
     app_with_library(Builder::default(), None)
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let library_path = if let Some(custom) = std::env::var_os("GITGUD_LIBRARY") {
                 std::path::PathBuf::from(custom)

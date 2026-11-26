@@ -43,6 +43,7 @@ function app(extra: Handlers = {}) {
     app_stats: () => ({ cpu: 3, appBytes: 120e6, viewBytes: 290e6, gitBytes: 0 }),
     repo_caches: ({ roots }) => roots.map((root) => ({ root, previewBytes: 0, previewModels: 0, previewTextures: 0, unityBytes: 0, metaFiles: 0 })),
     launch_path: () => null,
+    update_check: () => null,
     open_repo: ({ path }: Commands["open_repo"]["args"]) => ({ id: next++, root: path, rows: 1, graphVersion: 0 }),
     repo_status: () => STATUS,
     merge_state: () => null,
@@ -226,6 +227,21 @@ describe("start page: git and app stats", () => {
     render(Page);
 
     expect(await screen.findByRole("alert")).toHaveTextContent("git 2.30.0 is too old; gitgud needs 2.45.2 or newer");
+  });
+});
+
+describe("updates", () => {
+  it("checks at startup and offers a newer release; Skip closes it", async () => {
+    const calls = app({
+      update_check: () => ({ version: "0.2.0", current: "0.1.3", notes: null, portable: false, page: "https://x/v0.2.0" }),
+    });
+    render(Page);
+
+    expect(await screen.findByRole("heading", { name: "gitgud 0.2.0 is out" })).toBeInTheDocument();
+    expect(calls.find((c) => c.cmd === "update_check")?.args).toEqual({ manual: false });
+    await fireEvent.click(screen.getByRole("button", { name: "Skip this version" }));
+    expect(screen.queryByRole("heading", { name: "gitgud 0.2.0 is out" })).toBeNull();
+    expect(prefs.skippedUpdate).toBe("0.2.0");
   });
 });
 

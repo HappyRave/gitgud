@@ -1331,6 +1331,8 @@ export interface Commands {
   clone_repo: { args: { url: string; dest: string; folderPath: string | null; longPaths: boolean }; result: string };
   cancel_clone: { args: Record<string, never>; result: boolean };
   fetch_many: { args: { paths: string[] }; result: RepoSummary[] };
+  update_check: { args: { manual: boolean }; result: UpdateInfo | null };
+  update_install: { args: Record<string, never>; result: null };
   "plugin:window|set_title": { args: { label: string; value: string }; result: null };
   "plugin:dialog|open": {
     args: { options: { directory: boolean; title: string; filters?: { name: string; extensions: string[] }[] } };
@@ -1430,6 +1432,25 @@ export const stashPop = (id: number, index: number) => call("stash_pop", { id, i
 export const stashDrop = (id: number, index: number) => call("stash_drop", { id, index });
 export const prUrl = (id: number, branch: string) => call("pr_url", { id, branch });
 export const openExternalUrl = (url: string) => call("open_external_url", { url });
+
+/** A newer gitgud release; `portable` copies get its release `page` instead of the installer. */
+export interface UpdateInfo {
+  version: string;
+  current: string;
+  notes: string | null;
+  portable: boolean;
+  page: string;
+}
+
+export interface UpdateProgress {
+  downloaded: number;
+  total: number | null;
+}
+
+export const updateCheck = (manual: boolean) => call("update_check", { manual });
+export const updateInstall = () => call("update_install", {});
+export const onUpdateProgress = (handler: (p: UpdateProgress) => void) =>
+  listen<UpdateProgress>("update-progress", (e) => handler(e.payload));
 /** Files merging `branch` would leave conflicted; touches nothing. */
 export const predictMerge = (id: number, branch: string) => call("predict_merge", { id, branch });
 /** Clean merges commit at once; undoable with Ctrl+Z either way. */

@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { version } from "../../../package.json";
+  import { checkForUpdates, updates } from "$lib/updates.svelte";
   import {
     agentSetup,
     aiProviders,
@@ -472,6 +474,14 @@
         <section id="sec-tools" class="sec">
           <h3>Tools &amp; Diagnostics</h3>
           <dl class="diag">
+              <dt>gitgud</dt>
+              <dd class="gcache">
+                <span class="mono">{version}</span>
+                <button type="button" disabled={updates.checking} onclick={() => checkForUpdates(true)}>
+                  {updates.checking ? "Checking…" : "Check for updates"}
+                </button>
+                {#if updates.result}<span class="ab">{updates.result}</span>{/if}
+              </dd>
               <dt>AI CLIs</dt>
               <dd>
                 {#if aiStatus === null}

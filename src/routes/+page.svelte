@@ -28,6 +28,8 @@
   import SettingsModal from "$lib/components/SettingsModal.svelte";
   import ShortcutSheet from "$lib/components/ShortcutSheet.svelte";
   import TabBar, { type RepoTabInfo } from "$lib/components/TabBar.svelte";
+  import UpdateDialog from "$lib/components/UpdateDialog.svelte";
+  import { checkForUpdates, dismissOffer, skipOffer, updates } from "$lib/updates.svelte";
   import {
     isCloseTabKey,
     isCommandPaletteKey,
@@ -312,6 +314,7 @@
 
   onMount(async () => {
     stopFetchMany = await onFetchManyProgress((p) => (fetchingMany = p));
+    void checkForUpdates(false);
     const [launchRes, libRes] = await Promise.allSettled([launchPath(), libraryLoad()]);
     if (libRes.status === "fulfilled") {
       library = libRes.value;
@@ -460,6 +463,10 @@
     activeRepoName={activeCtx?.repoName ?? null}
     onclose={() => (settingsOpen = false)}
   />
+{/if}
+
+{#if updates.offer}
+  <UpdateDialog offer={updates.offer} onskip={skipOffer} onlater={dismissOffer} />
 {/if}
 
 <style>

@@ -898,6 +898,17 @@ export function installMock(scenario: string) {
       return created;
     },
     open_external_url: () => null,
+    update_check: ({ manual }) =>
+      manual
+        ? {
+            version: "9.9.9",
+            current: "0.1.3",
+            notes: "A fake release from the mock backend.",
+            portable: false,
+            page: "https://github.com/HappyRave/gitgud/releases",
+          }
+        : null,
+    update_install: () => new Promise(() => {}),
     library_load: () => mockLib,
     library_summaries: () => mockLib.repos.map((r) => r.cached!).filter(Boolean),
     library_add_repos: ({ entries }) => {
