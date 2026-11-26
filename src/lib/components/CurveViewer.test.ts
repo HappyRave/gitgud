@@ -26,6 +26,7 @@ const clip: ClipCurves = {
   flipbooks: [{ path: "Icon", label: "Sprite", before: [[0, "fuel_0"]], after: [[0, "fuel_0"], [1, "fuel_1"]], state: "changed" }],
   keysBefore: 5,
   keysAfter: 8,
+  beforeError: null,
 };
 
 beforeEach(() => {
@@ -49,6 +50,13 @@ describe("CurveViewer", () => {
     await fireEvent.click(screen.getByRole("checkbox", { name: /Rotation\.x/ }));
     expect(screen.getByLabelText("Curves").querySelectorAll("path.after")).toHaveLength(3);
     expect(screen.getByRole("radio", { name: "3D" })).toBeDisabled();
+  });
+
+  it("says why the earlier version can't load instead of showing the clip as new", async () => {
+    const alone = { ...clip, keysBefore: null, beforeError: "Bob.anim isn't an animation clip" };
+    mockCommands({ clip_curves: () => alone, clip_users: () => [] });
+    render(CurveViewer, { repoId: 1, path: "Anims/Bob.anim", before: HEAD, after: DISK });
+    expect(await screen.findByRole("alert")).toHaveTextContent(`${HEAD.label} can't load: Bob.anim isn't an animation clip`);
   });
 
   it("plays the clip in 3D on a prefab whose Animator uses it", async () => {

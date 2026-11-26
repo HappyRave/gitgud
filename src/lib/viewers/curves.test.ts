@@ -44,7 +44,7 @@ it("groups by object, plots changed tracks first and writes the caption", () => 
   ]);
   expect([...initialSelection(tracks)]).toEqual(["Hull|Position.y", "Flag|Rotation.y"]);
   expect([...initialSelection([track("A", "x")])]).toEqual([trackId({ path: "A", label: "x" })]);
-  const clip: ClipCurves = { name: "Bob", duration: 2, looping: true, sampleRate: 60, tracks, flipbooks: [], keysBefore: 8, keysAfter: 15 };
+  const clip: ClipCurves = { name: "Bob", duration: 2, looping: true, sampleRate: 60, tracks, flipbooks: [], keysBefore: 8, keysAfter: 15, beforeError: null };
   expect(curveCaption(clip, true).map((p) => p.text)).toEqual(["1 track changed", "1 added", "keys 8 → 15"]);
   expect(curveCaption(clip, false).map((p) => p.text)).toEqual(["3 tracks · 15 keys"]);
 });

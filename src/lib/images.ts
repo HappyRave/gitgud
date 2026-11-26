@@ -37,12 +37,17 @@ export function formatSizeDelta(before: number | null | undefined, after: number
  * `bust` changes the URL when the version's content may have changed.
  */
 export function imageUrl(repoId: number, path: string, version: ImageAt, bust = 0, windows = isWindows()): string {
-  const query = new URLSearchParams({ repo: String(repoId), path, at: version.at });
-  if ("commit" in version) {
-    query.set("commit", version.commit);
+  return protocolUrl("image", versionQuery(repoId, path, version, bust), windows);
+}
+
+/** The query naming `path` at a version, for any protocol route that serves a file version. */
+export function versionQuery(repoId: number, path: string, at: ImageAt, bust = 0): URLSearchParams {
+  const q = new URLSearchParams({ repo: String(repoId), path, at: at.at });
+  if ("commit" in at) {
+    q.set("commit", at.commit);
   }
-  query.set("v", String(bust));
-  return protocolUrl("image", query, windows);
+  q.set("v", String(bust));
+  return q;
 }
 
 /** `route?query` on the `gitgud` custom protocol, as this webview reaches it. */

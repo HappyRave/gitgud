@@ -5,7 +5,9 @@
   import type { ModelSide } from "$lib/model/open";
   import { toVersion } from "$lib/model/source";
   import { setViewerChoice, viewerChoice } from "$lib/prefs.svelte";
+  import { FLAT_MODES, type FlatMode, swipeDrag } from "$lib/viewers/compare";
   import { SPRITE_LAYERS, type SpriteLayer, spriteBox, spriteCaption, spriteStates } from "$lib/viewers/sprites";
+  import CompareModes from "./CompareModes.svelte";
   import LoadingBar from "./LoadingBar.svelte";
 
   let {
@@ -23,13 +25,12 @@
     bust?: number;
   } = $props();
 
-  type Mode = "side" | "swipe" | "onion";
   const LABEL: Record<SpriteLayer, string> = { slices: "Slices", pixels: "Pixels", pivots: "Pivots" };
 
   let sheet = $state<SpriteSheet | null>(null);
   let error = $state<string | null>(null);
   let layer = $state<SpriteLayer>(untrack(() => viewerChoice(path, "sprites", SPRITE_LAYERS)));
-  let mode = $state<Mode>("side");
+  let mode = $state<FlatMode>("side");
   let split = $state(0.5);
   let onion = $state(0.5);
   let expanded = $state(false);
@@ -73,21 +74,6 @@
     return (k === "before" && st === "added") || (k === "after" && st === "removed") ? null : (st ?? "same");
   }
 
-  function dragSwipe(e: PointerEvent) {
-    const handle = e.currentTarget as HTMLElement;
-    handle.setPointerCapture(e.pointerId);
-    const move = (ev: PointerEvent) => {
-      const host = handle.parentElement?.parentElement;
-      if (!host) {
-        return;
-      }
-      const r = host.getBoundingClientRect();
-      split = Math.min(0.98, Math.max(0.02, (ev.clientX - r.left) / r.width));
-    };
-    handle.addEventListener("pointermove", move);
-    handle.addEventListener("pointerup", () => handle.removeEventListener("pointermove", move), { once: true });
-  }
-
   const title = $derived(
     !sheet ? "" : sheet.mode === "multiple" ? `Sprite sheet · ${sheet.after.length} slices` : sheet.mode === "single" ? "Sprite" : "Texture",
   );
@@ -96,22 +82,7 @@
 <div class="sprites" class:expanded>
   <div class="bar">
     {#if sheet}<span class="pill">{title}</span>{/if}
-    <div class="seg" role="radiogroup" aria-label="Compare mode">
-      {#each [["side", "Side by side"], ["swipe", "Swipe"], ["onion", "Onion"]] as [m, label] (m)}
-        <button
-          type="button"
-          class="tbtn"
-          class:on={both && mode === m}
-          role="radio"
-          aria-checked={both && mode === m}
-          disabled={!both}
-          onclick={() => (mode = m as Mode)}>{label}</button
-        >
-      {/each}
-    </div>
-    {#if both && mode === "onion"}
-      <label class="onion">{before?.label} <input type="range" min="0" max="1" step="0.05" bind:value={onion} aria-label="Onion opacity" /></label>
-    {/if}
+    <CompareModes bind:mode bind:onion enabled={both} modes={FLAT_MODES} onionLabel={before?.label ?? ""} />
     <button type="button" class="tbtn solo" onclick={() => (expanded = !expanded)} aria-pressed={expanded}
       >{expanded ? "Close" : "Expand"}</button
     >
@@ -182,7 +153,7 @@
         {/each}
         {#if both && mode === "swipe"}
           <div class="swipe" style:left="{split * 100}%">
-            <button type="button" class="handle" aria-label="Drag to swipe" onpointerdown={dragSwipe}>⇔</button>
+            <button type="button" class="handle" aria-label="Drag to swipe" use:swipeDrag={{ set: (v) => (split = v) }}>⇔</button>
           </div>
         {/if}
       </div>
@@ -226,16 +197,6 @@
     border-radius: 999px;
     background: var(--hover);
     color: var(--muted);
-  }
-  .onion {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font: 10.5px var(--mono);
-    color: var(--muted);
-  }
-  .onion input {
-    width: 90px;
   }
   .state {
     margin: 12px 10px;

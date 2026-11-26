@@ -99,6 +99,43 @@ fn lfs_pointers_resolve_to_the_local_object() {
 }
 
 #[test]
+fn an_unchanged_lfs_file_in_the_working_copy_is_stored_as_its_pointer() {
+    let repo = TestRepo::init();
+    let oid = "ef".repeat(32);
+    let pointer = format!("version https://git-lfs.github.com/spec/v1\noid sha256:{oid}\nsize 8\n");
+    let clean = format!("cat >/dev/null; printf '{}'", pointer.replace('\n', "\\n"));
+    repo.git(&["config", "filter.fake.clean", &clean]);
+    repo.write(".gitattributes", "*.png filter=fake\n");
+    put(&repo, "t.png", V1);
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(10);
+    std::fs::File::options()
+        .write(true)
+        .open(repo.path().join("t.png"))
+        .unwrap()
+        .set_modified(old)
+        .unwrap();
+    repo.commit_all("lfs");
+    let r = repo::open(repo.path()).unwrap();
+
+    assert_eq!(
+        r.stored_image("t.png", &Version::Worktree).unwrap(),
+        pointer.as_bytes(),
+        "shares HEAD's key"
+    );
+    assert_eq!(
+        r.stored_image("t.png", &Version::Head).unwrap(),
+        pointer.as_bytes()
+    );
+
+    put(&repo, "t.png", b"\x89PNG\0two");
+    assert_eq!(
+        r.stored_image("t.png", &Version::Worktree).unwrap(),
+        b"\x89PNG\0two",
+        "an edited file is keyed by its content"
+    );
+}
+
+#[test]
 fn large_unhydrated_lfs_pointer_refuses_auto_fetch_and_prompts_fetch() {
     let repo = TestRepo::init();
     let oid = "cd".repeat(32);

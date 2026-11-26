@@ -268,7 +268,33 @@ impl Repo {
         if image_type(path).is_none() {
             return Err(Error::Refused(format!("{path} is not an image")));
         }
+        if *version == Version::Worktree
+            && let Some(pointer) = self.unchanged_lfs_pointer(path)
+        {
+            return Ok(pointer);
+        }
         self.file_at(path, version)
+    }
+
+    /// The index's LFS pointer for `path` when the work-tree file is unchanged since it
+    /// was staged (git's stat check, racy entries excluded), so the working copy's
+    /// texture is kept under the same key as HEAD's.
+    fn unchanged_lfs_pointer(&self, path: &str) -> Option<Vec<u8>> {
+        let repo = self.gix();
+        let index = repo.index_or_empty().ok()?;
+        let entry = index.entry_by_path(BStr::new(path))?;
+        let options = gix::index::entry::stat::Options::default();
+        if entry.stat.is_racy(index.timestamp(), options) {
+            return None;
+        }
+        let meta = gix::index::fs::Metadata::from_path_no_follow(&self.root().join(path)).ok()?;
+        let on_disk = gix::index::entry::Stat::from_fs(&meta).ok()?;
+        if !entry.stat.matches(&on_disk, options) {
+            return None;
+        }
+        let blob = repo.find_blob(entry.id).ok()?;
+        let (_, size) = parse_lfs_pointer(&blob.data)?;
+        (size == meta.len()).then(|| blob.data.clone())
     }
 
     /// The raw bytes of any file `path` at `version` (LFS pointers are not resolved).

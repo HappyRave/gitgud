@@ -6,8 +6,11 @@
   import { changedRuns, matchPages, type PageMatch, pageLabel, pdfCaption } from "$lib/viewers/pdf";
   import type { Box, PdfPageText } from "$lib/viewers/pdfdoc";
   import { fileUrl } from "$lib/viewers/route";
+  import { FLAT_MODES, type FlatMode, swipeDrag } from "$lib/viewers/compare";
+  import CompareModes from "./CompareModes.svelte";
   import LfsBinaryCard from "./LfsBinaryCard.svelte";
   import LoadingBar from "./LoadingBar.svelte";
+  import SideError from "./SideError.svelte";
 
   let {
     repoId,
@@ -27,16 +30,16 @@
     onfetch?: (side: "before" | "after", meta: BinarySide) => Promise<void>;
   } = $props();
 
-  type Mode = "side" | "swipe" | "onion";
   const SIDES = ["before", "after"] as const;
   type Loaded = { doc: PDFDocumentProxy; pages: PdfPageText[] };
 
   let docs = $state.raw<{ before: Loaded | null; after: Loaded } | null>(null);
   let error = $state<string | null>(null);
+  let beforeError = $state<string | null>(null);
   let progress = $state<{ done: number; total: number }>({ done: 0, total: 0 });
   let pages = $state<PageMatch[]>([]);
   let sel = $state(0);
-  let mode = $state<Mode>("side");
+  let mode = $state<FlatMode>("side");
   let split = $state(0.5);
   let onion = $state(0.5);
   let expanded = $state(false);
@@ -79,11 +82,13 @@
         progress = { ...progress, done: done.before + done.after };
       }
     };
+    beforeError = null;
     const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
     Promise.all([
-      before ? load(before, count("before"), token).catch(() => null) : Promise.resolve(null),
+      before ? load(before, count("before"), token).catch((e) => msg(e)) : Promise.resolve(null),
       load(after, count("after"), token).catch((e) => msg(e)),
-    ]).then(([b, a]) => {
+    ]).then(([bOrError, a]) => {
+      const b = typeof bOrError === "string" ? null : bOrError;
       if (token !== seq) {
         void b?.doc.loadingTask.destroy();
         if (a && typeof a !== "string") {
@@ -96,6 +101,7 @@
         error = a;
         return;
       }
+      beforeError = typeof bOrError === "string" ? bOrError : null;
       docs = { before: b, after: a };
       pages = b
         ? matchPages(
@@ -191,21 +197,6 @@
     }
   }
 
-  function dragSwipe(e: PointerEvent) {
-    const handle = e.currentTarget as HTMLElement;
-    handle.setPointerCapture(e.pointerId);
-    const move = (ev: PointerEvent) => {
-      const host = handle.parentElement?.parentElement;
-      if (!host) {
-        return;
-      }
-      const r = host.getBoundingClientRect();
-      split = Math.min(0.98, Math.max(0.02, (ev.clientX - r.left) / r.width));
-    };
-    handle.addEventListener("pointermove", move);
-    handle.addEventListener("pointerup", () => handle.removeEventListener("pointermove", move), { once: true });
-  }
-
   const sideLabel = (k: "before" | "after", p: PageMatch) => {
     const s = k === "before" ? before : after;
     const i = p[k];
@@ -217,22 +208,7 @@
 <div class="pdf" class:expanded role="application" aria-label="PDF preview of {path}" tabindex="0" onkeydown={onkey}>
   <div class="bar">
     {#if docs}<span class="pill">PDF · {docs.after.pages.length} pages</span>{/if}
-    <div class="seg" role="radiogroup" aria-label="Compare mode">
-      {#each [["side", "Side by side"], ["swipe", "Swipe"], ["onion", "Onion"]] as [m, label] (m)}
-        <button
-          type="button"
-          class="tbtn"
-          class:on={both && mode === m}
-          role="radio"
-          aria-checked={both && mode === m}
-          disabled={!both}
-          onclick={() => (mode = m as Mode)}>{label}</button
-        >
-      {/each}
-    </div>
-    {#if both && mode === "onion"}
-      <label class="onion">{before?.label} <input type="range" min="0" max="1" step="0.05" bind:value={onion} aria-label="Onion opacity" /></label>
-    {/if}
+    <CompareModes bind:mode bind:onion enabled={both} modes={FLAT_MODES} onionLabel={before?.label ?? ""} />
     <button type="button" class="tbtn solo" onclick={() => (expanded = !expanded)} aria-pressed={expanded}
       >{expanded ? "Close" : "Expand"}</button
     >
@@ -270,7 +246,9 @@
         {#if current}
           <div class="pages {both ? mode : 'side'}" style:--split={split} style:--onion={onion}>
             {#each SIDES as k (k)}
-              {#if current[k] !== null}
+              {#if k === "before" && beforeError && before}
+                <div class="sheet failed"><SideError label={before.label} error={beforeError} meta={meta?.before} {onfetch} /></div>
+              {:else if current[k] !== null}
                 <div class="sheet {k}">
                   <span class="lbl">{sideLabel(k, current)}</span>
                   <canvas bind:this={canvases[k]} aria-label="{sideLabel(k, current)}"></canvas>
@@ -282,7 +260,7 @@
             {/each}
             {#if both && mode === "swipe"}
               <div class="swipe" style:left="{split * 100}%">
-                <button type="button" class="handle" aria-label="Drag to swipe" onpointerdown={dragSwipe}>⇔</button>
+                <button type="button" class="handle" aria-label="Drag to swipe" use:swipeDrag={{ set: (v) => (split = v) }}>⇔</button>
               </div>
             {/if}
           </div>
@@ -328,16 +306,6 @@
     border-radius: 999px;
     background: var(--hover);
     color: var(--muted);
-  }
-  .onion {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font: 10.5px var(--mono);
-    color: var(--muted);
-  }
-  .onion input {
-    width: 90px;
   }
   .state {
     margin: 12px 10px;
@@ -424,6 +392,11 @@
     position: relative;
     box-shadow: 0 1px 4px rgb(0 0 0 / 0.18);
     background: #fff;
+  }
+  .sheet.failed {
+    align-self: start;
+    max-width: 260px;
+    background: var(--panel);
   }
   canvas {
     display: block;

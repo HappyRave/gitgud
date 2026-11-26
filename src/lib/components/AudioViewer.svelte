@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy, untrack } from "svelte";
   import { type AudioInfo, audioInfo, type BinaryMeta, type BinarySide } from "$lib/api";
-  import { protocolUrl } from "$lib/images";
+  import { protocolUrl, versionQuery } from "$lib/images";
   import type { ModelSide } from "$lib/model/open";
   import { toVersion } from "$lib/model/source";
   import { prefs, setViewerChoice, setVolume, viewerChoice } from "$lib/prefs.svelte";
@@ -9,6 +9,7 @@
   import { fileUrl } from "$lib/viewers/route";
   import LfsBinaryCard from "./LfsBinaryCard.svelte";
   import LoadingBar from "./LoadingBar.svelte";
+  import SideError from "./SideError.svelte";
 
   let {
     repoId,
@@ -35,6 +36,7 @@
   // Raw: waveform peaks per channel, never changed in place.
   let sides = $state.raw<Side[] | null>(null);
   let error = $state<string | null>(null);
+  let beforeError = $state<string | null>(null);
   let ab = $state<"a" | "b">(untrack(() => viewerChoice(path, "ab", AB)));
   let playing = $state(false);
   let time = $state(0);
@@ -47,12 +49,7 @@
     if (!needsWav(path)) {
       return fileUrl(repoId, path, side.at, bust);
     }
-    const q = new URLSearchParams({ repo: String(repoId), path, at: side.at.at });
-    if ("commit" in side.at) {
-      q.set("commit", side.at.commit);
-    }
-    q.set("v", String(bust));
-    return protocolUrl("audio", q);
+    return protocolUrl("audio", versionQuery(repoId, path, side.at, bust));
   }
 
   async function open(key: Key, side: ModelSide): Promise<Side> {
@@ -91,23 +88,26 @@
     });
     sides = null;
     error = null;
+    beforeError = null;
     time = 0;
     const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
+    const opened = (s: Side | string | null): s is Side => !!s && typeof s !== "string";
     Promise.all([
-      before ? open("before", before).catch(() => null) : Promise.resolve(null),
+      before ? open("before", before).catch((e) => msg(e)) : Promise.resolve(null),
       open("after", after).catch((e) => msg(e)),
     ]).then(([b, a]) => {
       if (token !== seq) {
-        release([b, a].filter((s): s is Side => !!s && typeof s !== "string"));
+        release([b, a].filter(opened));
         return;
       }
       if (typeof a === "string") {
-        release(b ? [b] : []);
+        release([b].filter(opened));
         error = a;
         sides = [];
         return;
       }
-      sides = b ? [b, a] : [a];
+      beforeError = typeof b === "string" ? b : null;
+      sides = opened(b) ? [b, a] : [a];
     });
   });
 
@@ -197,7 +197,7 @@
   }
 
   function clickLanes(e: MouseEvent) {
-    if (!lanes || span === 0) {
+    if (!lanes || span === 0 || (e.target as HTMLElement).closest(".failed")) {
       return;
     }
     const r = lanes.getBoundingClientRect();
@@ -269,6 +269,9 @@
   {:else}
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <div class="lanes" bind:this={lanes} onclick={clickLanes} role="presentation">
+      {#if beforeError && before}
+        <div class="version failed"><SideError label={before.label} error={beforeError} meta={meta?.before} {onfetch} /></div>
+      {/if}
       {#each sides as s (s.key)}
         <div class="version" class:heard={!compare || (ab === "a") === (s.key === "before")}>
           <span class="ln">{s.side.label} · {s.info.duration.toFixed(2)} s</span>
@@ -386,6 +389,10 @@
     flex-direction: column;
     min-height: 60px;
     opacity: 0.55;
+  }
+  .version.failed {
+    justify-content: center;
+    opacity: 1;
   }
   .version.heard {
     opacity: 1;

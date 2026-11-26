@@ -60,6 +60,8 @@ pub struct ClipCurves {
     pub flipbooks: Vec<FlipbookTrack>,
     pub keys_before: Option<usize>,
     pub keys_after: usize,
+    /// Why the earlier version couldn't be read; its curves are left out.
+    pub before_error: Option<String>,
 }
 
 /// `(object path, property label)`.
@@ -367,6 +369,7 @@ pub(crate) fn clip_curves(
         keys_after: count(&a),
         tracks,
         flipbooks,
+        before_error: None,
     })
 }
 

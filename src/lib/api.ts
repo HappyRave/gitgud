@@ -964,6 +964,8 @@ export interface ClipCurves {
   flipbooks: FlipbookTrack[];
   keysBefore: number | null;
   keysAfter: number;
+  /** Why the earlier version couldn't be read; its curves are left out. */
+  beforeError: string | null;
 }
 
 /** One sprite of a texture, in Unity pixels (origin bottom-left). */

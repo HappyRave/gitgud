@@ -16,6 +16,7 @@
   import PdfViewer from "./PdfViewer.svelte";
   import ModelViewer from "./ModelViewer.svelte";
   import PreviewCard from "./PreviewCard.svelte";
+  import SideError from "./SideError.svelte";
   import SpriteViewer from "./SpriteViewer.svelte";
   import VideoViewer from "./VideoViewer.svelte";
 
@@ -129,7 +130,7 @@
     </p>
   {/if}
   {#if probeError}
-    <p role="alert" class="note">{probeError}</p>
+    <SideError label={after.label} error={probeError} which="after" meta={metaTarget(path) ? null : meta?.after} {onfetch} />
   {:else if probes && !info}
     <p class="loading"><LoadingBar label="Reading the file…" /></p>
   {:else if binary}

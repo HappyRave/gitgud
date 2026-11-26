@@ -54,6 +54,15 @@
   let diffCanvas = $state<HTMLCanvasElement | null>(null);
   let diffStats = $state<{ changedPct: string; maxDelta: number; sizeDiff: string | null } | null>(null);
   let diffError = $state<string | null>(null);
+  /** Both images' pixels for the diff heatmap; plain, so reading them tracks nothing. */
+  let pixels: {
+    b: HTMLImageElement;
+    a: HTMLImageElement;
+    w: number;
+    h: number;
+    before: Uint8ClampedArray;
+    after: Uint8ClampedArray;
+  } | null = null;
   let stopDrag: (() => void) | null = null;
 
   function endDrag() {
@@ -68,6 +77,7 @@
     void after.url;
     loaded = {};
     loadedImgs = {};
+    pixels = null;
     diffStats = null;
     diffError = null;
     fetching = { before: false, after: false };
@@ -246,27 +256,37 @@
     const gain = diffGain;
 
     try {
-      const ca = document.createElement("canvas");
-      const cb = document.createElement("canvas");
-      ca.width = w;
-      ca.height = h;
-      cb.width = w;
-      cb.height = h;
-      const ctxA = ca.getContext("2d");
-      const ctxB = cb.getContext("2d");
       const outCtx = diffCanvas.getContext("2d");
-      if (!ctxA || !ctxB || !outCtx) {
+      if (!outCtx) {
         diffError = "Pixel diff unavailable in this environment.";
         return;
+      }
+      // Channel and gain only redo the loop below; the pixels are read once per image pair.
+      if (!pixels || pixels.b !== bImg || pixels.a !== aImg || pixels.w !== w || pixels.h !== h) {
+        const read = (img: HTMLImageElement) => {
+          const c = document.createElement("canvas");
+          c.width = w;
+          c.height = h;
+          const ctx = c.getContext("2d");
+          if (!ctx) {
+            return null;
+          }
+          ctx.drawImage(img, 0, 0);
+          return ctx.getImageData(0, 0, w, h).data;
+        };
+        const before = read(bImg);
+        const after = read(aImg);
+        if (!before || !after) {
+          diffError = "Pixel diff unavailable in this environment.";
+          return;
+        }
+        pixels = { b: bImg, a: aImg, w, h, before, after };
       }
 
       diffCanvas.width = w;
       diffCanvas.height = h;
-      ctxA.drawImage(bImg, 0, 0);
-      ctxB.drawImage(aImg, 0, 0);
-
-      const dataA = ctxA.getImageData(0, 0, w, h).data;
-      const dataB = ctxB.getImageData(0, 0, w, h).data;
+      const dataA = pixels.before;
+      const dataB = pixels.after;
       const out = outCtx.createImageData(w, h);
       const px = out.data;
 

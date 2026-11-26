@@ -21,6 +21,20 @@ describe("FilePreview", () => {
     expect(await screen.findByTestId("stub")).toHaveAttribute("data-path", "Meshes/Hull.asset");
   });
 
+  it("offers the LFS fetch when the shown .asset can't be probed", async () => {
+    mockCommands({
+      unity_asset_info: () => {
+        throw new Error("Terrain/Island.asset's LFS object isn't downloaded");
+      },
+    });
+    const onfetch = vi.fn(async () => {});
+    const meta = { before: null, after: { size: 4096, lfs: true, hydrated: false } };
+    render(FilePreview, { repoId: 1, path: "Terrain/Island.asset", before: null, after: DISK, meta, onfetch });
+    expect(await screen.findByRole("alert")).toHaveTextContent("On disk can't load: Terrain/Island.asset's LFS object isn't downloaded");
+    await fireEvent.click(screen.getByRole("button", { name: /Fetch LFS object/ }));
+    expect(onfetch).toHaveBeenCalledWith("after", meta.after);
+  });
+
   it("opens a ScriptableObject .asset as a data grid", async () => {
     mockCommands({
       unity_asset_info: () => ({ binary: false, classId: 114, size: 900, objects: 0 }),

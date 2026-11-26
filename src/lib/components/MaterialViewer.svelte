@@ -7,6 +7,7 @@
   import { previewTexture, setShaderBase, setViewerChoice, shaderBase, viewerChoice } from "$lib/prefs.svelte";
   import { diffMaterial, type MaterialShape, materialPill, SHAPE_LABEL, SHAPES } from "$lib/viewers/material";
   import LoadingBar from "./LoadingBar.svelte";
+  import SideError from "./SideError.svelte";
   import ModelViewer from "./ModelViewer.svelte";
 
   let {
@@ -27,7 +28,12 @@
     onfetch?: (side: "before" | "after", meta: BinarySide) => Promise<void>;
   } = $props();
 
-  let views = $state<{ before: MaterialView | null; after: MaterialView | null; error: string | null } | null>(null);
+  let views = $state<{
+    before: MaterialView | null;
+    after: MaterialView | null;
+    error: string | null;
+    beforeError: string | null;
+  } | null>(null);
   let users = $state<string[]>([]);
   let user = $state<string | null>(null);
   let shape = $state<MaterialShape>(untrack(() => viewerChoice(path, "shape", SHAPES)));
@@ -40,20 +46,24 @@
     views = null;
     users = [];
     showAll = false;
-    const read = (side: ModelSide | null) =>
-      side ? materialView(repoId, path, toVersion(side.at)).then((v) => v, () => null) : Promise.resolve(null);
+    const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
     Promise.all([
-      read(before),
+      before
+        ? materialView(repoId, path, toVersion(before.at)).then(
+            (v) => ({ view: v, error: null }),
+            (e) => ({ view: null, error: msg(e) }),
+          )
+        : { view: null, error: null },
       materialView(repoId, path, toVersion(after.at)).then(
         (v) => ({ view: v, error: null }),
-        (e) => ({ view: null, error: String(e instanceof Error ? e.message : e) }),
+        (e) => ({ view: null, error: msg(e) }),
       ),
       materialUsers(repoId, path, toVersion(after.at)).catch(() => [] as string[]),
     ]).then(([b, a, u]) => {
       if (token !== seq) {
         return;
       }
-      views = { before: b, after: a.view, error: a.error };
+      views = { before: b.view, after: a.view, error: a.error, beforeError: b.error };
       users = u;
       user = u[0] ?? null;
     });
@@ -83,7 +93,7 @@
   async function opener(side: ModelSide): Promise<Opened> {
     const view = side === before ? views?.before : views?.after;
     if (!view) {
-      return { model: null, error: `${path} is not in that version` };
+      return { model: null, error: (side === before && views?.beforeError) || `${path} is not in that version` };
     }
     const { primitiveModel } = await import("$lib/model/primitive");
     const prim = shown === "mesh" ? "sphere" : shown;
@@ -150,6 +160,9 @@
       {/if}
     </div>
     <div class="table">
+      {#if before && views.beforeError}
+        <SideError label={before.label} error={views.beforeError} meta={meta?.before} {onfetch} />
+      {/if}
       <table>
         <thead>
           <tr>

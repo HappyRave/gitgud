@@ -7,6 +7,7 @@
   import { byObject, CURVE_MODES, type CurveMode, curveCaption, curvePath, initialSelection, range, trackId } from "$lib/viewers/curves";
   import LoadingBar from "./LoadingBar.svelte";
   import ModelViewer from "./ModelViewer.svelte";
+  import SideError from "./SideError.svelte";
 
   let {
     repoId,
@@ -158,6 +159,9 @@
           <ModelViewer {repoId} path={user} {before} {after} {bust} startClip={clip.name} />
         {/key}
       {:else}
+        {#if before && clip.beforeError}
+          <SideError label={before.label} error={clip.beforeError} />
+        {/if}
         <div class="editor">
           <ul class="tracks" aria-label="Tracks">
             {#each byObject(clip.tracks) as [obj, tracks] (obj)}

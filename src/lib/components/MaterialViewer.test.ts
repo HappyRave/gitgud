@@ -74,6 +74,21 @@ describe("MaterialViewer", () => {
     expect(screen.queryByLabelText("Base map")).toBeNull();
   });
 
+  it("says why the earlier version can't be read instead of showing the material as new", async () => {
+    mockCommands({
+      material_view: ({ version }) => {
+        if (version === "head") {
+          throw new Error("Assets/M/hull.mat has no material in that version");
+        }
+        return material({ _BaseColor: "#DFE8FF" }, []);
+      },
+      material_users: () => [],
+    });
+    render(MaterialViewer, { repoId: 1, path: "Assets/M/hull.mat", before: HEAD, after: DISK });
+    expect(await screen.findByRole("alert")).toHaveTextContent("HEAD can't load: Assets/M/hull.mat has no material");
+    expect(screen.getByText("#DFE8FF")).toBeInTheDocument();
+  });
+
   it("says why a material can't be read", async () => {
     mockCommands({
       material_view: () => {

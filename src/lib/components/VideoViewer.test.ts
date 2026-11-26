@@ -73,6 +73,20 @@ describe("VideoViewer", () => {
     expect(screen.getByRole("button", { name: "Find where frames differ" })).toBeInTheDocument();
   });
 
+  it("shows the earlier version's failure in its own panel", async () => {
+    mockCommands({
+      video_info: ({ version }) => {
+        if (version === "head") {
+          throw new Error("Video/Intro.mp4's LFS object isn't downloaded");
+        }
+        return info();
+      },
+    });
+    render(VideoViewer, { repoId: 1, path: "Video/Intro.mp4", before: HEAD, after: DISK });
+    expect(await screen.findAllByLabelText(/video$/)).toHaveLength(1);
+    expect(screen.getByRole("alert")).toHaveTextContent("HEAD can't load: Video/Intro.mp4's LFS object isn't downloaded");
+  });
+
   it("offers the default app when the codec can't play here", async () => {
     mockCommands({ video_info: () => info({ codec: "ProRes" }) });
     render(VideoViewer, { repoId: 1, path: "Video/Master.mov", before: null, after: DISK });

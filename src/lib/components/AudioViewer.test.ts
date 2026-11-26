@@ -73,6 +73,24 @@ describe("AudioViewer", () => {
     expect(localStorage.getItem("gitgud.media.volume")).toBe("0.3");
   });
 
+  it("shows the earlier version's failure in its lane and offers the LFS fetch", async () => {
+    mockCommands({
+      audio_info: ({ version }) => {
+        if (version === "head") {
+          throw new Error("Audio/Horn.wav's LFS object isn't downloaded");
+        }
+        return sound({ duration: 2.85 });
+      },
+    });
+    const onfetch = vi.fn(async () => {});
+    const meta = { before: { size: 2048, lfs: true, hydrated: false }, after: { size: 4096, lfs: true, hydrated: true } };
+    render(AudioViewer, { repoId: 1, path: "Audio/Horn.wav", before: HEAD, after: DISK, meta, onfetch });
+    expect(await screen.findByText("On disk · 2.85 s")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("HEAD can't load: Audio/Horn.wav's LFS object isn't downloaded");
+    await fireEvent.click(screen.getByRole("button", { name: /Fetch LFS object/ }));
+    expect(onfetch).toHaveBeenCalledWith("before", meta.before);
+  });
+
   it("says why a file can't be decoded", async () => {
     mockCommands({
       audio_info: () => {

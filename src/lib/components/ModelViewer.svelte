@@ -8,6 +8,8 @@
   import type { CompareMode, ModelStage } from "$lib/model/stage";
   import { prefs, setModelPlaying, setModelShading, setShaderBase, shaderBase } from "$lib/prefs.svelte";
   import { type BaseSlots, mergeBases } from "$lib/model/approximations";
+  import { FLAT_MODES, swipeDrag } from "$lib/viewers/compare";
+  import CompareModes from "./CompareModes.svelte";
   import LfsBinaryCard from "./LfsBinaryCard.svelte";
   import LoadingBar from "./LoadingBar.svelte";
 
@@ -300,20 +302,6 @@
     }
   }
 
-  function dragSwipe(e: PointerEvent) {
-    const handle = e.currentTarget as HTMLElement;
-    handle.setPointerCapture(e.pointerId);
-    const move = (ev: PointerEvent) => {
-      if (!viewport) {
-        return;
-      }
-      const r = viewport.getBoundingClientRect();
-      split = Math.min(0.97, Math.max(0.03, (ev.clientX - r.left) / r.width));
-    };
-    handle.addEventListener("pointermove", move);
-    handle.addEventListener("pointerup", () => handle.removeEventListener("pointermove", move), { once: true });
-  }
-
   function dblclick(e: MouseEvent) {
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
     stage?.pick(e.clientX - r.left, e.clientY - r.top);
@@ -329,25 +317,16 @@
 <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
 <div class="model" class:expanded role="application" aria-label="3D preview of {path}" tabindex="0" onkeydown={onkey}>
   <div class="bar">
-    <div class="seg" role="radiogroup" aria-label="Compare mode">
-      {#each [["side", "Side by side"], ["swipe", "Swipe"], ["onion", "Onion"], ...(merged ? [["merged", "Merged"]] : [])] as [m, label] (m)}
-        <button
-          type="button"
-          class="tbtn"
-          class:on={!single && mode === m}
-          role="radio"
-          aria-checked={!single && mode === m}
-          disabled={single}
-          onclick={() => (mode = m as CompareMode)}>{label}</button
-        >
-      {/each}
-    </div>
-    {#if !single && mode === "onion"}
-      <label class="onion">
-        {before?.label} ghost
-        <input type="range" min="0.1" max="0.9" step="0.05" bind:value={onion} aria-label="Ghost opacity" />
-      </label>
-    {/if}
+    <CompareModes
+      bind:mode
+      bind:onion
+      enabled={!single}
+      modes={merged ? [...FLAT_MODES, ["merged", "Merged"]] : FLAT_MODES}
+      onionLabel="{before?.label} ghost"
+      onionName="Ghost opacity"
+      onionMin={0.1}
+      onionMax={0.9}
+    />
     <button type="button" class="tbtn solo" onclick={() => (expanded = !expanded)} aria-pressed={expanded}
       >{expanded ? "Close" : "Expand"}</button
     >
@@ -361,7 +340,7 @@
       {#if !single && mode === "side"}<div class="divider"></div>{/if}
       {#if !single && mode === "swipe"}
         <div class="swipe" style:left="{split * 100}%">
-          <button type="button" class="handle" aria-label="Drag to swipe" onpointerdown={dragSwipe}>⇔</button>
+          <button type="button" class="handle" aria-label="Drag to swipe" use:swipeDrag={{ host: () => viewport, set: (v) => (split = v), margin: 0.03 }}>⇔</button>
         </div>
       {/if}
       {#if !single}
@@ -574,16 +553,6 @@
   .tbtn:focus-visible,
   .play:focus-visible {
     outline: 2px solid var(--l0);
-  }
-  .onion {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font: 10.5px var(--mono);
-    color: var(--muted);
-  }
-  .onion input {
-    width: 90px;
   }
   .vp {
     position: relative;

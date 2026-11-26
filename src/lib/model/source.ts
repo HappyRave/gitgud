@@ -1,5 +1,5 @@
 import type { FileVersion, ModelKind } from "$lib/api";
-import { type ImageAt, protocolUrl } from "$lib/images";
+import { type ImageAt, protocolUrl, versionQuery } from "$lib/images";
 
 const MODEL = /\.(fbx|obj|gltf|glb|prefab|unity)$/i;
 
@@ -27,23 +27,14 @@ export function toVersion(at: ImageAt): FileVersion {
   return at.at;
 }
 
-function query(repoId: number, path: string, at: ImageAt, bust: number) {
-  const q = new URLSearchParams({ repo: String(repoId), path, at: at.at });
-  if ("commit" in at) {
-    q.set("commit", at.commit);
-  }
-  q.set("v", String(bust));
-  return q;
-}
-
 /** The model file `path` at a version, on the `gitgud` protocol. */
 export function modelUrl(repoId: number, path: string, at: ImageAt, bust = 0, windows?: boolean): string {
-  return protocolUrl("model", query(repoId, path, at, bust), windows);
+  return protocolUrl("model", versionQuery(repoId, path, at, bust), windows);
 }
 
 /** The file model `near` refers to as `ref` (a texture name, a glTF buffer). */
 export function refUrl(repoId: number, near: string, ref: string, at: ImageAt, bust = 0, windows?: boolean): string {
-  const q = query(repoId, near, at, bust);
+  const q = versionQuery(repoId, near, at, bust);
   q.set("ref", ref);
   return protocolUrl("ref", q, windows);
 }

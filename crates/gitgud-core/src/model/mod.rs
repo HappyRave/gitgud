@@ -357,20 +357,26 @@ impl Repo {
         let missing = || Error::Refused(format!("{path} isn't in that version"));
         let after_files = Files::new(self, after)?.with_git(git);
         let after_text = after_files.read_text(path)?.ok_or_else(missing)?;
-        let before_files = match before {
-            Some(v) => Some(Files::new(self, v)?.with_git(git)),
-            None => None,
+        let after_guids = Guids::new(&after_files);
+        let Some(v) = before else {
+            return curves::clip_curves(None, (&after_text, &after_guids), path);
         };
-        let before_text = match &before_files {
-            Some(f) => f.read_text(path)?,
-            None => None,
-        };
-        let before_guids = before_files.as_ref().map(Guids::new);
-        curves::clip_curves(
-            before_text.as_deref().zip(before_guids.as_ref()),
-            (&after_text, &Guids::new(&after_files)),
-            path,
-        )
+        // An unreadable earlier version is reported beside the shown one, not as "added".
+        let compared = Files::new(self, v).and_then(|f| {
+            let f = f.with_git(git);
+            let text = f.read_text(path)?;
+            let guids = Guids::new(&f);
+            curves::clip_curves(
+                text.as_deref().zip(Some(&guids)),
+                (&after_text, &after_guids),
+                path,
+            )
+        });
+        compared.or_else(|e| {
+            let mut alone = curves::clip_curves(None, (&after_text, &after_guids), path)?;
+            alone.before_error = Some(e.to_string());
+            Ok(alone)
+        })
     }
 
     /// Prefabs whose Animator plays the clip at `path` in `version`: controllers (and
@@ -1088,6 +1094,28 @@ mod tests {
             )
             .unwrap();
         assert_eq!((c.name.as_str(), c.keys_before), ("Bob", Some(0)));
+        assert_eq!(c.before_error, None);
+
+        repo.write("Assets/Bob.anim", "not a clip\n")
+            .commit_all("broken");
+        repo.write(
+            "Assets/Bob.anim",
+            "--- !u!74 &7400000\nAnimationClip:\n  m_Name: Bob\n",
+        );
+        let c = r
+            .clip_curves(
+                None,
+                "Assets/Bob.anim",
+                Some(&Version::Head),
+                &Version::Worktree,
+            )
+            .unwrap();
+        assert_eq!((c.name.as_str(), c.keys_before), ("Bob", None));
+        assert!(
+            c.before_error
+                .is_some_and(|e| e.contains("isn't an animation clip")),
+            "the earlier version's failure is reported, not hidden"
+        );
     }
 
     #[test]

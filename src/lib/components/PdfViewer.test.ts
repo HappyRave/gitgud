@@ -65,6 +65,21 @@ describe("PdfViewer", () => {
     expect(screen.getByRole("radio", { name: "Swipe" })).toBeDisabled();
   });
 
+  it("shows the earlier version's failure beside the page", async () => {
+    mockCommands({});
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        new URL(url).searchParams.get("at") === "head"
+          ? new Response("Docs/GDD.pdf's LFS object isn't downloaded", { status: 404 })
+          : new Response("worktree", { status: 200 }),
+      ),
+    );
+    render(PdfViewer, { repoId: 1, path: "Docs/GDD.pdf", before: HEAD, after: DISK });
+    expect(await screen.findByText("PDF · 4 pages")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("HEAD can't load: Docs/GDD.pdf's LFS object isn't downloaded");
+  });
+
   it("says why a PDF can't be opened", async () => {
     mockCommands({});
     vi.stubGlobal("fetch", vi.fn(async () => new Response("Docs/GDD.pdf isn't in that version", { status: 404 })));

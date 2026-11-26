@@ -1,4 +1,4 @@
-import { type ImageAt, isImage, protocolUrl } from "$lib/images";
+import { type ImageAt, isImage, protocolUrl, versionQuery } from "$lib/images";
 import { isUnityYaml } from "$lib/unity";
 
 /** The visual viewers gitgud has beside the text diff (R7). */
@@ -87,10 +87,5 @@ export const formatKey = (path: string) => ext(metaTarget(path) ?? path) + (meta
 
 /** Any file at a version as stored (LFS resolved), on the `gitgud` protocol. */
 export function fileUrl(repoId: number, path: string, at: ImageAt, bust = 0, windows?: boolean): string {
-  const q = new URLSearchParams({ repo: String(repoId), path, at: at.at });
-  if ("commit" in at) {
-    q.set("commit", at.commit);
-  }
-  q.set("v", String(bust));
-  return protocolUrl("file", q, windows);
+  return protocolUrl("file", versionQuery(repoId, path, at, bust), windows);
 }

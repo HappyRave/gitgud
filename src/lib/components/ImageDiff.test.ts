@@ -78,6 +78,30 @@ describe("ImageDiff", () => {
     expect(screen.getByRole("radiogroup", { name: "Diff gain" })).toBeInTheDocument();
   });
 
+  it("reads the pixels once per image pair, not on every channel or gain change", async () => {
+    let reads = 0;
+    const ctx = {
+      drawImage: () => {},
+      getImageData: (_x: number, _y: number, w: number, h: number) => {
+        reads++;
+        return { data: new Uint8ClampedArray(w * h * 4) };
+      },
+      createImageData: (w: number, h: number) => ({ data: new Uint8ClampedArray(w * h * 4) }),
+      putImageData: () => {},
+    };
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(ctx as unknown as ReturnType<HTMLCanvasElement["getContext"]>);
+    render(ImageDiff, { before: BEFORE, after: AFTER });
+    await load(screen.getByAltText("HEAD"), 8, 8);
+    await load(screen.getByAltText("On disk"), 8, 8);
+
+    await fireEvent.click(screen.getByRole("radio", { name: "Diff" }));
+    expect(reads).toBe(2);
+    await fireEvent.click(screen.getByRole("radio", { name: "R" }));
+    await fireEvent.click(screen.getAllByRole("radio", { name: /×/ }).at(-1)!);
+    expect(reads).toBe(2);
+    vi.restoreAllMocks();
+  });
+
   it("gates unhydrated LFS images above 25 MiB behind an explicit Fetch button", async () => {
     const onfetch = vi.fn(async () => {});
     const largeMeta = { size: 30 * 1024 * 1024, lfs: true, oid: "ab".repeat(32), hydrated: false };
