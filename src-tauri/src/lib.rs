@@ -3,9 +3,10 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use gitgud_core::ai::AiProviderStatus;
+use gitgud_core::app_stats::{AppStats, ProcessMonitor};
 use gitgud_core::blame::{BlameLine, FileCommit};
 use gitgud_core::branches::Branches;
-use gitgud_core::caches::CacheStats;
+use gitgud_core::caches::{CacheStats, RepoCache};
 use gitgud_core::clone::{CloneProgress, clone_repo as core_clone_repo};
 use gitgud_core::config::{self, IdentityConfig, ToolDiagnostics};
 use gitgud_core::diff::{CommitDetail, FileDiff};
@@ -1351,6 +1352,32 @@ async fn clear_preview_cache(session: State<'_, Session>, id: u32) -> Result<Cac
     session.clear_preview_cache(id)
 }
 
+#[derive(Default)]
+struct Monitor(Mutex<Option<ProcessMonitor>>);
+
+#[tauri::command]
+async fn app_stats(monitor: State<'_, Monitor>) -> Result<AppStats, Error> {
+    let mut slot = monitor.0.lock().expect("monitor lock poisoned");
+    if slot.is_none() {
+        *slot = Some(ProcessMonitor::new(std::process::id()).map_err(Error::Read)?);
+    }
+    Ok(slot.as_mut().expect("set above").sample())
+}
+
+#[tauri::command]
+async fn repo_caches(
+    session: State<'_, Session>,
+    roots: Vec<String>,
+) -> Result<Vec<RepoCache>, Error> {
+    let roots: Vec<_> = roots.into_iter().map(std::path::PathBuf::from).collect();
+    Ok(session.repo_caches(&roots))
+}
+
+#[tauri::command]
+async fn clear_repo_caches(session: State<'_, Session>, root: String) -> Result<RepoCache, Error> {
+    session.clear_caches_at(Path::new(&root))
+}
+
 #[tauri::command]
 async fn warm_textures(
     session: State<'_, Session>,
@@ -1750,6 +1777,7 @@ fn app_with_library<R: Runtime>(builder: Builder<R>, library: Option<LibraryStor
     builder
         .manage(Session::default())
         .manage(ActiveClone::default())
+        .manage(Monitor::default())
         .register_asynchronous_uri_scheme_protocol("gitgud", |ctx, request, responder| {
             let app = ctx.app_handle().clone();
             let uri = request.uri().to_string();
@@ -1899,6 +1927,9 @@ fn app_with_library<R: Runtime>(builder: Builder<R>, library: Option<LibraryStor
             cache_stats,
             clear_unity_caches,
             clear_preview_cache,
+            app_stats,
+            repo_caches,
+            clear_repo_caches,
             warm_textures,
             worktree_unity_diff,
             commit_unity_diff,
@@ -2340,6 +2371,35 @@ mod tests {
             .call("git_check_remote", json!({ "id": id }))
             .unwrap_err();
         assert!(err.to_string().contains("no remote"), "{err}");
+    }
+
+    #[test]
+    fn app_stats_and_repo_caches_answer_over_ipc() {
+        let ipc = Ipc::new();
+        ipc.call("app_stats", json!({})).unwrap();
+        let stats = ipc.call("app_stats", json!({})).unwrap();
+        assert!(stats["appBytes"].as_u64().unwrap() > 0, "{stats}");
+        assert!(stats["cpu"].as_f64().unwrap() <= 100.0);
+
+        let (open_repo, closed) = (history(), history());
+        open(&ipc, &open_repo);
+        let roots = json!([open_repo.path(), closed.path(), "Z:/gone"]);
+        let caches = ipc.call("repo_caches", json!({ "roots": roots })).unwrap();
+        assert_eq!(
+            caches.as_array().unwrap().len(),
+            2,
+            "the missing one is left out"
+        );
+        assert_eq!(caches[0]["previewBytes"], 0);
+
+        let cleared = ipc
+            .call("clear_repo_caches", json!({ "root": closed.path() }))
+            .unwrap();
+        assert_eq!(cleared["unityBytes"], 0);
+        let err = ipc
+            .call("clear_repo_caches", json!({ "root": "Z:/gone" }))
+            .unwrap_err();
+        assert!(!err.to_string().is_empty());
     }
 
     #[test]

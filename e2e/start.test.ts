@@ -16,11 +16,12 @@ after(async () => {
   await app?.close();
 });
 
-test("start page shows the git binary found by the Rust core", async () => {
-  const line = app.page.getByTestId("git-info");
-  await line.waitFor({ timeout: 10_000 });
-  const text = await line.innerText();
-  assert.match(text, /^git \d+\.\d+\.\d+(?: \(bundled\))? .+git/i);
+test("start page shows gitgud's own CPU, RAM and caches", async () => {
+  const stats = app.page.getByTestId("app-stats");
+  await stats.getByText(/^\d+%$/).waitFor({ timeout: 10_000 });
+  const text = await stats.innerText();
+  assert.match(text, /CPU\s*\d+%\s*RAM\s*\d+(\.\d)? (MB|GB)/);
+  assert.equal(await app.page.getByRole("alert").count(), 0, "git was found");
 
   mkdirSync(SHOTS, { recursive: true });
   await app.page.screenshot({ path: join(SHOTS, "start.png") });

@@ -3,6 +3,28 @@
 Verdicts from the lab rounds (`docs/lab/index.html`), newest first. Each entry: date, Max's words in
 quotes, what came with it, and what isn't applied yet. Feeds the decision log in `docs/spec.md`.
 
+## R8 · App stats in the strip (2026-11-26)
+
+Brief (Max, 2026-11-25): "I'm not sure the little git version and path in the bottom right corner is
+useful. What would be more useful is some app stats, like cpu, ram, and cache usage (in each repo)
+don't make it boring, like not just CPU: 2%. but must remain 100% clear and readable. The cache stat
+can be clicked to show a little context window with a clear button". Round: `docs/lab/stats.html`.
+
+- **Decided (2026-11-26):** S1 Trace and C1 cache popover, with every Claude's pick. Max: "S1 Trace
+  + my picks". That is:
+  1. **S1 Trace:** CPU as a 40-second trace (amber above 50%, orange above 85%) then the exact %;
+     RAM and cache as plain numbers with short labels; the cache stat is a button with a drum icon.
+  2. **CPU scale:** a share of the whole machine, like Task Manager.
+  3. **RAM:** the whole process tree, WebView2 included; hover splits app / view / git.
+  4. **Library tab:** the cache stat shows every repo's caches together; the popover lists the
+     biggest repos, each with its own Clear, plus Clear all.
+  5. **Clear** also drops the viewers' in-memory model cache.
+- **Came with it, not discussed separately:** the git version and path leave the strip (Settings ›
+  Git has them); sampled every 2 s, paused while the window is hidden; Clear never touches LFS
+  objects or git's commit-graph, and has no confirm since everything it removes rebuilds.
+- **Built (2026-11-26):** as decided. The popover's "Settings › Caches" link opens Settings (at the
+  top) and reads "More in Settings"; the Library tab's popover has no such link.
+
 ## R7 · Previews for more file types (2026-11-24)
 
 Brief (Max, 2026-11-24): "Would be awesome if we can preview/compare: images pdfs sounds textures

@@ -145,6 +145,7 @@
   import FindBar from "$lib/components/FindBar.svelte";
   import Graph from "$lib/components/Graph.svelte";
   import LoadingBar from "$lib/components/LoadingBar.svelte";
+  import AppStatsBar from "$lib/components/AppStatsBar.svelte";
   import MergeBanner from "$lib/components/MergeBanner.svelte";
   import MergeDialog from "$lib/components/MergeDialog.svelte";
   import OpLogPanel from "$lib/components/OpLogPanel.svelte";
@@ -2274,13 +2275,12 @@
     {/if}
     <span class="sp"></span>
     {#if active}
-      {#await git}
-        <span>Looking for git…</span>
-      {:then info}
-        <span class="git" data-testid="git-info" title={info.path}>git {info.version}{info.source === "bundled" ? " (bundled)" : ""} <code>{info.path}</code></span>
-      {:catch err}
+      {#await git catch err}
         <span role="alert" class="bad">{err}</span>
       {/await}
+      {#if opened}
+        <AppStatsBar repos={[{ root: opened.root, name: repoName(opened.root) }]} {onopensettings} />
+      {/if}
     {/if}
   </footer>
 </main>
@@ -2482,14 +2482,6 @@
   }
   .link:hover {
     text-decoration: underline;
-  }
-  .git {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 40vw;
-  }
-  .git code {
-    font-size: 10.5px;
   }
   .bad {
     color: var(--bad-ink);

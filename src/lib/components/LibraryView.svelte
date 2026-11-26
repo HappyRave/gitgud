@@ -20,6 +20,7 @@
   import UnityIcon from "$lib/components/UnityIcon.svelte";
   import HostIcon from "$lib/components/HostIcon.svelte";
   import LockIcon from "$lib/components/LockIcon.svelte";
+  import AppStatsBar from "$lib/components/AppStatsBar.svelte";
   import { inTextField, opLogKey } from "$lib/keys";
   import { prefs, setPaneSize } from "$lib/prefs.svelte";
   import {
@@ -597,13 +598,10 @@
     {/if}
     <span class="sp"></span>
     {#if active}
-      {#await git}
-        <span>Looking for git…</span>
-      {:then info}
-        <span class="git" data-testid="git-info" title={info.path}>git {info.version}{info.source === "bundled" ? " (bundled)" : ""} <code>{info.path}</code></span>
-      {:catch err}
+      {#await git catch err}
         <span role="alert" class="bad">{err}</span>
       {/await}
+      <AppStatsBar repos={library.repos.map((r) => ({ root: r.path, name: r.name }))} all />
     {/if}
   </footer>
 </main>
@@ -882,9 +880,6 @@
   }
   .sp {
     flex: 1;
-  }
-  .git code {
-    font-size: 10.5px;
   }
   .bad {
     color: var(--bad-ink);

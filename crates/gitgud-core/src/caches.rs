@@ -33,6 +33,20 @@ pub struct CacheStats {
     pub preview_bytes: u64,
 }
 
+/// What [`Repo::clear_caches`] would free in one repo, for the strip's cache stat.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoCache {
+    pub root: String,
+    /// The 3D preview cache on disk.
+    pub preview_bytes: u64,
+    pub preview_models: usize,
+    pub preview_textures: usize,
+    /// The saved GUID index.
+    pub unity_bytes: u64,
+    pub meta_files: usize,
+}
+
 fn file_bytes(path: &Path) -> Option<u64> {
     std::fs::metadata(path).ok().map(|m| m.len())
 }
@@ -122,6 +136,30 @@ impl Repo {
         clear_guid_index(self)
     }
 
+    /// The caches [`Repo::clear_caches`] drops, sized.
+    #[must_use]
+    pub fn repo_cache(&self) -> RepoCache {
+        let stats = self.cache_stats();
+        RepoCache {
+            root: self.root().to_string_lossy().into_owned(),
+            preview_bytes: stats.preview_bytes,
+            preview_models: stats.preview_models,
+            preview_textures: stats.preview_textures,
+            unity_bytes: stats.guid_index_bytes,
+            meta_files: stats.meta_files,
+        }
+    }
+
+    /// Drops every cache gitgud keeps for this repo: the 3D previews and the Unity
+    /// references. Never git's own data (LFS objects, the commit-graph).
+    ///
+    /// # Errors
+    /// As [`Repo::clear_preview_cache`] and [`Repo::clear_unity_caches`].
+    pub fn clear_caches(&self) -> Result<(), Error> {
+        self.clear_preview_cache()?;
+        self.clear_unity_caches()
+    }
+
     /// Drops the 3D preview cache on disk, and what memory holds of it.
     ///
     /// # Errors
@@ -187,6 +225,37 @@ mod tests {
             ),
             (0, 0, 0, 0, 0)
         );
+    }
+
+    #[test]
+    fn clear_caches_drops_previews_and_unity_refs_but_not_gits_data() {
+        let repo = TestRepo::init();
+        repo.write(
+            "ProjectSettings/ProjectVersion.txt",
+            "m_EditorVersion: 6000.0.1f1\n",
+        )
+        .write(
+            "Assets/Room.unity",
+            "%YAML 1.1\n--- !u!1 &1\nGameObject:\n  m_Name: Wall\n",
+        )
+        .write(
+            "Assets/Room.unity.meta",
+            "guid: 5555eeee000000000000000000000000\n",
+        )
+        .commit_all("one");
+        repo.git(&["commit-graph", "write", "--reachable"]);
+        let r = crate::repo::open(repo.path()).unwrap();
+        r.model_info(None, "Assets/Room.unity", &Version::Head)
+            .unwrap();
+        crate::unity_yaml::repo_guid_index(&r);
+        let used = r.repo_cache();
+        assert!(used.preview_bytes > 0 && used.unity_bytes > 0, "{used:?}");
+        assert_eq!((used.preview_models, used.meta_files), (1, 1));
+
+        r.clear_caches().unwrap();
+        let cleared = r.repo_cache();
+        assert_eq!((cleared.preview_bytes, cleared.unity_bytes), (0, 0));
+        assert!(r.cache_stats().commit_graph_bytes.is_some_and(|b| b > 0));
     }
 
     #[test]

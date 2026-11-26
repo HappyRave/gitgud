@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use rayon::prelude::*;
 use serde::Serialize;
 
 use crate::ai::{self, AiProviderStatus};
@@ -1541,6 +1542,38 @@ impl Session {
         let repo = self.get(id)?.repo;
         repo.clear_preview_cache()?;
         Ok(repo.cache_stats())
+    }
+
+    /// [`Repo::repo_cache`] for each repo in `roots` that opens (missing folders are left
+    /// out), sharing an open repo's caches when it is open.
+    #[must_use]
+    pub fn repo_caches(&self, roots: &[PathBuf]) -> Vec<crate::caches::RepoCache> {
+        roots
+            .par_iter()
+            .filter_map(|root| self.repo_at(root).ok())
+            .map(|repo| repo.repo_cache())
+            .collect()
+    }
+
+    /// [`Repo::clear_caches`] for the repo at `root`; returns its caches after.
+    ///
+    /// # Errors
+    /// As [`repo::open`] and [`Repo::clear_caches`].
+    pub fn clear_caches_at(&self, root: &Path) -> Result<crate::caches::RepoCache, Error> {
+        let repo = self.repo_at(root)?;
+        repo.clear_caches()?;
+        Ok(repo.repo_cache())
+    }
+
+    /// The open repo at `root`, else a fresh one, without touching the open one's caches.
+    fn repo_at(&self, root: &Path) -> Result<Arc<Repo>, Error> {
+        let fresh = repo::open(root)?;
+        let open = self
+            .lock()
+            .values()
+            .find(|o| o.repo.root() == fresh.root())
+            .map(|o| o.repo.clone());
+        Ok(open.unwrap_or_else(|| Arc::new(fresh)))
     }
 
     /// See [`Repo::shrink_texture`].

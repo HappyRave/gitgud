@@ -27,6 +27,7 @@ woff2-patched = "0.4.0"
 which = "8.0.6"
 xxhash-rust = { version = "0.8.21", features = ["xxh64"] }
 yaml-rust2 = "0.13.2"
+sysinfo = { version = "0.40.4", default-features = false, features = ["system"] }
 
 [dev-dependencies]
 gitgud-core = { path = ".", features = ["test-util"] }

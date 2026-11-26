@@ -1,4 +1,5 @@
 pub mod ai;
+pub mod app_stats;
 pub mod audio;
 pub mod blame;
 pub mod branches;

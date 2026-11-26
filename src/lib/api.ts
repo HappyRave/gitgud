@@ -49,6 +49,23 @@ export interface ConfigRow {
   differs: boolean;
 }
 
+export interface AppStats {
+  /** Share of the whole machine, 0–100. */
+  cpu: number;
+  appBytes: number;
+  viewBytes: number;
+  gitBytes: number;
+}
+
+export interface RepoCache {
+  root: string;
+  previewBytes: number;
+  previewModels: number;
+  previewTextures: number;
+  unityBytes: number;
+  metaFiles: number;
+}
+
 export interface RemoteCheck {
   remote: string;
   url: string;
@@ -1188,6 +1205,9 @@ export interface Commands {
   git_install_system: { args: Record<string, never>; result: null };
   git_config_compare: { args: Record<string, never>; result: ConfigRow[] };
   git_check_remote: { args: { id: number }; result: RemoteCheck };
+  app_stats: { args: Record<string, never>; result: AppStats };
+  repo_caches: { args: { roots: string[] }; result: RepoCache[] };
+  clear_repo_caches: { args: { root: string }; result: RepoCache };
   unity_info: { args: { id: number }; result: UnityInfo };
   unity_configure_smart_merge: { args: { id: number; toolPath?: string | null }; result: UnityInfo };
   unity_meta_issues: { args: { id: number }; result: MetaIssue[] };
@@ -1398,6 +1418,9 @@ export const gitUpdateSystem = () => call("git_update_system");
 export const gitInstallSystem = () => call("git_install_system");
 export const gitConfigCompare = () => call("git_config_compare");
 export const gitCheckRemote = (id: number) => call("git_check_remote", { id });
+export const appStats = () => call("app_stats");
+export const repoCaches = (roots: string[]) => call("repo_caches", { roots });
+export const clearRepoCaches = (root: string) => call("clear_repo_caches", { root });
 export const stashSave = (id: number, message: string | null, includeUntracked: boolean) =>
   call("stash_save", { id, message, includeUntracked });
 export const stashApply = (id: number, index: number) => call("stash_apply", { id, index });

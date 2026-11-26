@@ -12,6 +12,7 @@ import type {
   PlanCommit,
   ProposalSummary,
   RebaseState,
+  RepoCache,
   Row,
   RowLayout,
   Status,
@@ -28,6 +29,16 @@ export function installMock(scenario: string) {
   let graphVersion = 0;
   let commitGraphBuilt = false;
   let gitChoice: GitChoice = { mode: "auto" };
+  let mockTick = 0;
+  const mockCache = (root: string, gb: number): RepoCache => ({
+    root,
+    previewBytes: Math.round(gb * 1024 ** 3),
+    previewModels: Math.round(gb * 2900),
+    previewTextures: Math.round(gb * 520),
+    unityBytes: gb ? 14.6e6 : 0,
+    metaFiles: gb ? 31204 : 0,
+  });
+  const mockCaches = new Map<string, RepoCache>();
   const gitInv = (): GitInventory => {
     const system = {
       path: "C:/Program Files/Git/cmd/git.exe",
@@ -491,6 +502,21 @@ export function installMock(scenario: string) {
       elapsedMs: 412,
       message: null,
     }),
+    app_stats: () => {
+      mockTick += 1;
+      const spike = mockTick % 25 > 18 ? 55 + ((mockTick * 37) % 40) : 0;
+      return {
+        cpu: Math.min(100, 1 + ((mockTick * 7) % 4) + spike),
+        appBytes: 138e6,
+        viewBytes: 296e6 + spike * 4e6,
+        gitBytes: spike ? 24e6 : 0,
+      };
+    },
+    repo_caches: ({ roots }) => roots.map((root) => mockCaches.get(root) ?? mockCache(root, 0.6 + (root.length % 7) / 10)),
+    clear_repo_caches: ({ root }) => {
+      mockCaches.set(root, mockCache(root, 0));
+      return mockCaches.get(root)!;
+    },
     unity_info: () => ({
       isUnity: true,
       projectRoot: opened().root,

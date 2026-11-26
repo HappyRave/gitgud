@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gitgud Lab · R8 app stats in the strip</title>
+<style>
+:root {
+  --bg: #f4f5f8; --panel: #ffffff; --line: #dde1e8; --fg: #18202c; --muted: #5a6577;
+  --accent: #e0561f; --pick: #efe6ff; --pick-ink: #5b2fa6; --open: #fff1d6; --open-ink: #8a5a00;
+  /* the app's own tokens (src/app.css), dark: the strip mocks use these */
+  --a-bg: #14181f; --a-panel: #1a1f28; --a-line: #2a313c; --a-fg: #dde2ea; --a-muted: #8b95a5; --a-hover: #20262f;
+  --l0: #56b4e9; --l1: #ff8c42; --l2: #2fd3a0; --l4: #f0c040; --bad-ink: #ff9d80;
+  --body: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --mono: "Cascadia Mono", Consolas, "Courier New", monospace;
+}
+@media (prefers-color-scheme: dark) { :root {
+  --bg: #10141b; --panel: #171d26; --line: #29313d; --fg: #e4e8ef; --muted: #96a0b0;
+  --accent: #ff7a45; --pick: #2c2141; --pick-ink: #cdb4ff; --open: #3a2d12; --open-ink: #f5c86a; color-scheme: dark; } }
+.light { --a-bg: #f7f8fa; --a-panel: #ffffff; --a-line: #e3e6ec; --a-fg: #1b2330; --a-muted: #687386; --a-hover: #f0f2f6;
+  --l0: #0072b2; --l1: #d55e00; --l2: #009e73; --l4: #b07800; --bad-ink: #a32f17; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.55 var(--body); }
+.wrap { max-width: 1180px; margin: 0 auto; padding: 28px 16px 72px; }
+h1 { font-size: 34px; line-height: 1.1; margin: 4px 0 10px; }
+h2 { font-size: 22px; margin: 0; } h3 { font-size: 15px; margin: 0; }
+p { margin: 0; max-width: 80ch; }
+.eyebrow { font: 600 11.5px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.tag { display: inline-block; font: 600 11px var(--mono); padding: 2px 7px; border-radius: 4px; white-space: nowrap; vertical-align: 1px; }
+.t-pick { background: var(--pick); color: var(--pick-ink); }
+.t-prop { background: var(--open); color: var(--open-ink); }
+.brief { display: grid; gap: 6px; font-size: 14px; padding: 12px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; margin: 14px 0; }
+.sec { padding-top: 40px; display: grid; gap: 14px; }
+.sec > .fh { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; border-bottom: 2px solid var(--line); padding-bottom: 8px; }
+.lab { font: 700 14px var(--mono); color: var(--accent); }
+.idea { color: var(--muted); font-size: 14px; }
+.states { display: grid; gap: 6px; }
+.st { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 12px; align-items: center; }
+.st > span { font: 12px var(--mono); color: var(--muted); }
+.zoom { overflow: hidden; border-radius: 6px; border: 1px solid var(--line); }
+.zoom > .strip { zoom: 2; }
+ul.notes { margin: 0; padding-left: 20px; font-size: 14px; display: grid; gap: 4px; }
+ol.q { margin: 0; padding-left: 22px; display: grid; gap: 8px; font-size: 14.5px; }
+
+/* ---- the app's strip, at real size ---- */
+.strip { display: flex; align-items: center; gap: 14px; height: 24px; padding: 0 10px; background: var(--a-panel);
+  border: 1px solid var(--a-line); color: var(--a-muted); font: 11.5px var(--body); white-space: nowrap; overflow: hidden; position: relative; }
+.strip .left, .strip .task { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.strip > .stat, .strip > button { flex: none; }
+.strip .sp { flex: 1; }
+.strip .stat { display: inline-flex; align-items: center; gap: 5px; }
+.strip .k { font: 600 10px var(--mono); letter-spacing: .04em; color: var(--a-muted); }
+.strip .v { font: 11.5px var(--mono); color: var(--a-fg); font-variant-numeric: tabular-nums; }
+.strip .v.dim { color: var(--a-muted); }
+.strip .hot { color: var(--l4); } .strip .burn { color: var(--l1); }
+.strip button.cache { all: unset; display: inline-flex; align-items: center; gap: 5px; padding: 1px 6px; margin: 0 -6px; border-radius: 4px; cursor: pointer; }
+.strip button.cache:hover, .strip button.cache.on { background: var(--a-hover); }
+.task { display: inline-flex; align-items: center; gap: 8px; color: var(--a-fg); }
+.task .bar { width: 80px; height: 4px; background: var(--a-line); border-radius: 2px; overflow: hidden; } .task .bar i { display: block; height: 100%; width: 62%; background: var(--l0); }
+svg.spark, svg.pips, svg.lane, svg.ic { display: block; flex: none; }
+
+/* ---- cache popover ---- */
+.pop-row { display: flex; gap: 22px; flex-wrap: wrap; align-items: flex-start; }
+.pop-cell { display: grid; gap: 6px; }
+.pop-cell > span { font: 12px var(--mono); color: var(--muted); }
+.pop { width: 300px; background: var(--a-panel); border: 1px solid var(--a-line); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.35);
+  color: var(--a-fg); font: 12px var(--body); padding: 10px 12px; display: grid; gap: 8px; }
+.pop h4 { margin: 0; font: 600 12px var(--body); display: flex; align-items: baseline; gap: 6px; }
+.pop h4 .repo { font: 11.5px var(--mono); color: var(--a-muted); font-weight: 400; }
+.pop .rows { display: grid; grid-template-columns: 1fr auto; gap: 3px 10px; }
+.pop .rows .n { color: var(--a-muted); font-size: 11px; grid-column: 1 / -1; margin-top: -3px; }
+.pop .rows b { font: 600 11.5px var(--mono); text-align: right; font-variant-numeric: tabular-nums; }
+.pop .cap { height: 5px; background: var(--a-line); border-radius: 3px; overflow: hidden; } .pop .cap i { display: block; height: 100%; background: var(--l0); }
+.pop .capl { display: flex; justify-content: space-between; font: 10.5px var(--mono); color: var(--a-muted); margin-top: -4px; }
+.pop .keep { color: var(--a-muted); font-size: 11px; border-top: 1px solid var(--a-line); padding-top: 7px; }
+.pop .act { display: flex; align-items: center; gap: 8px; }
+.pop .act .hint { color: var(--a-muted); font-size: 11px; flex: 1; }
+.pop button { font: 600 12px var(--body); color: var(--a-fg); background: var(--a-hover); border: 1px solid var(--a-line); border-radius: 5px; padding: 3px 10px; }
+.pop button.danger { color: var(--bad-ink); }
+.pop .ok { color: var(--l2); }
+.pop a { color: var(--l0); font-size: 11px; text-decoration: none; }
+@keyframes beat { 0%, 100% { opacity: 1 } 50% { opacity: .45 } }
+.beat { animation: beat 1.4s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .beat { animation: none; } }
+</style>
+<body>
+<div class="wrap">
+  <div class="eyebrow">gitgud lab · round R8 · 2026-11-25</div>
+  <h1>App stats in the strip</h1>
+  <div class="brief">
+    <div><b>Brief (Max, 2026-11-25):</b> "I'm not sure the little git version and path in the bottom right corner is useful.
+      What would be more useful is some app stats, like cpu, ram, and cache usage (in each repo). Don't make it boring, like not
+      just CPU: 2%. but must remain 100% clear and readable. The cache stat can be clicked to show a little context window with a
+      clear button."</div>
+    <div><span class="tag t-prop">proposal</span> Everything below is a proposal; nothing is decided. Strips are drawn at the
+      app's real size (24 px, 11.5 px text, dark theme tokens), then once at 2× so details can be judged.</div>
+  </div>
+
+  <section class="sec">
+    <div class="fh"><h2>What the numbers mean</h2><span class="tag t-prop">proposal</span></div>
+    <ul class="notes">
+      <li><b>CPU</b>: gitgud's whole process tree (the app, its WebView2 processes, the git it runs), as a share of the whole
+        machine like Task Manager. Sampled every 2 s, paused while the window is minimised.</li>
+      <li><b>RAM</b>: the same tree's working set. WebView2 is most of it; hover splits it ("app 140 MB · view 290 MB · git 0").</li>
+      <li><b>Cache</b>: what gitgud itself keeps for the open repo: 3D previews on disk (meshes, shrunk textures; LRU-capped at
+        1 GB), Unity references (GUID index), plus the in-memory model cache. Not git's data: LFS objects and the commit-graph
+        file are listed as "not touched".</li>
+      <li>The git version and path move to Settings › Git only (it now has a whole section for them).</li>
+    </ul>
+  </section>
+
+  <section class="sec" id="s1">
+    <div class="fh"><span class="lab">S1</span><h2>Trace</h2><span class="tag t-pick">Claude's pick</span></div>
+    <p class="idea">CPU is a 40-second trace with the number after it: a single "2%" says nothing, the shape says "it spiked
+      when I opened that scene and settled". The trace turns amber above 50%, orange above 85%. RAM and cache stay plain numbers
+      with short labels. Cache is a button with a drum icon.</p>
+    <div class="states" data-v="s1"></div>
+  </section>
+
+  <section class="sec" id="s2">
+    <div class="fh"><span class="lab">S2</span><h2>Meters</h2><span class="tag t-prop">proposal</span></div>
+    <p class="idea">Hardware-style pips: CPU as 8 segments that fill and warm up. The cache gets a meter too, against the disk
+      cache's 1 GB cap, so "how full" reads before "how big". RAM stays a number: there is no honest scale for it.</p>
+    <div class="states" data-v="s2"></div>
+  </section>
+
+  <section class="sec" id="s3">
+    <div class="fh"><span class="lab">S3</span><h2>Lane</h2><span class="tag t-prop">proposal</span></div>
+    <p class="idea">The app icon's idea in the strip: CPU history drawn as a little commit-graph lane, one dot every 4 s, the
+      dot's size is the load. Quirky and on-brand; the number after it keeps it exact.</p>
+    <div class="states" data-v="s3"></div>
+  </section>
+
+  <section class="sec" id="s4">
+    <div class="fh"><span class="lab">S4</span><h2>Words</h2><span class="tag t-prop">proposal</span></div>
+    <p class="idea">No graphics: the CPU number gets a word ("idle", "ticking", "busy", "flat out") and a dot that beats while
+      busy (steady with reduced motion). Reads like a sentence: "idle 2% · 412 MB in use · 922 MB cached".</p>
+    <div class="states" data-v="s4"></div>
+  </section>
+
+  <section class="sec" id="pop">
+    <div class="fh"><span class="lab">C1</span><h2>Cache popover</h2><span class="tag t-pick">Claude's pick</span></div>
+    <p class="idea">Opens above the cache stat (S1 shown), closes on Esc or a click outside. Says what Clear removes, what it
+      costs (the next scene opening rebuilds), and what it never touches. One button; no confirm, since everything it removes
+      rebuilds itself.</p>
+    <div class="pop-row" id="pops"></div>
+  </section>
+
+  <section class="sec">
+    <div class="fh"><h2>Open questions</h2></div>
+    <ol class="q">
+      <li>Which strip: S1 Trace, S2 Meters, S3 Lane or S4 Words? <span class="tag t-pick">Claude's pick: S1</span> the trace is
+        the only one that adds information over a number (what happened in the last 40 s), and it stays exact.</li>
+      <li>CPU scale: share of the whole machine (Task Manager, 100% = every core) or of one core (100% = one core busy)?
+        <span class="tag t-pick">Claude's pick: whole machine</span> it matches what people compare it with.</li>
+      <li>RAM: count WebView2's processes too? <span class="tag t-pick">Claude's pick: yes</span> it's the real footprint;
+        hover splits it.</li>
+      <li>Library tab (no repo open): hide the cache stat, or show all repos' caches together?
+        <span class="tag t-pick">Claude's pick: show the total</span> with the popover listing the biggest repos, each with
+        its own Clear.</li>
+      <li>Does Clear also drop the in-memory model cache (the 768 MB budget in the viewer)?
+        <span class="tag t-pick">Claude's pick: yes</span> otherwise "Clear" frees disk but RAM stays the same, which reads
+        as broken.</li>
+    </ol>
+  </section>
+</div>
+
+<script>
+const loads = {
+  idle: [2,1,2,3,2,1,1,2,4,2,1,2,2,1,3,2,1,2,2,2],
+  spike: [2,2,3,18,64,88,92,85,71,40,22,12,6,4,3,3,2,3,2,2],
+  busy: [6,12,30,55,70,78,82,80,76,79,81,78,74,77,80,83,79,76,78,78],
+};
+const level = (v) => (v > 85 ? "burn" : v > 50 ? "hot" : "");
+const col = (v) => (v > 85 ? "var(--l1)" : v > 50 ? "var(--l4)" : "var(--l2)");
+
+let sparkId = 0;
+function spark(arr) {
+  const w = 40, h = 12, step = w / (arr.length - 1);
+  const pts = arr.map((v, i) => `${(i * step).toFixed(1)},${(h - 1 - (v / 100) * (h - 2)).toFixed(1)}`);
+  const id = `g${++sparkId}`;
+  const grad = `<linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="0" y1="${h}" x2="0" y2="0">
+    <stop offset="0" stop-color="var(--l2)"/><stop offset=".5" stop-color="var(--l2)"/><stop offset=".5" stop-color="var(--l4)"/>
+    <stop offset=".85" stop-color="var(--l4)"/><stop offset=".85" stop-color="var(--l1)"/></linearGradient>`;
+  return `<svg class="spark" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" aria-hidden="true"><defs>${grad}</defs>
+    <path d="M0,${h - 0.5}H${w}" stroke="var(--a-line)" stroke-width="1"/>
+    <polygon points="0,${h} ${pts.join(" ")} ${w},${h}" fill="url(#${id})" opacity=".2"/>
+    <polyline points="${pts.join(" ")}" fill="none" stroke="url(#${id})" stroke-width="1.3" stroke-linejoin="round"/></svg>`;
+}
+function pips(v, n = 8) {
+  const on = Math.max(v > 0 ? 1 : 0, Math.round((v / 100) * n));
+  let s = "";
+  for (let i = 0; i < n; i++) {
+    const c = i < on ? (i >= 7 ? "var(--l1)" : i >= 4 ? "var(--l4)" : "var(--l2)") : "var(--a-line)";
+    s += `<rect x="${i * 5}" y="1" width="3.5" height="9" rx="1" fill="${c}"/>`;
+  }
+  return `<svg class="pips" width="${n * 5}" height="11" aria-hidden="true">${s}</svg>`;
+}
+function meter(frac) {
+  const w = 34;
+  return `<svg class="pips" width="${w}" height="8" aria-hidden="true"><rect width="${w}" height="6" y="1" rx="3" fill="var(--a-line)"/>
+    <rect width="${Math.max(frac > 0 ? 3 : 0, w * frac)}" height="6" y="1" rx="3" fill="${frac > 0.9 ? "var(--l4)" : "var(--l0)"}"/></svg>`;
+}
+function lane(arr) {
+  const a = arr.filter((_, i) => i % 2 === 1), w = a.length * 7;
+  const dots = a.map((v, i) => `<circle cx="${i * 7 + 3.5}" cy="6" r="${(1.3 + (v / 100) * 3.2).toFixed(2)}" fill="${col(v)}"/>`).join("");
+  return `<svg class="lane" width="${w}" height="12" aria-hidden="true"><path d="M3.5,6H${w - 3.5}" stroke="var(--a-line)" stroke-width="1.5"/>${dots}</svg>`;
+}
+const drum = `<svg class="ic" width="11" height="11" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5">
+  <ellipse cx="8" cy="3.5" rx="5.5" ry="2"/><path d="M2.5 3.5v9c0 1.1 2.5 2 5.5 2s5.5-.9 5.5-2v-9"/><path d="M2.5 8c0 1.1 2.5 2 5.5 2s5.5-.9 5.5-2"/></svg>`;
+const word = (v) => (v > 85 ? "flat out" : v > 50 ? "busy" : v > 10 ? "ticking" : "idle");
+
+const STATES = [
+  { name: "idle, Unity repo", left: "● ↑1 ↓0 against origin/master · fetched 12 min ago", cpu: loads.idle, ram: "412 MB", cache: "922 MB", frac: 0.81 },
+  { name: "just opened a scene", left: "● ↑1 ↓0 against origin/master · fetched 12 min ago", cpu: loads.spike, ram: "1.9 GB", cache: "940 MB", frac: 0.94 },
+  { name: "fetch + 3D busy", task: true, cpu: loads.busy, ram: "2.4 GB", cache: "1.0 GB", frac: 1 },
+  { name: "new repo, no cache", left: "● up to date with origin/main · fetched just now", cpu: loads.idle, ram: "236 MB", cache: "0 B", frac: 0 },
+  { name: "Library tab (Q4)", left: "25 repositories · status local only, refreshed for visible rows", cpu: loads.idle, ram: "318 MB", cache: "6.2 GB", all: true, frac: 0.6 },
+];
+
+function stats(v, s) {
+  const now = s.cpu.at(-1), lv = level(now);
+  const cacheV = `<span class="v${s.cache === "0 B" ? " dim" : ""}">${s.cache}</span>`;
+  const cacheLabel = s.all ? `<span class="k">ALL REPOS</span>` : "";
+  if (v === "s1")
+    return `<span class="stat" title="CPU, last 40 s"><span class="k">CPU</span>${spark(s.cpu)}<span class="v ${lv}">${now}%</span></span>
+      <span class="stat"><span class="k">RAM</span><span class="v">${s.ram}</span></span>
+      <button class="cache" title="gitgud's caches${s.all ? " for every repo" : " for this repo"}">${drum}${cacheLabel}${cacheV}</button>`;
+  if (v === "s2")
+    return `<span class="stat"><span class="k">CPU</span>${pips(now)}<span class="v ${lv}">${now}%</span></span>
+      <span class="stat"><span class="k">RAM</span><span class="v">${s.ram}</span></span>
+      <button class="cache">${drum}${cacheLabel}${meter(s.frac)}${cacheV}</button>`;
+  if (v === "s3")
+    return `<span class="stat"><span class="k">CPU</span>${lane(s.cpu)}<span class="v ${lv}">${now}%</span></span>
+      <span class="stat"><span class="k">RAM</span><span class="v">${s.ram}</span></span>
+      <button class="cache">${drum}${cacheLabel}${cacheV}</button>`;
+  return `<span class="stat"><svg width="7" height="7" class="ic${now > 50 ? " beat" : ""}" aria-hidden="true"><circle cx="3.5" cy="3.5" r="3" fill="${col(now)}"/></svg>
+      <span class="v ${lv}">${word(now)} ${now}%</span></span>
+      <span class="stat"><span class="v">${s.ram}</span><span class="k" style="font:11.5px var(--body)">in use</span></span>
+      <button class="cache"><span class="v${s.cache === "0 B" ? " dim" : ""}">${s.cache}</span><span style="color:var(--a-muted)">cached${s.all ? " in all repos" : ""}</span></button>`;
+}
+function strip(v, s) {
+  const left = s.task
+    ? `<span class="task">↓ Fetching… Receiving objects 62% <span class="bar"><i></i></span><span style="color:var(--l0)">Cancel</span></span>`
+    : `<span class="left">${s.left}</span>`;
+  return `<div class="strip">${left}<span class="sp"></span>${stats(v, s)}</div>`;
+}
+for (const box of document.querySelectorAll(".states")) {
+  const v = box.dataset.v;
+  box.innerHTML = STATES.map((s) => `<div class="st"><span>${s.name}</span>${strip(v, s)}</div>`).join("") +
+    `<div class="st"><span>light theme</span><div class="light">${strip(v, STATES[1])}</div></div>` +
+    `<div class="st"><span>2×, idle</span><div class="zoom">${strip(v, STATES[0])}</div></div>`;
+}
+
+const pop = (body) => `<div class="pop">${body}</div>`;
+const head = `<h4>gitgud's caches <span class="repo">mission-z-2</span></h4>`;
+const rows = `<div class="rows">
+  <span>3D previews on disk</span><b>812 MB</b><span class="n">2,340 meshes · 418 textures</span>
+  <span>Unity references</span><b>14 MB</b><span class="n">GUID index, 31,204 .meta files</span>
+  <span>Loaded in memory</span><b>96 MB</b><span class="n">models and materials open in viewers</span></div>
+  <div class="cap"><i style="width:81%"></i></div><div class="capl"><span>3D previews: 812 MB of the 1 GB cap</span><span>81%</span></div>`;
+const keep = `<div class="keep">Not touched: LFS objects (4.2 GB) and git's commit&#8209;graph. <a href="#">Settings › Caches</a></div>`;
+document.getElementById("pops").innerHTML = [
+  ["open (above the cache stat)",`${head}${rows}<div class="act"><span class="hint">Rebuilt when needed; the next big scene opens slower.</span><button class="danger">Clear 922 MB</button></div>${keep}`],
+  ["clearing", `${head}${rows}<div class="act"><span class="hint">Clearing…</span><button disabled>Clear 922 MB</button></div>${keep}`],
+  ["cleared", `${head}<div class="rows"><span>3D previews on disk</span><b>0 B</b><span>Unity references</span><b>0 B</b><span>Loaded in memory</span><b>0 B</b></div>
+     <div class="act"><span class="hint ok">✓ Freed 922 MB</span><button disabled>Clear</button></div>${keep}`],
+  ["Library tab (Q4)", `<h4>gitgud's caches <span class="repo">25 repos · 6.2 GB</span></h4><div class="rows">
+     <span>mission-z-2</span><b>922 MB</b><span>kraken-island</span><b>1.1 GB</b><span>escape1</span><b>820 MB</b>
+     <span style="color:var(--a-muted)">22 more</span><b style="color:var(--a-muted)">3.0 GB</b></div>
+     <div class="act"><span class="hint">Clears gitgud's own caches in every repo.</span><button class="danger">Clear all 6.2 GB</button></div>${keep.replace("(4.2 GB)", "")}`],
+].map(([n, b]) => `<div class="pop-cell"><span>${n}</span>${pop(b)}</div>`).join("");
+</script>
+</body>
+</html>

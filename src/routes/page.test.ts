@@ -40,6 +40,8 @@ function app(extra: Handlers = {}) {
   };
   const handlers: Handlers = {
     git_info: () => GIT,
+    app_stats: () => ({ cpu: 3, appBytes: 120e6, viewBytes: 290e6, gitBytes: 0 }),
+    repo_caches: ({ roots }) => roots.map((root) => ({ root, previewBytes: 0, previewModels: 0, previewTextures: 0, unityBytes: 0, metaFiles: 0 })),
     launch_path: () => null,
     open_repo: ({ path }: Commands["open_repo"]["args"]) => ({ id: next++, root: path, rows: 1, graphVersion: 0 }),
     repo_status: () => STATUS,
@@ -204,19 +206,15 @@ function app(extra: Handlers = {}) {
   return mockCommands(handlers);
 }
 
-describe("start page: git", () => {
-  it("shows a loading line while git is being located", () => {
-    app({ git_info: () => new Promise(() => {}) });
-    render(Page);
-
-    expect(screen.getByText("Looking for git…")).toBeInTheDocument();
-  });
-
-  it("shows the git version and path", async () => {
+describe("start page: git and app stats", () => {
+  it("shows gitgud's CPU, RAM and caches instead of the git path", async () => {
     app();
     render(Page);
 
-    expect(await screen.findByTestId("git-info")).toHaveTextContent("git 2.56.1 C:/git/git.exe");
+    const stats = await screen.findByTestId("app-stats");
+    expect(await within(stats).findByText("3%")).toBeInTheDocument();
+    expect(within(stats).getByText("391 MB")).toBeInTheDocument();
+    expect(screen.queryByText(/C:\/git\/git\.exe/)).not.toBeInTheDocument();
   });
 
   it("shows the error when git is unusable", async () => {
