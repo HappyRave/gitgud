@@ -20,6 +20,8 @@ describe("UpdateDialog", () => {
 
     expect(screen.getByRole("heading", { name: "gitgud 0.2.0 is out" })).toBeInTheDocument();
     expect(screen.getByText("New things.")).toBeInTheDocument();
+    // Above Settings (z-index 40), where the manual check opens it.
+    expect(screen.getByRole("dialog").parentElement!.style.zIndex).toBe("60");
     await fireEvent.click(screen.getByRole("button", { name: /Install and restart/ }));
     expect(calls.some((c) => c.cmd === "update_install")).toBe(true);
     await emit("update-progress", { downloaded: 50, total: 200 });

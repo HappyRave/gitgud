@@ -4,12 +4,15 @@
   let {
     title,
     width = 460,
+    layer = 20,
     oncancel,
     children,
     footer,
   }: {
     title: string;
     width?: number;
+    /** z-index of the overlay; above Settings' 40 for a dialog that can open over it. */
+    layer?: number;
     oncancel: () => void;
     children: Snippet;
     footer?: Snippet;
@@ -27,7 +30,7 @@
 
 <svelte:window onkeydown={onKeydown} />
 
-<div class="overlay" role="presentation" onclick={(e) => e.target === e.currentTarget && oncancel()}>
+<div class="overlay" style:z-index={layer} role="presentation" onclick={(e) => e.target === e.currentTarget && oncancel()}>
   <div class="dlg" style:--w="{width}px" role="dialog" aria-modal="true" aria-labelledby={headingId}>
     <h2 id={headingId}>{title}</h2>
     <div class="body">{@render children()}</div>
@@ -45,7 +48,6 @@
     display: grid;
     place-items: start center;
     padding-top: 12vh;
-    z-index: 20;
   }
   .dlg {
     width: min(var(--w, 460px), 92vw);

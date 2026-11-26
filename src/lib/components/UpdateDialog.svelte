@@ -50,7 +50,7 @@
   }
 </script>
 
-<Dialog title="gitgud {offer.version} is out" width={520} oncancel={() => !installing && onlater()}>
+<Dialog title="gitgud {offer.version} is out" width={520} layer={60} oncancel={() => !installing && onlater()}>
   <p class="ab">You have {offer.current}.{#if offer.portable} This is a portable copy: download the new one from the release page.{/if}</p>
   {#if offer.notes}
     <div class="notes">{offer.notes}</div>
