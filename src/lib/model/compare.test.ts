@@ -1,6 +1,6 @@
 import { BoxGeometry, Group, Mesh, MeshStandardMaterial, type Object3D } from "three";
 import { describe, expect, it } from "vitest";
-import { compare, namePaths, stats } from "./compare";
+import { bySource, compare, type MergeSource, namePaths, stats } from "./compare";
 
 const mat = (name: string) => Object.assign(new MeshStandardMaterial(), { name });
 
@@ -87,5 +87,26 @@ describe("compare", () => {
   it("counts meshes, triangles and distinct materials", () => {
     const s = stats(boat("old"));
     expect(s).toMatchObject({ objects: 5, meshes: 5, vertices: 5 * 24, triangles: 5 * 12, materials: 5, textures: 0 });
+  });
+});
+
+describe("bySource", () => {
+  it("tints each named object and what sits under it, the nearest source winning", () => {
+    const root = boat("new");
+    const s = bySource(
+      root,
+      new Map<string, MergeSource>([
+        ["Cabin", "yours"],
+        ["Cabin/Windshield", "theirs"],
+        ["Cabin/RoofRack", "clash"],
+        ["Cabin/RoofRack/Bar", "yours"],
+      ]),
+    ).status;
+    const at = namePaths(root);
+    expect(s.get(at.get("Cabin")!)).toBe("yours");
+    expect(s.get(at.get("Cabin/Windshield")!)).toBe("theirs");
+    expect(s.get(at.get("Cabin/RoofRack/Bar")!)).toBe("clash");
+    expect(s.get(at.get("Cabin/RoofRack/Bar#2")!)).toBe("clash");
+    expect(s.get(at.get("Hull")!)).toBeUndefined();
   });
 });

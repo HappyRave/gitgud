@@ -1,3 +1,4 @@
+mod draft;
 mod engine;
 mod inputs;
 mod objects;
@@ -9,6 +10,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+pub use draft::draft_merge;
 use engine::{Decision, Engine, RawRow};
 pub use engine::{RowKind, Source};
 pub use inputs::{MergeOffer, MissingObject, conflict_merge, conflict_merged, offer};

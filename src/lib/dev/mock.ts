@@ -725,6 +725,7 @@ export function installMock(scenario: string) {
       ...MOCK_PROPERTY_MERGE,
     }),
     property_merge_check: () => ({ unresolved: 0, issues: [] }),
+    property_merge_draft: () => ({ unresolved: 0, issues: [] }),
     resolve_property_merge: ({ path }) => resolve(path),
     unity_post_merge_check: () => [],
     unity_repo_setup_status: () => ({

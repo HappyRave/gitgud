@@ -56,6 +56,12 @@ impl InfoCache {
             .retain(|(_, o, _)| matches!(o, Origin::Tree(_)));
     }
 
+    /// Drops the results read from `origin`.
+    pub fn forget(&mut self, origin: &Origin) {
+        self.generation += 1;
+        self.entries.retain(|(_, o, _)| o != origin);
+    }
+
     pub fn len(&self) -> usize {
         self.entries.len()
     }

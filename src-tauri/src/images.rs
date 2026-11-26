@@ -159,6 +159,7 @@ fn read(
         Some("worktree") => Version::Worktree,
         Some("yours") => Version::Yours,
         Some("theirs") => Version::Theirs,
+        Some("draft") => Version::Draft,
         Some("commit") => Version::Commit(commit()?),
         Some("parent") => Version::Parent(commit()?),
         _ => return Err(bad("unknown version")),

@@ -4,6 +4,8 @@ import type { MergeRow, PropertyMerge } from "$lib/api";
 import { mockCommands } from "$lib/test/ipc";
 import UnityMergeTable from "./UnityMergeTable.svelte";
 
+vi.mock("./ModelViewer.svelte", async () => ({ default: (await import("$lib/test/Stub.svelte")).default }));
+
 function row(over: Partial<MergeRow> & Pick<MergeRow, "id" | "source">): MergeRow {
   return {
     kind: "value",
@@ -56,6 +58,7 @@ function setup(merge: PropertyMerge = MERGE) {
       unresolved: 0,
       issues: [{ path: merge.path, kind: "missingRef", fileId: "4", detail: "Buoys references a missing child" }],
     }),
+    property_merge_draft: () => ({ unresolved: 0, issues: [] }),
   });
   const onresolve = vi.fn();
   const onback = vi.fn();
@@ -156,6 +159,40 @@ describe("UnityMergeTable (R9 M2)", () => {
       { id: "12/speed", choice: "theirs", value: null },
       { id: "obj:yours:7", choice: "theirs", value: null },
     ]);
+  });
+
+  it("builds the 3D result on demand and says when picks have made it out of date", async () => {
+    const { calls } = setup();
+    await screen.findByText("Clashes · 2 to pick");
+    const drafts = () => calls.filter((c) => c.cmd === "property_merge_draft");
+    expect(drafts()).toHaveLength(0);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Result in 3D" }));
+    const viewer = await screen.findByTestId("stub");
+    expect(viewer).toHaveAttribute("data-path", "Assets/Level.unity");
+    expect(drafts()).toEqual([{ cmd: "property_merge_draft", args: { id: 1, path: "Assets/Level.unity", picks: [] } }]);
+    expect(screen.getByText(/Result · built/)).toBeInTheDocument();
+
+    // Picking doesn't rebuild; it marks the result out of date.
+    await fireEvent.keyDown(window, { key: "2" });
+    await fireEvent.keyDown(window, { key: "1" });
+    expect(screen.getByRole("status")).toHaveTextContent("Out of date · 2 picks since");
+    expect(drafts()).toHaveLength(1);
+
+    await fireEvent.keyDown(window, { key: "r" });
+    await vi.waitFor(() => expect(screen.queryByRole("status")).toBeNull());
+    expect(drafts()[1].args).toMatchObject({
+      picks: [
+        { id: "12/speed", choice: "theirs", value: null },
+        { id: "obj:yours:7", choice: "yours", value: null },
+      ],
+    });
+  });
+
+  it("offers no 3D result for files without one", async () => {
+    setup({ ...MERGE, path: "Assets/Ship.asset" });
+    await screen.findByText("Clashes · 2 to pick");
+    expect(screen.queryByRole("button", { name: "Result in 3D" })).toBeNull();
   });
 
   it("goes back to picking a side", async () => {

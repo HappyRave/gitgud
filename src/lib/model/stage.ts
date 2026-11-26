@@ -23,7 +23,7 @@ import {
 } from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
-import { type Comparison, compare, type Status } from "./compare";
+import { type Comparison, type MergeSource, bySource, compare, type Status } from "./compare";
 import type { LoadedModel } from "./load";
 import { type Instanced, instance } from "./instancing";
 import { ShadingKit, textureEvents } from "./materials";
@@ -66,6 +66,8 @@ export class ModelStage {
   readonly camera = new PerspectiveCamera(FOV, 1, 0.01, 1000);
   readonly controls: OrbitControls;
   comparison: Comparison = { status: new Map(), changes: [] };
+  /** When set, the Changes shading tints by merge source instead of comparing the sides. */
+  private sources: Map<string, MergeSource> | null = null;
   mode: CompareMode = "side";
   shading: Shading = "textured";
   wire = false;
@@ -146,7 +148,7 @@ export class ModelStage {
     this.sides = [before ? this.side(before, box) : null, this.side(after, box)];
     this.complete = false;
     this.version++;
-    this.comparison = before ? compare(before.root, after.root) : { status: new Map(), changes: [] };
+    this.comparison = this.compareSides(before?.root ?? null, after.root);
     this.applyShading();
     this.frameAll();
     this.setClip(this.clips()[0]?.name ?? null);
@@ -203,7 +205,7 @@ export class ModelStage {
         this.fit(s, box);
       }
     }
-    this.comparison = before ? compare(before.model.root, after.model.root) : { status: new Map(), changes: [] };
+    this.comparison = this.compareSides(before?.model.root ?? null, after.model.root);
     this.complete = true;
     this.applyShading();
     const keep = this.clips().some((c) => c.name === this.clip);
@@ -267,6 +269,23 @@ export class ModelStage {
     }
     this.shadowsStale = true;
     this.dirty = true;
+  }
+
+  private compareSides(before: Object3D | null, after: Object3D): Comparison {
+    if (this.sources) {
+      return bySource(after, this.sources);
+    }
+    return before ? compare(before, after) : { status: new Map(), changes: [] };
+  }
+
+  /** Tints the shown model by merge source (`null`: compare the sides as usual). */
+  setSources(sources: Map<string, MergeSource> | null) {
+    this.sources = sources;
+    const [before, after] = this.sides;
+    if (after) {
+      this.comparison = this.compareSides(before?.model.root ?? null, after.model.root);
+      this.applyShading();
+    }
   }
 
   setShading(shading: Shading) {

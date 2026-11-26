@@ -1597,6 +1597,16 @@ async fn property_merge_check(
 }
 
 #[tauri::command]
+async fn property_merge_draft(
+    session: State<'_, Session>,
+    id: u32,
+    path: String,
+    picks: Vec<RowPick>,
+) -> Result<MergeCheck, Error> {
+    session.property_merge_draft(id, &path, &picks)
+}
+
+#[tauri::command]
 async fn resolve_property_merge(
     session: State<'_, Session>,
     id: u32,
@@ -1987,6 +1997,7 @@ fn app_with_library<R: Runtime>(builder: Builder<R>, library: Option<LibraryStor
             property_merge_offer,
             property_merge,
             property_merge_check,
+            property_merge_draft,
             resolve_property_merge,
             unity_post_merge_check,
             unity_repo_setup_status,
@@ -3844,6 +3855,14 @@ mod tests {
             )
             .unwrap();
         assert_eq!(check, json!({ "unresolved": 0, "issues": [] }));
+
+        let draft = ipc
+            .call(
+                "property_merge_draft",
+                json!({ "id": id, "path": "Assets/Player.prefab", "picks": picks }),
+            )
+            .unwrap();
+        assert_eq!(draft, check);
 
         ipc.call(
             "resolve_property_merge",

@@ -2,7 +2,7 @@
   import { onDestroy, type Snippet, untrack } from "svelte";
   import type { Object3D } from "three";
   import type { BinaryMeta, BinarySide } from "$lib/api";
-  import { type Change, type ModelStats, stats, TINT } from "$lib/model/compare";
+  import { type Change, type MergeSource, type ModelStats, stats, TINT } from "$lib/model/compare";
   import type { ModelSide, Opened } from "$lib/model/open";
   import type { Summary } from "$lib/model/progress";
   import type { CompareMode, ModelStage } from "$lib/model/stage";
@@ -25,6 +25,7 @@
     chrome,
     startClip = null,
     merged = false,
+    sources = null,
   }: {
     repoId: number;
     path: string;
@@ -41,6 +42,8 @@
     startClip?: string | null;
     /** Offers the Merged mode next to Side by side (scenes, R7 decision 10). */
     merged?: boolean;
+    /** One model tinted by merge source in the Changes shading, by name path (R9's result). */
+    sources?: Map<string, MergeSource> | null;
   } = $props();
 
   let canvas = $state<HTMLCanvasElement>();
@@ -137,6 +140,7 @@
     if (!stage) {
       return;
     }
+    stage.setSources(untrack(() => sources));
     stage.setModels(b?.model ?? null, a.model);
     single = stage.single;
     // A scene shows at once and fills in; what depends on all of it waits until then.
@@ -239,13 +243,18 @@
     stage.playing = prefs.modelPlaying && duration > 0;
     stage.setOnion(onion);
     stage.setDimUnchanged(changedOnly && !single && !chrome && prefs.modelShading === "changes");
-    stage.setShading(single || chrome ? "textured" : prefs.modelShading);
+    stage.setShading(shown);
     stage.invalidate();
   }
 
   $effect(() => {
     void [mode, wire, big, split, onion, prefs.modelShading, prefs.modelPlaying, single, duration, changedOnly];
     sync();
+  });
+
+  $effect(() => {
+    const s = sources;
+    untrack(() => stage?.setSources(s));
   });
 
   function resize() {
@@ -307,7 +316,7 @@
     stage?.pick(e.clientX - r.left, e.clientY - r.top);
   }
 
-  const shown = $derived(single || chrome ? "textured" : prefs.modelShading);
+  const shown = $derived((single && !sources) || chrome ? "textured" : prefs.modelShading);
   /** The change list gets a filter box past this many entries (a scene's hierarchy). */
   const FILTER_FROM = 8;
   const filtered = $derived(filter.trim() ? changes.filter((c) => c.name.toLowerCase().includes(filter.trim().toLowerCase())) : changes);
@@ -387,7 +396,7 @@
             class:on={shown === "changes"}
             role="radio"
             aria-checked={shown === "changes"}
-            disabled={single}
+            disabled={single && !sources}
             onclick={() => setModelShading("changes")}>Changes</button
           >
         </div>

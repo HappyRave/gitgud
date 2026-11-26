@@ -281,7 +281,9 @@ fn at<'r>(gix_repo: &'r gix::Repository, version: &Version) -> Result<At<'r>, Er
             }
         }
         Version::Head => gix_repo.head_commit().map_or(At::Nothing, At::Commit),
-        Version::Index | Version::Worktree | Version::Yours | Version::Theirs => At::Index,
+        Version::Index | Version::Worktree | Version::Yours | Version::Theirs | Version::Draft => {
+            At::Index
+        }
     })
 }
 
@@ -298,6 +300,7 @@ pub(crate) fn origin(repo: &Repo, version: &Version) -> Result<Origin, Error> {
             Version::Index => "index",
             Version::Yours => "yours",
             Version::Theirs => "theirs",
+            Version::Draft => "draft",
             _ => "worktree",
         }),
     })

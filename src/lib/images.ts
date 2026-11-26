@@ -2,7 +2,7 @@ import { formatSize } from "$lib/merge/resolve";
 
 /** Versions the `gitgud://` image protocol serves (see `src-tauri/src/images.rs`). */
 export type ImageAt =
-  | { at: "head" | "index" | "worktree" | "yours" | "theirs" }
+  | { at: "head" | "index" | "worktree" | "yours" | "theirs" | "draft" }
   | { at: "commit" | "parent"; commit: string };
 
 const IMAGE = /\.(png|jpe?g|gif|webp|bmp|ico|svg|tga|psd|dds|exr|hdr|tiff?)$/i;

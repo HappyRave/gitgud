@@ -1770,6 +1770,20 @@ impl Session {
         })
     }
 
+    /// Keeps `path` merged with `picks` as its draft, which the 3D previews read as
+    /// `Version::Draft` (R9's result pane); nothing written.
+    ///
+    /// # Errors
+    /// [`Error::Refused`] when it can't be merged by property or a pick is stale.
+    pub fn property_merge_draft(
+        &self,
+        id: u32,
+        path: &str,
+        picks: &[RowPick],
+    ) -> Result<MergeCheck, Error> {
+        unity_merge::draft_merge(&self.get(id)?.repo, path, picks)
+    }
+
     /// Writes `path` merged with `picks` and stages it (git's LFS filter stores it); undoable.
     ///
     /// # Errors
@@ -1780,7 +1794,8 @@ impl Session {
         path: &str,
         picks: &[RowPick],
     ) -> Result<Opened, Error> {
-        let (merged, lfs) = unity_merge::conflict_merged(&self.get(id)?.repo, path, picks)?;
+        let repo = self.get(id)?.repo.clone();
+        let (merged, lfs) = unity_merge::conflict_merged(&repo, path, picks)?;
         if merged.unresolved > 0 {
             return Err(Error::Refused(format!(
                 "{path}: {} clash{} still need{} a pick",
@@ -1789,6 +1804,7 @@ impl Session {
                 if merged.unresolved == 1 { "s" } else { "" },
             )));
         }
+        repo.set_draft(path, None);
         if !lfs {
             return self.resolve_with(id, path, &merged.text, "merged by property");
         }

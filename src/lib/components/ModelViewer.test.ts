@@ -46,6 +46,7 @@ class FakeStage {
     this.shading = s;
   }
   setOnion() {}
+  setSources = vi.fn();
   dim = false;
   setDimUnchanged(d: boolean) {
     this.dim = d;

@@ -27,6 +27,8 @@ pub enum Version {
     Yours,
     /// Stage 3 of a conflicted path.
     Theirs,
+    /// A property merge's result before it's saved, the rest from the index.
+    Draft,
 }
 
 /// The MIME type of image files the webview can show, by extension.
@@ -417,6 +419,10 @@ impl Repo {
                 };
                 picked.ok_or_else(missing)
             }
+            Version::Draft => match self.draft(path) {
+                Some(bytes) => Ok((*bytes).clone()),
+                None => self.versioned_file(path, &Version::Index),
+            },
         }
     }
 

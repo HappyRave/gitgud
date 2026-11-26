@@ -4,6 +4,7 @@
   import {
     propertyMerge,
     propertyMergeCheck,
+    propertyMergeDraft,
     type MergeCheck,
     type MergeRow,
     type PropertyMerge,
@@ -16,9 +17,13 @@
     choiceOf,
     matches,
     openClashes,
+    picksSince,
+    resultSources,
     resultText,
     toPicks,
   } from "$lib/merge/property";
+  import { TINT } from "$lib/model/compare";
+  import ModelViewer from "./ModelViewer.svelte";
 
   let {
     repoId,
@@ -58,6 +63,13 @@
   let showAll = $state(false);
   let check = $state<MergeCheck | null>(null);
   let checkError = $state<string | null>(null);
+  /** The 3D result pane (R9, A: built on demand from the picks of that moment). */
+  let resultOpen = $state(false);
+  let built = $state<{ picks: Map<string, Choice>; at: string; bust: number } | null>(null);
+  let building = $state(false);
+  let buildError = $state<string | null>(null);
+  let buildSeq = 0;
+  const has3d = $derived(/\.(unity|prefab)$/i.test(path));
 
   const rows = $derived(merge?.rows ?? []);
   const visible = $derived(rows.filter((r) => matches(r, filter)));
@@ -101,6 +113,10 @@
         filter = "all";
         showAll = false;
         currentId = m.rows[0]?.id ?? null;
+        built = null;
+        if (resultOpen) {
+          buildResult();
+        }
       },
       (err) => {
         if (!stale) {
@@ -141,6 +157,42 @@
       clearTimeout(timer);
     };
   });
+
+  const since = $derived(built ? picksSince(rows, built.picks, picks) : 0);
+  const sources = $derived(built ? resultSources(rows, built.picks) : null);
+
+  function buildResult() {
+    if (!merge) {
+      return;
+    }
+    const snapshot = new Map(picks);
+    const seq = ++buildSeq;
+    building = true;
+    buildError = null;
+    propertyMergeDraft(repoId, path, toPicks(rows, snapshot)).then(
+      () => {
+        if (seq !== buildSeq) {
+          return;
+        }
+        const at = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+        built = { picks: snapshot, at, bust: (built?.bust ?? 0) + 1 };
+        building = false;
+      },
+      (err) => {
+        if (seq === buildSeq) {
+          buildError = String(err);
+          building = false;
+        }
+      },
+    );
+  }
+
+  function toggleResult() {
+    resultOpen = !resultOpen;
+    if (resultOpen && (!built || since > 0)) {
+      buildResult();
+    }
+  }
 
   function choose(row: MergeRow, choice: Choice) {
     currentId = row.id;
@@ -208,6 +260,11 @@
         event.preventDefault();
         save();
       }
+      return;
+    }
+    if ((event.key === "r" || event.key === "R") && resultOpen && !building) {
+      event.preventDefault();
+      buildResult();
       return;
     }
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
@@ -365,6 +422,9 @@
       {#if onrawyaml}
         <button type="button" class="sm" onclick={onrawyaml}>Raw YAML</button>
       {/if}
+      {#if has3d}
+        <button type="button" class="sm" disabled={!merge} aria-pressed={resultOpen} onclick={toggleResult}>Result in 3D</button>
+      {/if}
       <button type="button" class="pri sm" disabled={!merge || left > 0 || busy} onclick={save}>
         Save &amp; mark resolved
       </button>
@@ -374,6 +434,8 @@
   {#if !merge}
     <p class="note">Reading the three versions…</p>
   {:else}
+    <div class="body" class:split={resultOpen}>
+    <div class="left">
     <div class="pills" role="group" aria-label="Show">
       {#each FILTERS as f (f.id)}
         <button type="button" class="pill" class:on={filter === f.id} aria-pressed={filter === f.id} onclick={() => (filter = f.id)}>
@@ -441,6 +503,38 @@
         </section>
       {/if}
     </div>
+    </div>
+    {#if resultOpen}
+      <section class="result" aria-label="Merged result in 3D">
+        <div class="ph">
+          <span class="name">Result{built ? ` · built ${built.at}` : ""}</span>
+          {#if building}<span class="ct">· building…</span>{/if}
+        </div>
+        {#if since > 0 && !building}
+          <div class="stale" role="status">
+            Out of date · {since} pick{since === 1 ? "" : "s"} since
+            <span class="grow"></span>
+            <button type="button" class="sm" onclick={buildResult}>Rebuild <span class="k">R</span></button>
+          </div>
+        {/if}
+        {#if buildError}
+          <p class="note bad">{buildError}</p>
+        {:else if built}
+          <div class="viewer">
+            <ModelViewer {repoId} {path} after={{ label: "Merged result", at: { at: "draft" } }} bust={built.bust} {sources} />
+          </div>
+          <div class="legend" aria-label="Tint">
+            <span><i style:background={TINT.yours}></i>from {yoursLabel}</span>
+            <span><i style:background={TINT.theirs}></i>from {theirsLabel}</span>
+            <span><i style:background={TINT.clash}></i>clash</span>
+            <span class="muted">white: unchanged · Changes shading</span>
+          </div>
+        {:else}
+          <p class="note">Building the result…</p>
+        {/if}
+      </section>
+    {/if}
+    </div>
   {/if}
 </section>
 
@@ -495,6 +589,59 @@
     flex: 1;
     overflow: auto;
     padding: 0 0 10px;
+  }
+  .body {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .body.split {
+    grid-template-columns: minmax(0, 1.4fr) minmax(320px, 1fr);
+  }
+  .left,
+  .result {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    min-width: 0;
+  }
+  .result {
+    border-left: 1px solid var(--line);
+  }
+  .result .viewer {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+  }
+  .stale {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 10px;
+    background: var(--warn);
+    color: var(--warn-ink);
+    font-size: 11.5px;
+  }
+  .grow {
+    flex: 1;
+  }
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    padding: 5px 10px;
+    border-top: 1px solid var(--line);
+    font-size: 11px;
+  }
+  .legend i {
+    display: inline-block;
+    width: 9px;
+    height: 9px;
+    border-radius: 2px;
+    margin-right: 5px;
+    vertical-align: -1px;
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fg) 25%, transparent);
   }
   .tbl {
     width: 100%;

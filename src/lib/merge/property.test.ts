@@ -1,6 +1,16 @@
 import { describe, expect, it } from "vitest";
 import type { MergeRow } from "$lib/api";
-import { type Choice, choiceOf, defaultChoice, matches, openClashes, resultText, toPicks } from "./property";
+import {
+  type Choice,
+  choiceOf,
+  defaultChoice,
+  matches,
+  openClashes,
+  picksSince,
+  resultSources,
+  resultText,
+  toPicks,
+} from "./property";
 
 function row(over: Partial<MergeRow>): MergeRow {
   return {
@@ -63,5 +73,32 @@ describe("property merge choices", () => {
     ]);
     expect(openClashes(rows, new Map())).toBe(1);
     expect(openClashes(rows, picks)).toBe(0);
+  });
+});
+
+describe("the 3D result pane", () => {
+  const rows = [
+    row({ id: "a", source: "clash", objectPath: "Dock / Crane" }),
+    row({ id: "b", source: "theirs", objectPath: "Lighthouse" }),
+    row({ id: "c", source: "yours", objectPath: "Lighthouse", property: "m_Intensity" }),
+    row({ id: "d", source: "yours", objectPath: "Boat" }),
+    row({ id: "e", source: "theirs", objectPath: "(file)" }),
+  ];
+
+  it("counts the rows whose choice changed since the build", () => {
+    const built = new Map<string, Choice>([["a", "yours"]]);
+    expect(picksSince(rows, built, built)).toBe(0);
+    expect(picksSince(rows, built, new Map<string, Choice>([["a", "theirs"], ["d", "theirs"]]))).toBe(2);
+    expect(picksSince(rows, new Map([["a", { custom: "1" }]]), new Map([["a", { custom: "1" }]]))).toBe(0);
+    expect(picksSince(rows, new Map([["a", { custom: "1" }]]), new Map([["a", { custom: "2" }]]))).toBe(1);
+  });
+
+  it("tints objects by the side their values came from, clashes kept", () => {
+    const tints = resultSources(rows, new Map<string, Choice>([["d", "theirs"]]));
+    expect([...tints]).toEqual([
+      ["Dock/Crane", "clash"],
+      ["Lighthouse", "yours"],
+      ["Boat", "theirs"],
+    ]);
   });
 });

@@ -31,6 +31,10 @@ of the changes and merged result)". Round: `docs/lab/merge.html`.
 - **Decided (2026-11-26):** the 3D result pane is **A, on demand**. Max: "Go A". Built from the
   current picks when the pane opens or on Rebuild (R); later picks mark it out of date ("Out of date ·
   N picks since"), never rebuild by themselves. Not chosen: B Live, C No result pane.
+- **Built (2026-11-26):** A, 3D only (Max: "Go, 3D only"; the mock's Structure | 3D switch left out).
+  "Result in 3D" in the table's header opens the pane, for `.unity` and `.prefab` files. The result
+  shows Changes-shaded by source; Textured is one click away. Claude's call: objects are matched to
+  rows by their object path, so a repeated sibling name tints only the first.
 
 ## R8 · App stats in the strip (2026-11-26)
 

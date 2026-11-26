@@ -375,6 +375,7 @@ export type FileVersion =
   | "worktree"
   | "yours"
   | "theirs"
+  | "draft"
   | { commit: string }
   | { parent: string };
 
@@ -1278,6 +1279,7 @@ export interface Commands {
   property_merge_offer: { args: { id: number; path: string }; result: MergeOffer };
   property_merge: { args: { id: number; path: string }; result: PropertyMerge };
   property_merge_check: { args: { id: number; path: string; picks: RowPick[] }; result: MergeCheck };
+  property_merge_draft: { args: { id: number; path: string; picks: RowPick[] }; result: MergeCheck };
   resolve_property_merge: { args: { id: number; path: string; picks: RowPick[] }; result: Opened };
   unity_post_merge_check: { args: { id: number; paths: string[] }; result: UnityIntegrityIssue[] };
   unity_repo_setup_status: { args: { id: number }; result: UnityRepoSetupStatus };
@@ -1636,6 +1638,9 @@ export const propertyMergeOffer = (id: number, path: string) => call("property_m
 export const propertyMerge = (id: number, path: string) => call("property_merge", { id, path });
 export const propertyMergeCheck = (id: number, path: string, picks: RowPick[]) =>
   call("property_merge_check", { id, path, picks });
+/** Keeps `path` merged with `picks` as the `draft` version the 3D viewer reads (R9's result pane). */
+export const propertyMergeDraft = (id: number, path: string, picks: RowPick[]) =>
+  call("property_merge_draft", { id, path, picks });
 export const resolvePropertyMerge = (id: number, path: string, picks: RowPick[]) =>
   call("resolve_property_merge", { id, path, picks });
 export const unityPostMergeCheck = (id: number, paths: string[]) => call("unity_post_merge_check", { id, paths });

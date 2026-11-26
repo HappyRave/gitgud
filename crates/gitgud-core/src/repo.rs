@@ -36,6 +36,8 @@ pub struct Repo {
     pub(crate) inline_sources: Mutex<Vec<(String, crate::model::InlineSlot)>>,
     /// Recent versions' file listings; see `model::tree::Files::new`.
     pub(crate) listings: Mutex<Vec<(crate::model::cache::Origin, Arc<crate::model::tree::Listed>)>>,
+    /// Property merge results not saved yet, by path; see `Version::Draft`.
+    pub(crate) drafts: Mutex<HashMap<String, Arc<Vec<u8>>>>,
 }
 
 /// GUID -> asset path, from one tree's `.meta` files.
@@ -63,6 +65,7 @@ pub fn open(path: impl AsRef<Path>) -> Result<Repo, Error> {
         ignored: Mutex::new(HashMap::new()),
         inline_sources: Mutex::new(Vec::new()),
         listings: Mutex::new(Vec::new()),
+        drafts: Mutex::new(HashMap::new()),
     })
 }
 

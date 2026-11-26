@@ -1,14 +1,19 @@
 import type { Material, Mesh, Object3D } from "three";
 
 export type ChangeKind = "added" | "removed" | "modified";
-export type Status = ChangeKind | "same";
+/** Which side a property merge's change came from (R9's result pane). */
+export type MergeSource = "yours" | "theirs" | "clash";
+export type Status = ChangeKind | "same" | MergeSource;
 
-/** Clay tint per status in the Changes shading (R6, from D). */
+/** Clay tint per status in the Changes shading (R6, from D); merge sources use the lane colours. */
 export const TINT: Record<Status, string> = {
   same: "#ffffff",
   added: "#46e0a6",
   removed: "#ff6b5a",
   modified: "#ffc533",
+  yours: "#56b4e9",
+  theirs: "#ff8c42",
+  clash: "#e8475f",
 };
 
 export interface Change {
@@ -150,6 +155,28 @@ export function compare(before: Object3D, after: Object3D): Comparison {
     }
   }
   return { status, changes };
+}
+
+/**
+ * Tints one model by where each change came from: `sources` maps name paths (as
+ * `namePaths` builds them) to a merge source, and what sits under a tinted object
+ * takes its tint unless it has its own. A clash's tint is never replaced.
+ */
+export function bySource(root: Object3D, sources: Map<string, MergeSource>): Comparison {
+  const status = new Map<Object3D, Status>();
+  // `namePaths` lists parents before their children, so the nearest source is set last.
+  for (const [k, o] of namePaths(root)) {
+    const s = sources.get(k);
+    if (!s) {
+      continue;
+    }
+    o.traverse((d) => {
+      if (status.get(d) !== "clash" || s === "clash") {
+        status.set(d, s);
+      }
+    });
+  }
+  return { status, changes: [] };
 }
 
 export interface ModelStats {

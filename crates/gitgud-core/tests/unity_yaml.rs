@@ -489,6 +489,49 @@ fn an_lfs_scene_changed_on_both_sides_merges_by_property() {
 }
 
 #[test]
+fn a_drafted_merge_is_read_in_3d_and_redrafting_replaces_it() {
+    let ours = LIGHTHOUSE.replace("{x: 0, y: 0, z: 0}", "{x: 0, y: 0.35, z: 0}");
+    let theirs = LIGHTHOUSE.replace("m_Range: 24", "m_Range: 30");
+    let (repo, session, id) = lfs_scene_conflict(&ours, &theirs);
+    let path = "Assets/Level.unity";
+    let draft = gitgud_core::image::Version::Draft;
+    let height = || {
+        session
+            .model_info(id, path, &draft)
+            .unwrap()
+            .scene
+            .unwrap()
+            .nodes[0]
+            .position[1]
+    };
+
+    let check = session.property_merge_draft(id, path, &[]).unwrap();
+    assert_eq!(check.unresolved, 0);
+    assert!((height() - 0.35).abs() < 1e-6);
+
+    let table = session.property_merge(id, path).unwrap();
+    let moved = table
+        .rows
+        .iter()
+        .find(|r| r.source == Source::Yours)
+        .unwrap();
+    let back = [RowPick {
+        id: moved.id.clone(),
+        choice: PickChoice::Theirs,
+        value: None,
+    }];
+    session.property_merge_draft(id, path, &back).unwrap();
+    assert!(height().abs() < 1e-6, "the earlier draft's scene was kept");
+
+    session.resolve_property_merge(id, path, &back).unwrap();
+    assert!(
+        std::fs::read_to_string(repo.path().join(path))
+            .unwrap()
+            .contains("m_Range: 30")
+    );
+}
+
+#[test]
 fn a_missing_lfs_version_is_named_for_fetching() {
     let ours = LIGHTHOUSE.replace("m_Intensity: 1.2", "m_Intensity: 1.6");
     let theirs = LIGHTHOUSE.replace("m_Range: 24", "m_Range: 30");

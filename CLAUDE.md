@@ -148,7 +148,12 @@ replaying at most 255 rows (spike 4.3).
   table, an LFS one in `SidePick` with `property_merge_offer`'s counts (or Fetch / a reason) and
   "Merge by property…" (M). An LFS result is written in work-tree form (`resolve_with_worktree`) so
   only git's clean filter runs. `corpus_round_trips` (ignored; `GITGUD_UNITY_CORPUS=<project>`)
-  checks a real project.
+  checks a real project. The 3D result pane ("Result in 3D", scenes and prefabs) is built on demand:
+  `property_merge_draft` keeps the merged text in `Repo::drafts` (`unity_merge/draft.rs`), read as
+  `Version::Draft` (`at=draft`: that file from the draft, the rest from the index), and drops the
+  draft's `model_info` / inline-mesh caches on each rebuild; the resolve drops the draft. Later picks
+  show "Out of date · N picks since" (`picksSince`) until Rebuild (R). `ModelViewer`'s `sources`
+  (`resultSources` → `bySource`) tints the result by where each object's change came from.
 - **Network** (`task.rs`, `job.rs`): long git runs parse `--progress` and cancel by killing a
   Windows Job Object (git starts suspended, joins the job, resumes), which also ends grandchildren
   `taskkill /T` misses. A cancelled fetch deletes its `tmp_pack_*` files.
