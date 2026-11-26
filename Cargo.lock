@@ -1727,7 +1727,7 @@ dependencies = [
 
 [[package]]
 name = "gitgud"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "gitgud-core",
  "image",
@@ -1744,7 +1744,7 @@ dependencies = [
 
 [[package]]
 name = "gitgud-cli"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "gitgud-core",
  "serde",
@@ -1754,7 +1754,7 @@ dependencies = [
 
 [[package]]
 name = "gitgud-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "csv",
  "ebur128",
