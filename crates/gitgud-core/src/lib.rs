@@ -24,6 +24,8 @@ pub mod merge;
 pub mod model;
 pub mod oplog;
 pub mod ops;
+pub mod overlap;
+pub mod partial_lfs;
 pub mod preview;
 pub mod proposals;
 pub mod rebase;

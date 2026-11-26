@@ -5,8 +5,10 @@ import type {
   GitChoice,
   GitInventory,
   HistoryPlan,
+  LfsPlan,
   LibrarySnapshot,
   MergeRow,
+  PartialState,
   MergeState,
   Opened,
   OpEntry,
@@ -1011,6 +1013,43 @@ export function installMock(scenario: string) {
       mockLib = { ...mockLib, repos: mockLib.repos.filter((r) => !removeIds.includes(r.id)), undoAction: "Rescan" };
       return mockLib;
     },
+    overlap: () => ({
+      against: ["origin/main"],
+      files: [
+        {
+          path: "Assets/Art/Trees/Maps/TreeBillBoards_albedo.png",
+          risk: "wontMerge",
+          on: "origin/main",
+          authors: ["JG"],
+          commits: 2,
+          newest: now - 40 * 60,
+          newestCommit: "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678",
+          dirty: true,
+        },
+        {
+          path: "Assets/Scripts/Boat/Engine.cs",
+          risk: "mayConflict",
+          on: "origin/main",
+          authors: ["Jean Paul", "MM"],
+          commits: 3,
+          newest: now - 2 * 3600,
+          newestCommit: "b1b2c3d4e5f60718293a4b5c6d7e8f9012345678",
+          dirty: true,
+        },
+      ],
+    }),
+    notify: () => null,
+    lfs_partial_plan: ({ state }) => mockLfsPlan(state ?? mockLfsState ?? { buildScenes: true, scenes: [], kept: [] }, !!mockLfsState),
+    lfs_partial_apply: ({ state }) => {
+      mockLfsState = state;
+      mockLfsOnDisk = state ? null : MOCK_LFS_TOTAL;
+      return mockLfsPlan(state ?? { buildScenes: true, scenes: [], kept: [] }, !!state);
+    },
+    lfs_partial_download: ({ paths }) => {
+      const state = mockLfsState ?? { buildScenes: true, scenes: [], kept: [] };
+      mockLfsState = { ...state, kept: [...new Set([...state.kept, ...paths])] };
+      return mockLfsPlan(mockLfsState, true);
+    },
     clone_repo: ({ dest }) => dest,
     cancel_clone: () => true,
     fetch_many: () => mockLib.repos.map((r) => r.cached!).filter(Boolean),
@@ -1027,6 +1066,50 @@ export function installMock(scenario: string) {
     },
     { shouldMockEvents: true },
   );
+}
+
+// R10 partial LFS: horrorescape's measured sizes (2026-11-26), as an example.
+const GIB = 1024 ** 3;
+const MOCK_LFS_TOTAL = 33.64 * GIB;
+let mockLfsState: PartialState | null = null;
+/** On disk now; `null` once partial (then what the state wants). */
+let mockLfsOnDisk: number | null = MOCK_LFS_TOTAL;
+const MOCK_LFS_FOLDERS: [string, number, number][] = [
+  ["Assets/Plugins/TheThinWoman", 4.16, 4.9],
+  ["Assets/Plugins/Abandoned_Psychiatric_Hospitals", 2.36, 6.47],
+  ["Assets/Plugins/_Manufactory", 1.84, 1.85],
+  ["Assets/Plugins/LeartesStudios", 1.76, 1.83],
+  ["Assets/Scenes/Horror 2 - GameplayScene - Merged", 1.69, 1.69],
+  ["Assets/BakeryLightmaps", 1.05, 1.05],
+  ["Assets/Scenes/HorrorScenes", 1.02, 2.35],
+  ["Assets/_DEBUG/DEV_Sam", 0.93, 2.58],
+];
+
+function mockLfsPlan(state: PartialState, partial: boolean): LfsPlan {
+  const share = (gib: number, files: number) => ({ bytes: Math.round(gib * GIB), files });
+  const kept = MOCK_LFS_FOLDERS.filter(([f]) => state.kept.includes(f));
+  const keptGib = kept.reduce((n, [, s]) => n + s, 0);
+  const used = (state.buildScenes ? 13.14 : 0) + state.scenes.length * 0.21;
+  const wanted = used + 0.68 + keptGib;
+  return {
+    partial,
+    state,
+    buildScenes: Array.from({ length: 12 }, (_, i) => `Assets/Scenes/HorrorScenes/Horror ${i + 1}.unity`),
+    allScenes: ["Assets/_DEBUG/DEV_Max/Test_Lighting.unity", "Assets/Plugins/Horror_Pack_1/Scenes/Demo_Hall_And_Office.unity"],
+    total: share(33.64, 8246),
+    used: share(used, 2142),
+    always: share(0.68, 275),
+    kept: share(keptGib, kept.length * 120),
+    skipped: share(33.64 - wanted, 5825),
+    skippedFolders: MOCK_LFS_FOLDERS.filter(([f]) => !state.kept.includes(f)).map(([folder, s, t]) => ({
+      folder,
+      skipped: share(s, 400),
+      total: share(t, 500),
+    })),
+    onDisk: { bytes: mockLfsOnDisk ?? Math.round(wanted * GIB), files: 0 },
+    missing: [],
+    fetchedToRead: 0,
+  };
 }
 
 function mergeRow(over: Partial<MergeRow> & Pick<MergeRow, "id" | "source" | "objectPath" | "component" | "property">): MergeRow {

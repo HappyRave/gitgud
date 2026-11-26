@@ -359,7 +359,7 @@ impl Repo {
     }
 
     /// The work tree file converted to its git form, `None` when it's gone.
-    fn worktree_as_git(
+    pub(crate) fn worktree_as_git(
         &self,
         repo: &gix::Repository,
         path: &str,

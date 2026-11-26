@@ -22,6 +22,8 @@ use gitgud_core::library::{
 use gitgud_core::merge::{ConflictSides, ConflictText, MergeState, Side as MergeSide};
 use gitgud_core::oplog::{OpEntry, OpLogStats, ReflogEntry};
 use gitgud_core::ops::{CommitOptions, ResetMode};
+use gitgud_core::overlap::Overlap;
+use gitgud_core::partial_lfs::{self, LfsPlan, PartialState};
 use gitgud_core::proposals::{ProposalSummary, WorktreeInfo};
 use gitgud_core::rebase::{RebasePlan, RebaseState, RebaseStep};
 use gitgud_core::remote::{PullStrategy, PushInfo};
@@ -1063,7 +1065,9 @@ async fn clone_repo<R: Runtime>(
     dest: String,
     folder_path: Option<String>,
     long_paths: bool,
+    lfs_partial: Option<bool>,
 ) -> Result<String, Error> {
+    let lfs_partial = lfs_partial.unwrap_or(false);
     let cancel = {
         let mut g = active
             .0
@@ -1083,6 +1087,7 @@ async fn clone_repo<R: Runtime>(
         &url,
         Path::new(&dest),
         long_paths,
+        lfs_partial,
         &cancel,
         &mut |p: CloneProgress| {
             if let Err(e) = app.emit(CLONE_PROGRESS, p) {
@@ -1096,6 +1101,33 @@ async fn clone_repo<R: Runtime>(
         folder_path,
         name: None,
     }]);
+    if lfs_partial {
+        // Pointers came down; now what the build's scenes use (R10-B).
+        let repo = repo::open(&cloned)?;
+        partial_lfs::apply(
+            git,
+            &repo,
+            Some(&PartialState::build()),
+            &mut |p: Progress| {
+                let progress = CloneProgress {
+                    phase: format!("LFS: {}", p.phase),
+                    percent: p.percent,
+                    done: p.done,
+                    total: p.total,
+                    lfs: None,
+                };
+                if let Err(e) = app.emit(CLONE_PROGRESS, progress) {
+                    eprintln!("gitgud: cannot emit {CLONE_PROGRESS}: {e}");
+                }
+            },
+            &cancel,
+        )
+        .map_err(|e| {
+            Error::Refused(format!(
+                "Cloned with every LFS file as a pointer, but downloading what the build uses failed: {e}"
+            ))
+        })?;
+    }
     let _ = library.refresh_summaries(std::slice::from_ref(&path_str));
     Ok(path_str)
 }
@@ -1724,6 +1756,56 @@ async fn lfs_cache_stats(session: State<'_, Session>, id: u32) -> Result<LfsCach
 }
 
 #[tauri::command]
+async fn lfs_partial_plan(
+    session: State<'_, Session>,
+    id: u32,
+    state: Option<PartialState>,
+) -> Result<LfsPlan, Error> {
+    session.lfs_partial_plan(id, state)
+}
+
+#[tauri::command]
+async fn overlap(session: State<'_, Session>, id: u32) -> Result<Option<Overlap>, Error> {
+    session.overlap(id)
+}
+
+/// A Windows notification, for the overlap radar's heads-up while gitgud is in the background.
+#[tauri::command]
+async fn notify<R: Runtime>(app: AppHandle<R>, title: String, body: String) -> Result<(), String> {
+    use tauri_plugin_notification::NotificationExt;
+    app.notification()
+        .builder()
+        .title(title)
+        .body(body)
+        .show()
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn lfs_partial_apply<R: Runtime>(
+    app: AppHandle<R>,
+    session: State<'_, Session>,
+    id: u32,
+    state: Option<PartialState>,
+) -> Result<LfsPlan, Error> {
+    session.lfs_partial_apply(id, state, |progress| {
+        emit_task_progress(&app, id, "lfs", progress);
+    })
+}
+
+#[tauri::command]
+async fn lfs_partial_download<R: Runtime>(
+    app: AppHandle<R>,
+    session: State<'_, Session>,
+    id: u32,
+    paths: Vec<String>,
+) -> Result<LfsPlan, Error> {
+    session.lfs_partial_download(id, &paths, |progress| {
+        emit_task_progress(&app, id, "lfs", progress);
+    })
+}
+
+#[tauri::command]
 async fn lfs_prune(session: State<'_, Session>, id: u32) -> Result<LfsCacheStats, Error> {
     session.lfs_prune(id)
 }
@@ -2012,6 +2094,11 @@ fn app_with_library<R: Runtime>(builder: Builder<R>, library: Option<LibraryStor
             pr_url_with_base,
             lfs_cache_stats,
             lfs_prune,
+            lfs_partial_plan,
+            overlap,
+            notify,
+            lfs_partial_apply,
+            lfs_partial_download,
             lfs_fetch_object,
             ai_providers,
             ai_draft_commit_message,
@@ -2035,6 +2122,7 @@ pub fn run() {
     }
     app_with_library(builder, None)
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let library_path = if let Some(custom) = std::env::var_os("GITGUD_LIBRARY") {
@@ -3722,6 +3810,98 @@ mod tests {
                 .unwrap()
                 .len(),
             0
+        );
+    }
+
+    #[test]
+    fn overlap_reports_a_file_changed_on_both_sides_through_ipc() {
+        let ipc = Ipc::new();
+        let bare = tempfile::tempdir().unwrap();
+        let url = bare.path().join("o.git");
+        let url = url.to_str().unwrap();
+        let mine = TestRepo::init();
+        mine.write("a.txt", "a\n").commit_all("a");
+        mine.git(&["init", "-q", "--bare", "-b", "main", url]);
+        mine.git(&["remote", "add", "origin", url]);
+        mine.git(&["push", "-q", "-u", "origin", "main"]);
+        let id = open(&ipc, &mine)["id"].clone();
+        assert_eq!(
+            ipc.call("overlap", json!({ "id": id })).unwrap()["files"],
+            json!([])
+        );
+
+        let theirs = TestRepo::init();
+        theirs.git(&["config", "user.name", "JG"]);
+        theirs.git(&["remote", "add", "origin", url]);
+        theirs.git(&["pull", "-q", "origin", "main"]);
+        theirs.write("a.txt", "theirs\n").commit_all("JG - a");
+        theirs.git(&["push", "-q", "origin", "HEAD:main"]);
+        mine.git(&["fetch", "-q"]);
+        mine.write("a.txt", "mine\n");
+
+        let got = ipc.call("overlap", json!({ "id": id })).unwrap();
+        assert_eq!(got["against"], json!(["origin/main"]));
+        let file = &got["files"][0];
+        assert_eq!(file["path"], "a.txt");
+        assert_eq!(file["risk"], "mayConflict");
+        assert_eq!(file["authors"], json!(["JG"]));
+        assert_eq!(file["dirty"], true);
+        assert!(file["newestCommit"].as_str().unwrap().len() == 40);
+    }
+
+    #[test]
+    fn partial_lfs_plans_applies_and_keeps_downloads_through_ipc() {
+        let ipc = Ipc::new();
+        let repo = TestRepo::init();
+        repo.git(&["lfs", "install", "--local"]);
+        repo.write(
+            ".gitattributes",
+            "*.png filter=lfs diff=lfs merge=lfs -text\n",
+        )
+        .write(
+            "ProjectSettings/ProjectVersion.txt",
+            "m_EditorVersion: 6000.0.12f1\n",
+        )
+        .write("Assets/Pack/Rock.png", "rock")
+        .write(
+            "Assets/Pack/Rock.png.meta",
+            "fileFormatVersion: 2\nguid: 0000000000000000000000000000000a\n",
+        )
+        .commit_all("pack");
+        let id = open(&ipc, &repo)["id"].clone();
+
+        let plan = ipc
+            .call("lfs_partial_plan", json!({ "id": id, "state": null }))
+            .unwrap();
+        assert_eq!(plan["partial"], false);
+        assert_eq!(
+            plan["state"],
+            json!({ "buildScenes": true, "scenes": [], "kept": [] })
+        );
+        assert_eq!(plan["total"], json!({ "bytes": 4, "files": 1 }));
+        assert_eq!(plan["skippedFolders"][0]["folder"], "Assets/Pack");
+
+        let state = json!({ "buildScenes": true, "scenes": [], "kept": [] });
+        let applied = ipc
+            .call("lfs_partial_apply", json!({ "id": id, "state": state }))
+            .unwrap();
+        assert_eq!(applied["partial"], true);
+        assert!(
+            std::fs::read_to_string(repo.path().join("Assets/Pack/Rock.png"))
+                .unwrap()
+                .starts_with("version https://git-lfs")
+        );
+
+        let kept = ipc
+            .call(
+                "lfs_partial_download",
+                json!({ "id": id, "paths": ["Assets/Pack"] }),
+            )
+            .unwrap();
+        assert_eq!(kept["state"]["kept"], json!(["Assets/Pack"]));
+        assert_eq!(
+            std::fs::read_to_string(repo.path().join("Assets/Pack/Rock.png")).unwrap(),
+            "rock"
         );
     }
 

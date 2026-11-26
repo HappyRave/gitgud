@@ -34,6 +34,7 @@
     TEXTURE_MAXES,
     type TextureMax,
     setDiffLayout,
+    setOverlapNotify,
     setTheme,
     toggleIgnoreWhitespace,
     type Density,
@@ -329,6 +330,12 @@
         <button
           type="button"
           class="bare rail-btn"
+          class:on={activeSection === "sec-radar"}
+          onclick={() => jumpTo("sec-radar")}>Overlap radar</button
+        >
+        <button
+          type="button"
+          class="bare rail-btn"
           class:on={activeSection === "sec-tools"}
           onclick={() => jumpTo("sec-tools")}>Tools &amp; Diagnostics</button
         >
@@ -468,6 +475,20 @@
               </select>
             </label>
             <p class="hint">Bigger textures are shrunk before they reach the 3D view: faster to load and lighter on the GPU.</p>
+          </div>
+        </section>
+
+        <section id="sec-radar" class="sec">
+          <h3>Overlap radar</h3>
+          <div class="prefs">
+            <label class="chk">
+              <input
+                type="checkbox"
+                checked={prefs.overlapNotify}
+                onchange={(e) => setOverlapNotify(e.currentTarget.checked)}
+              />
+              <span>Windows notification when a file you're changing won't merge with the remote, while gitgud is in the background</span>
+            </label>
           </div>
         </section>
 

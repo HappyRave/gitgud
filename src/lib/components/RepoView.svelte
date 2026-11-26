@@ -131,7 +131,14 @@
     unityRemergeConflicts,
     worktreesList,
     writeCommitGraph,
+    overlap as readOverlap,
+    notify,
+    graphFind,
+    type Overlap,
+    type OverlapFile,
   } from "$lib/api";
+  import OverlapHeadsUp from "$lib/components/OverlapHeadsUp.svelte";
+  import { advice, freshHeadsUps, headline, headsUpKey, stripLabel } from "$lib/overlap/radar";
   import BranchDialog from "$lib/components/BranchDialog.svelte";
   import type { PaletteRepoActions } from "$lib/components/CommandPalette.svelte";
   import CherryPickDialog from "$lib/components/CherryPickDialog.svelte";
@@ -158,6 +165,7 @@
   import RebaseDialog from "$lib/components/RebaseDialog.svelte";
   import ResetDialog from "$lib/components/ResetDialog.svelte";
   import TagDialog from "$lib/components/TagDialog.svelte";
+  import LfsDownloadsDialog from "$lib/components/LfsDownloadsDialog.svelte";
   import SequencerBanner from "$lib/components/SequencerBanner.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import Splitter from "$lib/components/Splitter.svelte";
@@ -251,6 +259,16 @@
   /** Bumped on every status read, so the shown diff reloads with it. */
   let revision = $state(0);
 
+  /** Files also changed on the upstream as last fetched (R11-B overlap radar). */
+  let radar = $state<Overlap | null>(null);
+  /** Won't-merge overlaps announced and not dismissed, for the heads-up. */
+  let headsUp = $state<OverlapFile[]>([]);
+  /** Heads-ups already given (`path@commit`), so each is told once. */
+  let toldHeadsUps = new Set<string>();
+  let radarRepo: number | null = null;
+  /** "Commit, then pull": the next commit pulls. */
+  let pullAfterCommit = $state(false);
+
   /** The merge in progress; while set, the conflict view replaces graph and inspector. */
   let merging = $state<MergeState | null>(null);
   const resolvedHow = new SvelteMap<string, string>();
@@ -317,6 +335,7 @@
     selectedProposal ? (proposalList.find((p) => p.id === selectedProposal) ?? null) : null,
   );
   let tagAsk = $state<{ target: string | null; targetLabel: string | null } | null>(null);
+  let lfsAsk = $state(false);
   let fileInspect = $state<{ path: string; mode: "history" | "blame"; rev: string | null } | null>(null);
   let opStats = $state<OpLogStats | null>(null);
   let reflogEntries = $state<ReflogEntry[]>([]);
@@ -527,9 +546,10 @@
       return;
     }
     const id = opened.id;
+    // Every 2 min for the active tab (R11 Q3, Max: "2 minutes"), so the overlap radar is fresh.
     const timer = setInterval(() => {
       if (active && opened?.id === id && !fetching && !conflicted && !busy) {
-        backgroundRefresh(id, 600)
+        backgroundRefresh(id, 110)
           .then((ok) => {
             if (ok && opened?.id === id) {
               onOutsideChange(id);
@@ -540,9 +560,74 @@
           })
           .catch(() => {});
       }
-    }, 600_000);
+    }, 120_000);
     return () => clearInterval(timer);
   });
+
+  // The overlap radar, read again after each status read (refresh, fetch, outside edit), debounced
+  // so a Unity save storm costs one read.
+  $effect(() => {
+    if (!opened) {
+      radar = null;
+      headsUp = [];
+      return;
+    }
+    const id = opened.id;
+    void revision;
+    if (radarRepo !== id) {
+      radarRepo = id;
+      toldHeadsUps = new Set();
+      headsUp = [];
+      radar = null;
+    }
+    const timer = setTimeout(() => {
+      readOverlap(id).then(
+        (next) => {
+          if (opened?.id !== id) {
+            return;
+          }
+          radar = next;
+          const still = (f: OverlapFile) => next?.files.some((n) => headsUpKey(n) === headsUpKey(f)) ?? false;
+          const fresh = freshHeadsUps(next, toldHeadsUps);
+          for (const f of fresh) {
+            toldHeadsUps.add(headsUpKey(f));
+          }
+          headsUp = [...fresh, ...headsUp.filter(still)];
+          if (fresh.length && prefs.overlapNotify && !document.hasFocus()) {
+            notify(`gitgud · ${repoName(opened.root)}: ${headline(fresh[0])}`, advice(fresh[0])).catch((err) =>
+              console.error("overlap notification:", err),
+            );
+          }
+        },
+        (err) => console.error("overlap radar:", err),
+      );
+    }, 1500);
+    return () => clearTimeout(timer);
+  });
+
+  function commitThenPull() {
+    pullAfterCommit = true;
+    headsUp = [];
+    inspector = "working";
+    closeDetail();
+    planDone = null;
+    tick().then(() => workingCopy?.focusCommit());
+  }
+
+  async function seeTheirChange(file: OverlapFile) {
+    if (!opened) {
+      return;
+    }
+    const id = opened.id;
+    try {
+      const rows = await graphFind(id, file.newestCommit);
+      if (opened?.id === id && rows.length) {
+        graph?.reveal(rows[0]);
+      }
+    } catch (err) {
+      error = String(err);
+    }
+  }
 
   $effect(() => {
     if (!opened) {
@@ -788,6 +873,7 @@
             targetLabel: selectedCommit ? selectedCommit.slice(0, 7) : null,
           }),
         onoptimizegraph: optimizeCommitGraph,
+        onlfsdownloads: () => (lfsAsk = true),
       },
     };
   }
@@ -1609,6 +1695,10 @@
     if (!(await write((id) => commit(id, message, options), undefined, options?.amend ? "Amending…" : "Committing…"))) {
       throw new Error("commit failed");
     }
+    if (pullAfterCommit) {
+      pullAfterCommit = false;
+      startPull("auto", false);
+    }
   }
 
   let refreshing = false;
@@ -2120,6 +2210,10 @@
               {locks}
               lfsPatterns={lfs?.trackedPatterns ?? []}
               locksSupported={lfs?.supportsLocks ?? false}
+              overlap={radar}
+              {pullAfterCommit}
+              onpull={() => startPull("auto", false)}
+              oncommitpull={commitThenPull}
               bind:selected={selectedFile}
               onstage={(paths) => write((id) => stage(id, paths), undefined, `Staging ${files(paths)}…`)}
               onunstage={(paths) => write((id) => unstage(id, paths), undefined, `Unstaging ${files(paths)}…`)}
@@ -2136,6 +2230,19 @@
             />
           {/if}
         </aside>
+      {/if}
+      {#if headsUp.length && !conflicted}
+        <OverlapHeadsUp
+          files={headsUp}
+          busy={busy || !!fetching}
+          onpull={() => {
+            headsUp = [];
+            startPull("auto", false);
+          }}
+          oncommitpull={commitThenPull}
+          onsee={seeTheirChange}
+          ondismiss={() => (headsUp = [])}
+        />
       {/if}
     </div>
     {#if rowMenu}
@@ -2240,6 +2347,9 @@
         oncancel={() => (stashAsk = false)}
       />
     {/if}
+    {#if lfsAsk && opened}
+      <LfsDownloadsDialog repoId={opened.id} repoName={repoName(opened.root)} oncancel={() => (lfsAsk = false)} />
+    {/if}
     {#if tagAsk}
       <TagDialog
         targetLabel={tagAsk.targetLabel}
@@ -2283,8 +2393,8 @@
     {#if fetching && opened}
       {@const id = opened.id}
       {@const pct = fetching.progress?.percent ?? 0}
-      {@const opLabel = { fetch: "Fetch", pull: "Pull", push: "Push" }[fetching.op]}
-      {@const verb = { fetch: "Fetching", pull: "Pulling", push: "Pushing" }[fetching.op]}
+      {@const opLabel = { fetch: "Fetch", pull: "Pull", push: "Push", lfs: "LFS download" }[fetching.op]}
+      {@const verb = { fetch: "Fetching", pull: "Pulling", push: "Pushing", lfs: "Downloading" }[fetching.op]}
       <span class="task" aria-label="{opLabel} progress">
         {fetching.op === "push" ? "↑" : "↓"} {verb}…
         {#if fetching.progress}
@@ -2299,6 +2409,13 @@
       <span role="status">{notice}</span>
     {:else if upstreamLine}
       <span class="muted">● {upstreamLine}</span>
+      {@const radarLabel = stripLabel(radar)}
+      {#if radarLabel}
+        <span class="radar {radarLabel.risk}" title="Overlap radar: files you changed that also changed on the remote">
+          {radarLabel.risk === "wontMerge" ? "!" : "~"}
+          {radarLabel.text}
+        </span>
+      {/if}
     {:else if opened}
       <span class="muted">{opened.root}</span>
     {/if}
@@ -2396,6 +2513,7 @@
   .body {
     --side-w: 210px;
     --insp-w: clamp(380px, 36vw, 560px);
+    position: relative;
     flex: 1;
     min-height: 0;
     display: grid;
@@ -2463,6 +2581,17 @@
   }
   .start {
     flex: 1;
+  }
+  .radar {
+    font: 600 10.5px var(--mono);
+    padding: 1px 7px;
+    border-radius: 9px;
+    background: var(--warn);
+    color: var(--warn-ink);
+  }
+  .radar.wontMerge {
+    background: var(--bad);
+    color: var(--bad-ink);
   }
   .strip {
     display: flex;

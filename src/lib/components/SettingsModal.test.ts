@@ -65,6 +65,23 @@ describe("SettingsModal", () => {
     setAuto3dLimit(AUTO_3D_DEFAULT);
   });
 
+  it("turns the overlap radar's Windows notification off and on, on by default", async () => {
+    mockCommands({
+      config_get_identity: () => ({ userName: "Max", userEmail: "max@example.com" }),
+      tool_diagnostics: () => ({ gitPath: "C:/Git/git.exe", gitVersion: "2.56.1", lfsVersion: "git-lfs/3.6.0" }),
+    });
+    render(SettingsModal, { onclose: () => {} });
+    const box = (await screen.findByLabelText(/Windows notification when a file you're changing won't merge/)) as HTMLInputElement;
+    expect(box.checked).toBe(true);
+    await fireEvent.click(box);
+    expect(prefs.overlapNotify).toBe(false);
+    expect(localStorage.getItem("gitgud.overlap.notify")).toBe("0");
+    await fireEvent.click(box);
+    expect(prefs.overlapNotify).toBe(true);
+    expect(localStorage.getItem("gitgud.overlap.notify")).toBe("1");
+    localStorage.removeItem("gitgud.overlap.notify");
+  });
+
   it("loads diagnostics and identity and saves repo-local or global config", async () => {
     let graph: number | null = null;
     const calls = mockCommands({

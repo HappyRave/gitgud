@@ -18,6 +18,8 @@ use crate::lfs::{self, LfsCacheStats, LfsInfo, LfsLock};
 use crate::merge::{MergeOutcome, MergeState, Side};
 use crate::oplog::{OpEntry, OpLog, OpLogStats, ReflogEntry, label_amend, label_commit};
 use crate::ops::{CommitOptions, ResetMode};
+use crate::overlap::{self, Overlap};
+use crate::partial_lfs::{self, LfsPlan, PartialState};
 use crate::proposals::{self, ProposalSummary, WorktreeInfo};
 use crate::rebase::{RebaseOutcome, RebaseState, RebaseStep};
 use crate::remote::{PullOutcome, PullStrategy};
@@ -1385,6 +1387,16 @@ impl Session {
         }
     }
 
+    /// Files changed both in repo `id`'s work and on its upstream (R11-B overlap radar),
+    /// from the remote-tracking refs as last fetched. `None` with nothing to compare with.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`], or git / read failures.
+    pub fn overlap(&self, id: u32) -> Result<Option<Overlap>, Error> {
+        let open = self.get(id)?;
+        overlap::overlap(&*self.git()?, &open.repo)
+    }
+
     /// Lists tags in repo `id`, newest first.
     ///
     /// # Errors
@@ -1987,6 +1999,69 @@ impl Session {
     pub fn lfs_cache_stats(&self, id: u32) -> Result<LfsCacheStats, Error> {
         let open = self.get(id)?;
         lfs::lfs_cache_stats(&*self.git()?, &open.repo)
+    }
+
+    /// What partial download `state` (else the saved one, else the build's scenes) would
+    /// download in repo `id` (R10-B). Downloads the LFS-stored scenes and prefabs it has
+    /// to read, into `.git/lfs` only.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`], or git-lfs's error.
+    pub fn lfs_partial_plan(&self, id: u32, state: Option<PartialState>) -> Result<LfsPlan, Error> {
+        let repo = self.get(id)?.repo;
+        let state = match state {
+            Some(s) => s,
+            None => partial_lfs::load_state(&repo)?.unwrap_or_else(PartialState::build),
+        };
+        Ok(partial_lfs::plan(&*self.git()?, &repo, &state)?.0)
+    }
+
+    /// Makes repo `id` partial with `state`, or whole again with `None`: downloads what it
+    /// needs and turns unneeded unmodified files back into pointers. Not in the op log:
+    /// every file it touches can be downloaded again.
+    ///
+    /// # Errors
+    /// [`Error::Refused`] while Unity is open and files would turn into pointers, or while
+    /// another remote operation runs; [`Error::Cancelled`]; git's error.
+    pub fn lfs_partial_apply(
+        &self,
+        id: u32,
+        state: Option<PartialState>,
+        mut on_progress: impl FnMut(Progress),
+    ) -> Result<LfsPlan, Error> {
+        let plan = self.run_task(id, |cancel| {
+            self.exclusive(id, |open, git| {
+                partial_lfs::apply(git, &open.repo, state.as_ref(), &mut on_progress, cancel)
+            })
+        })?;
+        self.refresh(id)?;
+        Ok(plan)
+    }
+
+    /// Downloads `paths` (files or folders) of partial repo `id` and keeps them in its
+    /// list, so later pulls keep them up to date.
+    ///
+    /// # Errors
+    /// [`Error::Refused`] when the repo isn't partial; as [`Session::lfs_partial_apply`].
+    pub fn lfs_partial_download(
+        &self,
+        id: u32,
+        paths: &[String],
+        on_progress: impl FnMut(Progress),
+    ) -> Result<LfsPlan, Error> {
+        let repo = self.get(id)?.repo;
+        let Some(mut state) = partial_lfs::load_state(&repo)? else {
+            return Err(Error::Refused(
+                "this repo already downloads every LFS file".into(),
+            ));
+        };
+        for p in paths {
+            let p = p.trim_end_matches('/').to_owned();
+            if !state.kept.contains(&p) {
+                state.kept.push(p);
+            }
+        }
+        self.lfs_partial_apply(id, Some(state), on_progress)
     }
 
     /// Prunes unreferenced local Git LFS objects in repo `id` and returns updated cache stats.

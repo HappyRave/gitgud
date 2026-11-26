@@ -60,6 +60,7 @@ pub fn parse_lfs_progress_line(line: &str) -> Option<LfsProgress> {
 
 /// Clones `url` into `dest` with progress (including `GIT_LFS_PROGRESS`) and process-tree
 /// cancellation. Removes partial `dest` if this clone created it and was cancelled or failed.
+/// With `skip_lfs`, LFS files are left as pointers.
 ///
 /// # Errors
 /// [`Error::Refused`] for invalid arguments or non-empty `dest`, [`Error::Cancelled`] on cancel,
@@ -69,6 +70,7 @@ pub fn clone_repo(
     url: &str,
     dest: &Path,
     long_paths: bool,
+    skip_lfs: bool,
     cancel: &Cancel,
     on_progress: &mut dyn FnMut(CloneProgress),
 ) -> Result<PathBuf, Error> {
@@ -108,6 +110,10 @@ pub fn clone_repo(
 
     let mut cmd = git.command(parent, &args);
     cmd.env("GIT_LFS_PROGRESS", &lfs_file.path);
+    if skip_lfs {
+        // Pointers only: a partial download (R10) chooses what comes next.
+        cmd.env("GIT_LFS_SKIP_SMUDGE", "1");
+    }
 
     let mut tree = ProcessTree::spawn(&mut cmd).map_err(|e| command_error(&args, e.to_string()))?;
     let mut stdout = tree.child.stdout.take().expect("stdout is piped");

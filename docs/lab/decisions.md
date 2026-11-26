@@ -3,6 +3,57 @@
 Verdicts from the lab rounds (`docs/lab/index.html`), newest first. Each entry: date, Max's words in
 quotes, what came with it, and what isn't applied yet. Feeds the decision log in `docs/spec.md`.
 
+## R11 · Overlap radar (2026-11-26)
+
+Brief (Max, 2026-11-26): "1 Overlap radar", picked from an analysis of the VEX repos (14 people on
+one shared branch; 71 of 477 merges in 90 days joined two sides that changed the same file, 59 of
+those 134 files in LFS). Round: `docs/lab/overlap.html`.
+
+- **Decided (2026-11-26):** **B, heads-up when it starts.** Max: "B Heads-up". A's marks on working
+  copy rows, the strip and the commit box, plus one interruption (a toast in gitgud, a Windows
+  notification when it's in the background) when a file you're changing and origin's changes meet,
+  only for files git can't merge as text.
+- **Rejected for now:** C (team board) and D (soft claims, useless until the team runs gitgud). Not
+  ruled out as later additions.
+- **Decided (2026-11-26):** the active tab fetches every **2 minutes** (question 3, Max: "q3: 2
+  minutes"); Windows notifications are **a setting, on by default** (question 5, Max: "it should be
+  a setting, default ON"). Questions 2 (compare with the main branch too) and 4 (interrupt only for
+  won't-merge files) taken as Claude's picks (Max: "GO").
+- **Claude's picks while building (2026-11-26):** when a won't-merge file has uncommitted edits, the
+  heads-up offers "Commit, then pull" instead of "Pull now": git refuses to pull over an uncommitted
+  file the incoming change touches, and the conflict view needs a real merge (a stash pop's conflicts
+  don't open it). The button focuses the commit box; the next commit runs the pull. The toast sits over
+  the bottom of the history, clear of the commit box. Only the active tab fetches every 2 min; other
+  tabs don't fetch in the background (as before), but their radar re-reads on every outside change.
+- **Built (2026-11-26):** core `overlap` + command, row marks, strip count, commit-box line, heads-up
+  toast, Windows notification with its Settings switch, 2-min fetch for the active tab.
+- **Not built:** the mark on your unpushed commit's graph row (state 4 on the page); "Unity is open,
+  save the scene first" hint in the toast; told heads-ups are forgotten on restart (one repeat per
+  overlap after a relaunch).
+
+## R10 · Partial LFS download (2026-11-26)
+
+Brief (Max, 2026-11-26): "Let's start on partial lfs" (spec Q7, brought forward from "later").
+Round: `docs/lab/lfs.html`, built on sizes measured in the VEX repos.
+
+- **Decided (2026-11-26):** **B, what your scenes use.** Max: "B". Downloads what the chosen scenes
+  reference through GUIDs (default: Build Settings' scenes) plus what Unity always loads; A's folder
+  tree stays inside B as an override tab (Claude's pick, came with B).
+- **Max's question (2026-11-26):** "what when I need to get one of the ommited files later?" Answered
+  in the round's "Getting a skipped file later" section.
+- **Decided (2026-11-26):** keep what you download (question 6). Max: "Yes". Every download joins
+  the list under "Kept by you" until removed.
+- **Claude's picks, applied while Max was away (2026-11-26, Max: "Don't ask anything, just work"):**
+  the clone dialog's "LFS: download only what the build's scenes use" is on by default (question 2);
+  applying turns no-longer-needed files back into pointers, only unmodified ones whose object stays in
+  `.git/lfs`, refused while Unity has the project open (question 3); the dialog opens from Ctrl+K ›
+  "LFS downloads" (question 4: not yet from the Library's right-click or the strip).
+- **Built (2026-11-26):** the dialog (scenes, kept, always kept, skipped folders with Download,
+  Download everything), the plan / apply / download backend, the clone option.
+- **Not built / open:** reading Unity's `Editor.log` for skipped files Unity asked for; the Library's
+  LFS column and the pull summary; ☁ marks on file rows. The Unity pointer-file test (question 5) has
+  not been run: nobody has opened a partial project in Unity yet.
+
 ## R9 · Merge by property (2026-11-26)
 
 Brief (Max, 2026-11-26): "if I push one field change in a scriptable object, and Miguel push another

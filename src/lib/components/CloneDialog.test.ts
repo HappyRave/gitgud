@@ -31,6 +31,7 @@ describe("CloneDialog", () => {
         dest: "D:/Work/boat",
         folderPath: null,
         longPaths: true,
+        lfsPartial: true,
       }),
     );
 

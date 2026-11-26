@@ -1,0 +1,369 @@
+<title>R11 Overlap radar</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+:root {
+  --bg: #f4f5f8; --panel: #ffffff; --line: #dde1e8; --fg: #18202c; --muted: #5a6577;
+  --accent: #e0561f; --pick: #efe6ff; --pick-ink: #5b2fa6; --open: #fff1d6; --open-ink: #8a5a00;
+  --dec-bg: #ddf3e6; --dec-ink: #1d6b3f; --fact-bg: #e3edf9; --fact-ink: #1f4f86;
+  --a-bg: #14181f; --a-panel: #1a1f28; --a-line: #2a313c; --a-fg: #dde2ea; --a-muted: #8b95a5; --a-hover: #20262f;
+  --a-sel: #22324b; --a-warn: #3a2b12; --a-warn-ink: #f2c46a; --a-bad: #3d1f1a; --a-bad-ink: #ff9d80;
+  --a-add: #173326; --a-add-ink: #7fd9a6; --a-blue: #56b4e9; --a-mod: #e8b84a;
+  --body: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --mono: "Cascadia Mono", Consolas, "Courier New", monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #10141b; --panel: #171d26; --line: #29313d; --fg: #e4e8ef; --muted: #96a0b0;
+  --accent: #ff7a45; --pick: #2c2141; --pick-ink: #cdb4ff; --open: #3a2d12; --open-ink: #f5c86a;
+  --dec-bg: #173326; --dec-ink: #7fd9a6; --fact-bg: #1a2b40; --fact-ink: #9cc6f2; color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #10141b; --panel: #171d26; --line: #29313d; --fg: #e4e8ef; --muted: #96a0b0;
+  --accent: #ff7a45; --pick: #2c2141; --pick-ink: #cdb4ff; --open: #3a2d12; --open-ink: #f5c86a;
+  --dec-bg: #173326; --dec-ink: #7fd9a6; --fact-bg: #1a2b40; --fact-ink: #9cc6f2; color-scheme: dark; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.55 var(--body); }
+.wrap { max-width: 1240px; margin: 0 auto; padding-block: 28px 72px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+h1, h2 { text-wrap: balance; }
+h1 { font-size: 34px; line-height: 1.1; margin: 4px 0 10px; }
+h2 { font-size: 22px; margin: 0; } h3 { font-size: 15px; margin: 0; } h4 { margin: 0 0 4px; font-size: 13px; }
+p { margin: 0; max-width: 84ch; }
+code { font: 13px var(--mono); }
+.eyebrow { font: 600 11.5px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.tag { display: inline-block; font: 600 11px var(--mono); padding: 2px 7px; border-radius: 4px; white-space: nowrap; vertical-align: 1px; }
+.t-pick { background: var(--pick); color: var(--pick-ink); }
+.t-prop { background: var(--open); color: var(--open-ink); }
+.t-dec { background: var(--dec-bg); color: var(--dec-ink); }
+.t-fact { background: var(--fact-bg); color: var(--fact-ink); }
+.brief { display: grid; gap: 6px; font-size: 14px; padding: 12px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; margin: 14px 0; }
+.sec { padding-top: 40px; display: grid; gap: 14px; }
+.sec > * { min-width: 0; }
+.sec > .fh { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; border-bottom: 2px solid var(--line); padding-bottom: 8px; }
+.lab { font: 700 14px var(--mono); color: var(--accent); }
+.idea { color: var(--muted); font-size: 14px; }
+.cols { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; font-size: 14px; }
+.cols ul, ul.notes { margin: 0; padding-left: 20px; display: grid; gap: 3px; font-size: 14px; }
+.pickline { font-size: 14px; padding: 10px 12px; border-left: 3px solid var(--pick-ink); background: var(--panel); border-radius: 0 6px 6px 0; }
+ol.q { margin: 0; padding-left: 22px; display: grid; gap: 10px; font-size: 14.5px; }
+table.data { display: block; overflow-x: auto; max-width: 100%; border-collapse: collapse; font-size: 13.5px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+table.data th, table.data td { padding: 5px 12px; text-align: right; border-bottom: 1px solid var(--line); white-space: nowrap; }
+table.data th:first-child, table.data td:first-child { text-align: left; }
+table.data th { font-size: 12px; color: var(--muted); font-weight: 600; }
+.states { display: grid; gap: 22px; }
+.state { display: grid; gap: 8px; }
+.state > p { font-size: 14px; color: var(--muted); }
+@media (max-width: 720px) { .cols { grid-template-columns: 1fr; } h1 { font-size: 28px; } }
+
+/* ---------- the app, dark, at real size ---------- */
+.app { background: var(--a-bg); color: var(--a-fg); border: 1px solid var(--a-line); border-radius: 8px; overflow-x: auto; overflow-y: hidden; font: 12.5px/1.4 var(--body); }
+.app > * { min-width: 720px; }
+.app .m { font-family: var(--mono); font-size: 11.5px; }
+.app button { all: unset; box-sizing: border-box; cursor: pointer; font: 12px var(--body); padding: 3px 9px; border-radius: 4px;
+  border: 1px solid var(--a-line); background: var(--a-panel); color: var(--a-fg); white-space: nowrap; }
+.app button.pri { background: #2f6fd6; border-color: #2f6fd6; color: #fff; font-weight: 600; }
+.app button.sm { padding: 1px 7px; font-size: 11.5px; }
+.app .k { font: 600 9.5px var(--mono); border: 1px solid var(--a-line); border-radius: 3px; padding: 0 3px; color: var(--a-muted); margin-left: 3px; }
+.ph { display: flex; align-items: center; gap: 8px; padding: 7px 12px; border-bottom: 1px solid var(--a-line); background: var(--a-panel); flex-wrap: wrap; }
+.ph .name { font-weight: 600; } .ph .ct { color: var(--a-muted); } .ph .r { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+.mu { color: var(--a-muted); } .bad { color: var(--a-bad-ink); } .ok { color: var(--a-add-ink); } .warn { color: var(--a-warn-ink); }
+.chip { display: inline-flex; align-items: center; gap: 4px; font: 600 10px var(--mono); padding: 1px 6px; border-radius: 9px; white-space: nowrap; background: var(--a-hover); color: var(--a-muted); }
+.chip.ok { background: var(--a-add); color: var(--a-add-ink); } .chip.w { background: var(--a-warn); color: var(--a-warn-ink); } .chip.b { background: var(--a-bad); color: var(--a-bad-ink); }
+.who { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; font: 700 8.5px var(--mono); color: #10141b; flex: none; }
+.note { margin: 8px 12px; padding: 7px 10px; border-radius: 5px; font-size: 12px; display: grid; gap: 4px; }
+.note.w { background: var(--a-warn); color: var(--a-warn-ink); } .note.w b { color: var(--a-fg); }
+.note.b { background: var(--a-bad); color: var(--a-bad-ink); } .note.b b { color: var(--a-fg); }
+.note.i { background: var(--a-hover); color: var(--a-muted); } .note.i b { color: var(--a-fg); }
+.note .acts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 2px; }
+.sub { font: 600 10px var(--mono); color: var(--a-muted); text-transform: uppercase; letter-spacing: .05em; padding: 8px 12px 3px; display: flex; gap: 8px; }
+.sub .r { margin-left: auto; text-transform: none; letter-spacing: 0; }
+/* layout: graph left, working copy right */
+.shell { display: grid; grid-template-columns: minmax(0, 1fr) 540px; min-height: 300px; }
+.shell > .side { border-left: 1px solid var(--a-line); }
+.strip { display: flex; align-items: center; gap: 10px; padding: 5px 12px; border-bottom: 1px solid var(--a-line); font-size: 11.5px; color: var(--a-muted); }
+.strip b { color: var(--a-fg); font-weight: 600; } .strip .r { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+.g { padding: 4px 0; }
+.gr { display: grid; grid-template-columns: 46px minmax(0, 1fr) 30px 56px; gap: 8px; align-items: center; padding: 2px 12px; white-space: nowrap; }
+.gr .s { overflow: hidden; text-overflow: ellipsis; }
+.gr .d { font: 11px var(--mono); color: var(--a-muted); text-align: right; }
+.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-left: 6px; }
+.ref { font: 600 10px var(--mono); padding: 0 5px; border-radius: 3px; background: #23324a; color: #9cc6f2; margin-right: 5px; }
+.ref.o { background: #2b2440; color: #cdb4ff; }
+.gr.wip .s { color: var(--a-muted); font-style: italic; }
+.f { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 3px 12px; }
+.f .p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.f .st { font: 700 11px var(--mono); color: var(--a-mod); text-align: center; }
+.f.hot { background: color-mix(in srgb, var(--a-warn) 55%, transparent); }
+.f.hot2 { background: color-mix(in srgb, var(--a-bad) 60%, transparent); }
+.f .tail { display: flex; gap: 5px; align-items: center; }
+.mark { display: inline-flex; align-items: center; gap: 4px; font: 600 10px var(--mono); padding: 1px 6px 1px 2px; border-radius: 9px; white-space: nowrap; }
+.mark.w { background: var(--a-warn); color: var(--a-warn-ink); } .mark.b { background: var(--a-bad); color: var(--a-bad-ink); } .mark.n { background: var(--a-hover); color: var(--a-muted); }
+.mark .who { width: 14px; height: 14px; font-size: 7px; }
+.commit { padding: 8px 12px; border-top: 1px solid var(--a-line); display: grid; gap: 6px; }
+.commit .box { border: 1px solid var(--a-line); border-radius: 4px; padding: 6px 8px; color: var(--a-muted); background: var(--a-bg); }
+.toast { position: relative; margin: 10px 12px; padding: 10px 12px; border-radius: 6px; border: 1px solid #6b4a12; background: #2a2010; display: grid; gap: 6px; box-shadow: 0 8px 28px #0009; }
+.toast .h { display: flex; gap: 8px; align-items: center; }
+.toast .acts { display: flex; gap: 6px; flex-wrap: wrap; }
+.toast .hint { font-size: 11.5px; color: var(--a-muted); }
+/* board */
+.board .bh, .board .br { display: grid; grid-template-columns: minmax(0, 1fr) 210px 120px 80px; gap: 10px; align-items: center; padding: 4px 12px; }
+.board .bh { font: 600 10px var(--mono); color: var(--a-muted); text-transform: uppercase; letter-spacing: .05em; border-bottom: 1px solid var(--a-line); }
+.board .br { border-bottom: 1px solid var(--a-line); }
+.board .br .p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.board .ppl { display: flex; gap: 3px; align-items: center; flex-wrap: wrap; }
+.board .br.me { background: color-mix(in srgb, var(--a-warn) 45%, transparent); }
+.seg { display: inline-flex; border: 1px solid var(--a-line); border-radius: 4px; overflow: hidden; }
+.seg span { padding: 1px 8px; font-size: 11.5px; color: var(--a-muted); } .seg span.on { background: var(--a-sel); color: var(--a-fg); }
+.lock { font: 600 10px var(--mono); padding: 1px 6px; border-radius: 9px; background: #2b2440; color: #cdb4ff; white-space: nowrap; }
+.card { margin: 14px; padding: 12px 14px; border: 1px solid var(--a-line); border-radius: 6px; background: var(--a-panel); display: grid; gap: 8px; max-width: 640px; }
+.card .acts { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.card .hint { color: var(--a-muted); font-size: 11.5px; }
+</style>
+<div class="wrap">
+  <div class="eyebrow">Round 11 · 2026-11-26 · decided: B, heads-up, 2-min fetch, notifications on (a setting) · built 2026-11-26 (no graph-row mark yet)</div>
+  <h1>R11 · Overlap radar</h1>
+  <div class="brief">
+    <div><b>Brief</b> (Max, 2026-11-26): "1 Overlap radar", picked from the VEX analysis: warn while you work when a file you're
+      changing has also changed on the remote, before it turns into a conflict. Locks can't do this job here: the VEX repos are
+      on Bitbucket Cloud, which has no LFS lock API (O1, decided 2026-11-21), and no <code>.gitattributes</code> marks anything <code>lockable</code>.</div>
+    <div class="idea">Every number below was measured on 2026-11-26 from your D:\VEX clones (hyperdash, playfield, escape1, last 90 days,
+      read only). People are shown by the initials the team already uses in commit subjects. Times and author pairings inside the mocks are
+      <span class="tag t-prop">placeholder</span>s.</div>
+  </div>
+
+  <section class="sec" id="facts">
+    <div class="fh"><h2>What the numbers say</h2><span class="tag t-fact">measured 2026-11-26</span></div>
+    <table class="data">
+      <tr><th>Last 90 days</th><th>Merges</th><th>Merges where both sides changed a file</th><th>Such files</th><th>…of them stored in LFS (no text merge)</th><th>Unpushed work, first commit → merge</th></tr>
+      <tr><td>hyperdash</td><td>171</td><td>19</td><td>46</td><td>29 · 25 <code>.asset</code>, 4 <code>.unity</code></td><td>median 1 h · p75 4 h</td></tr>
+      <tr><td>playfield</td><td>179</td><td>33</td><td>60</td><td>16 · 14 <code>.unity</code>, 2 <code>.asset</code></td><td>median 1 h · p75 12 h</td></tr>
+      <tr><td>escape1</td><td>127</td><td>19</td><td>28</td><td>14 · 11 <code>.prefab</code>, 3 <code>.unity</code></td><td>median 1 h · p75 4 h</td></tr>
+    </table>
+    <ul class="notes">
+      <li><b>About one merge in seven</b> (71 of 477) joined two sides that had both changed the same file. Most merges are the
+        "Merge branch 'PartyGame' of https://bitbucket.org/…" kind: everyone on one shared branch, pulling with merge.</li>
+      <li><b>Scenes, <code>.asset</code> files (and escape1's prefabs) are in LFS</b>, so git can't merge them as text: both-sides-changed
+        means one side is picked whole, or R9's merge by property in gitgud. That's 59 of the 134 overlapping files.</li>
+      <li><b>The repeat offenders:</b> <code>Playfield 1 - Lobby.unity</code> overlapped in 10 merges, <code>PartyGameGameCatalog.asset</code>
+        in 3, <code>Escape 4 - Mirror.unity</code> in 3, <code>translations.csv</code> in both escape1 and hyperdash.</li>
+      <li><b>Pushes are frequent</b> (median 1 h of unpushed work), so what people do mostly reaches origin within the hour. A radar that
+        only sees pushed work still sees most of it, as long as it fetches often. gitgud's background fetch runs every 10 min today.</li>
+      <li><span class="tag t-fact">limit</span> <b>Nobody's unsaved Unity edits are visible</b>, nor unpushed commits. The radar warns about
+        work that has reached origin; it can't stop two people starting the same scene at 9:00.</li>
+    </ul>
+  </section>
+
+  <section class="sec" id="shared">
+    <div class="fh"><h2>What every variant shares</h2><span class="tag t-prop">proposal</span></div>
+    <ul class="notes">
+      <li><b>The overlap:</b> files you changed (working copy + your unpushed commits) ∩ files changed on your upstream
+        (<code>origin/PartyGame</code>) since the merge base, read from the commit graph after each fetch. <code>.meta</code> pairs fold into their asset.
+        No server, no API: plain git, so Bitbucket is fine.</li>
+      <li><b>Risk by kind:</b> <span class="mark b"><span class="who" style="background:#ff9d80">!</span>won't merge</span> for files git can't merge as
+        text (LFS, binary; Unity YAML in LFS goes to R9's merge by property); <span class="mark w"><span class="who" style="background:#f2c46a">~</span>may conflict</span> for text
+        files where both sides touched the same lines; <span class="mark n"><span class="who" style="background:#8b95a5">✓</span>merges</span> when the changes are in different places
+        (from <code>merge-tree</code>, already used for merge prediction).</li>
+      <li><b>Who and when</b> come from the commits: "JG · 40 min ago · 2 commits". Click → their change in the usual viewer (diff, 3D compare, YAML structure).</li>
+      <li><b>The fix is a pull</b>, with your edits stashed and put back (existing pull + strategy dialog). If a scene both sides changed has to merge, R9's table opens.</li>
+    </ul>
+  </section>
+
+  <!-- ===================== A ===================== -->
+  <section class="sec" id="a">
+    <div class="fh"><span class="lab">A</span><h2>Marks</h2><span class="tag t-prop">proposal</span></div>
+    <p class="idea">Quiet. Each overlapping file gets a mark on its working-copy row, the strip gets a count, and the commit box repeats it
+      once. Nothing pops up; you notice it when you look at your changes.</p>
+    <div class="app">
+      <div>
+        <div class="strip"><b>playfield</b> · PartyGame · <span>↑2 ↓3</span><span class="mark b" style="margin-left:4px"><span class="who" style="background:#ff9d80">!</span>2 files also changed on origin</span><span class="r">fetched 4 min ago</span></div>
+        <div class="shell">
+          <div class="g">
+            <div class="gr wip"><span><span class="dot" style="background:#8b95a5"></span></span><span class="s">Working copy · 5 changed</span><span></span><span class="d"></span></div>
+            <div class="gr"><span><span class="dot" style="background:#cdb4ff"></span></span><span class="s"><span class="ref o">origin/PartyGame</span>JG - Lobby: new seat layout for 6 players</span><span class="who" style="background:#7fd9a6">JG</span><span class="d">40 min</span></div>
+            <div class="gr"><span><span class="dot" style="background:#cdb4ff"></span></span><span class="s">MM - Fix crab bomb stuck on rocks</span><span class="who" style="background:#56b4e9">MM</span><span class="d">1 h</span></div>
+            <div class="gr"><span><span class="dot" style="background:#cdb4ff"></span></span><span class="s">JP - Session activation binding</span><span class="who" style="background:#f2c46a">JP</span><span class="d">2 h</span></div>
+            <div class="gr"><span><span class="dot" style="background:#2f6fd6"></span></span><span class="s"><span class="ref">PartyGame</span>MD - Lobby: countdown before the first game</span><span class="who" style="background:#ff9d80">MD</span><span class="d">3 h</span></div>
+            <div class="gr"><span><span class="dot" style="background:#2f6fd6"></span></span><span class="s">MD - SystemStaticSettings: rent queue flag</span><span class="who" style="background:#ff9d80">MD</span><span class="d">3 h</span></div>
+            <div class="gr"><span><span class="dot" style="background:#8b95a5"></span></span><span class="s">EL - Pixel LED communication</span><span class="who" style="background:#cdb4ff">EL</span><span class="d">5 h</span></div>
+          </div>
+          <div class="side">
+            <div class="sub">Changes · 5<span class="r"><button class="sm">Stage all</button></span></div>
+            <div class="f hot2"><span class="st">M</span><span class="p m">Assets/Scenes/Playfield 1 - Lobby.unity</span><span class="tail"><span class="mark b"><span class="who" style="background:#7fd9a6">JG</span>won't merge · 40 min</span></span></div>
+            <div class="f hot"><span class="st">M</span><span class="p m">Assets/VEX_COMMON/SCRIPTS/SystemStaticSettings.cs</span><span class="tail"><span class="mark w"><span class="who" style="background:#f2c46a">JP</span>may conflict</span></span></div>
+            <div class="f"><span class="st">M</span><span class="p m">Assets/VEX_GAMES/Lobby/Prefabs New/LobbyLayout.prefab</span><span class="tail"><span class="mark n"><span class="who" style="background:#56b4e9">MM</span>merges</span></span></div>
+            <div class="f"><span class="st">M</span><span class="p m">Assets/VEX_GAMES/Lobby/LobbyCountdown.cs</span><span class="tail"></span></div>
+            <div class="f"><span class="st">A</span><span class="p m">Assets/VEX_GAMES/Lobby/LobbyCountdownView.cs</span><span class="tail"></span></div>
+            <div class="commit">
+              <div class="note w" style="margin:0"><span><b>2 of these files changed on origin since you started.</b> Pull first to merge them while they're small.</span><div class="acts"><button class="sm pri">Pull now</button><button class="sm">Commit anyway</button></div></div>
+              <div class="box">MD - </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="cols">
+      <div><h4>Good at</h4><ul><li>Never interrupts; the mark is there when you look.</li><li>Smallest build: a field on the status rows and one line in the commit box.</li></ul></div>
+      <div><h4>Costs</h4><ul><li>You see it when you look at the working copy, which on a Unity day is at commit time: after the hour in the scene, which is the cost the radar is meant to save.</li></ul></div>
+    </div>
+  </section>
+
+  <!-- ===================== B ===================== -->
+  <section class="sec" id="b">
+    <div class="fh"><span class="lab">B</span><h2>Heads-up when it starts</h2><span class="tag t-dec">decided 2026-11-26 · "B Heads-up"</span></div>
+    <p class="idea">A's marks, plus one interruption at the moment it's cheapest: when a file you <i>just started</i> changing has new commits
+      on origin, or origin changes a file you're already in. It speaks only for files that won't merge (LFS scenes, prefabs, assets,
+      binaries); code that may conflict stays a mark. The heads-up is a toast in gitgud and a Windows notification when gitgud is in
+      the background, since you're in Unity at that moment, not in gitgud.</p>
+    <div class="app">
+      <div>
+        <div class="strip"><b>playfield</b> · PartyGame · <span>↑2 ↓3</span><span class="mark b" style="margin-left:4px"><span class="who" style="background:#ff9d80">!</span>1 file won't merge</span><span class="r">fetched 1 min ago</span></div>
+        <div class="shell">
+          <div class="g">
+            <div class="gr wip"><span><span class="dot" style="background:#8b95a5"></span></span><span class="s">Working copy · 2 changed</span><span></span><span class="d"></span></div>
+            <div class="gr"><span><span class="dot" style="background:#cdb4ff"></span></span><span class="s"><span class="ref o">origin/PartyGame</span>JG - Lobby: new seat layout for 6 players</span><span class="who" style="background:#7fd9a6">JG</span><span class="d">40 min</span></div>
+            <div class="gr"><span><span class="dot" style="background:#cdb4ff"></span></span><span class="s">MM - Fix crab bomb stuck on rocks</span><span class="who" style="background:#56b4e9">MM</span><span class="d">1 h</span></div>
+            <div class="gr"><span><span class="dot" style="background:#cdb4ff"></span></span><span class="s">JP - Session activation binding</span><span class="who" style="background:#f2c46a">JP</span><span class="d">2 h</span></div>
+            <div class="gr"><span><span class="dot" style="background:#2f6fd6"></span></span><span class="s"><span class="ref">PartyGame</span>MD - Lobby: countdown before the first game</span><span class="who" style="background:#ff9d80">MD</span><span class="d">3 h</span></div>
+          </div>
+          <div class="side">
+            <div class="toast">
+              <div class="h"><span class="who" style="background:#7fd9a6">JG</span><b>Playfield 1 - Lobby.unity changed on origin 40 min ago</b></div>
+              <div>You started editing it 2 min ago. It's in LFS: git can't merge it line by line. Pull now and your 2 minutes merge by property; later it's a bigger merge, or one side lost.</div>
+              <div class="acts"><button class="pri">Pull now</button><button>See JG's change</button><button class="sm">Not now</button></div>
+              <div class="hint">Unity has playfield open: it will ask to reload the scene. Save it in Unity first.</div>
+            </div>
+            <div class="sub">Changes · 2</div>
+            <div class="f hot2"><span class="st">M</span><span class="p m">Assets/Scenes/Playfield 1 - Lobby.unity</span><span class="tail"><span class="mark b"><span class="who" style="background:#7fd9a6">JG</span>won't merge · 40 min</span></span></div>
+            <div class="f"><span class="st">M</span><span class="p m">Assets/VEX_GAMES/Lobby/LobbyCountdown.cs</span><span class="tail"></span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="states">
+      <div class="state">
+        <h3>In the background: a Windows notification</h3>
+        <p>You're in Unity. One notification per file and per new origin commit, never repeated for the same pair.</p>
+        <div class="app"><div class="card" style="max-width:380px; margin-left:auto">
+          <div class="h" style="display:flex; gap:8px; align-items:center"><span class="mu m">gitgud · playfield</span></div>
+          <div><b>Lobby.unity changed on origin</b> (JG, 40 min ago). You're editing it: pull before it grows.</div>
+          <div class="acts"><button class="sm pri">Pull now</button><button class="sm">Open</button></div>
+        </div></div>
+      </div>
+    </div>
+    <div class="cols">
+      <div><h4>Good at</h4><ul><li>Speaks at the cheapest moment, the only one that saves the hour.</li><li>Quiet where git copes: 75 of the 134 overlapping files were text, which git merges line by line.</li><li>Works with Max alone running gitgud; nothing for the team to install.</li></ul></div>
+      <div><h4>Costs</h4><ul><li>"Started editing" is seen by the file watcher when Unity saves, not when you open the scene. A long unsaved session is invisible until the first save.</li><li>Needs fresher data than the 10-min background fetch: see question 3.</li><li>A notification is one more thing that can nag; one per file and commit, with "Not now".</li></ul></div>
+    </div>
+    <div class="pickline"><b>Claude's pick: B.</b> The cost is the work done between origin's change and your merge, and only B reaches you inside
+      that window, while you're in Unity. It's A plus one channel, so building it is A's work plus the trigger and a notification.</div>
+  </section>
+
+  <!-- ===================== C ===================== -->
+  <section class="sec" id="c">
+    <div class="fh"><span class="lab">C</span><h2>Team board</h2><span class="tag t-prop">proposal</span></div>
+    <p class="idea">Wider and calmer: a panel (sidebar entry, Ctrl+4) of the files people are changing across <i>every branch pushed in the
+      last 7 days</i>, not only your upstream, grouped by file, with yours highlighted. Before opening a scene you check who's on it. It
+      catches feature branches (<code>DynamicAddPlayer</code>, <code>DevMax</code>) that will land on PartyGame later.</p>
+    <div class="app board">
+      <div>
+        <div class="ph"><span class="name">Who's on what · playfield</span><span class="ct">· branches pushed in the last 7 days · 9 branches · 14 people</span><span class="r"><span class="seg"><span class="on">Scenes &amp; prefabs</span><span>All files</span></span><button class="sm">Close</button></span></div>
+        <div class="bh"><span>File</span><span>People (newest first)</span><span>Branches</span><span style="text-align:right">Last</span></div>
+        <div class="br me"><span class="p m">Assets/Scenes/Playfield 1 - Lobby.unity</span><span class="ppl"><span class="who" style="background:#ff9d80">MD</span><span class="chip w">you, local</span><span class="who" style="background:#7fd9a6">JG</span><span class="who" style="background:#f2c46a">JP</span><span class="who" style="background:#56b4e9">MM</span></span><span class="m mu">PartyGame +2</span><span class="m mu" style="text-align:right">40 min</span></div>
+        <div class="br"><span class="p m">Assets/VEX_COMMON/LOCAL/SystemManager.prefab</span><span class="ppl"><span class="who" style="background:#cdb4ff">EL</span><span class="who" style="background:#56b4e9">MM</span></span><span class="m mu">DynamicAddPlayer</span><span class="m mu" style="text-align:right">3 h</span></div>
+        <div class="br"><span class="p m">Assets/Scenes/Playfield 5 - Party Game - Crab.unity</span><span class="ppl"><span class="who" style="background:#56b4e9">MM</span><span class="who" style="background:#e8b84a">JB</span></span><span class="m mu">PartyGame</span><span class="m mu" style="text-align:right">1 h</span></div>
+        <div class="br"><span class="p m">Assets/VEX_GAMES/Lobby/Prefabs New/LobbyStates.prefab</span><span class="ppl"><span class="who" style="background:#f2c46a">JP</span></span><span class="m mu">DevMax</span><span class="m mu" style="text-align:right">6 d</span></div>
+        <div class="br"><span class="p m">Assets/VEX_GAMES/BitSmash/Prefabs/Gameplay/TrapLaser_8x1.prefab</span><span class="ppl"><span class="who" style="background:#7fd9a6">JG</span><span class="who" style="background:#8b95a5">FL</span></span><span class="m mu">PartyGame</span><span class="m mu" style="text-align:right">2 d</span></div>
+        <div class="note i"><b>Unpushed work isn't here.</b> This board shows what has reached origin.</div>
+      </div>
+    </div>
+    <div class="cols">
+      <div><h4>Good at</h4><ul><li>The whole team at a glance, feature branches included; a habit before opening a scene ("is anyone in Lobby?").</li><li>Reads well on the second monitor.</li></ul></div>
+      <div><h4>Costs</h4><ul><li>Pull, not push: you have to remember to look, and on a busy day you won't.</li><li>Feature branches warn about merges weeks away, noise for today's work.</li><li>Fetching every branch of a 42-branch repo (hyperdash) often.</li></ul></div>
+    </div>
+  </section>
+
+  <!-- ===================== D ===================== -->
+  <section class="sec" id="d">
+    <div class="fh"><span class="lab">D</span><h2>Soft claims</h2><span class="tag t-prop">proposal</span></div>
+    <p class="idea">Locks without a lock server: "I'm on Lobby.unity" is written to a small ref pushed to origin
+      (<code>refs/gitgud/claims</code>, a plain git object, works on Bitbucket). Every gitgud that fetches sees it on the file row, the moment you
+      claim, before you save anything. Released on push, or after a day.</p>
+    <div class="app">
+      <div>
+        <div class="sub" style="padding-top:10px">Changes · 2</div>
+        <div class="f hot"><span class="st">M</span><span class="p m">Assets/Scenes/Playfield 1 - Lobby.unity</span><span class="tail"><span class="lock">claimed by JG · 9:02</span><button class="sm">Ask JG</button></span></div>
+        <div class="f"><span class="st"></span><span class="p m">Assets/VEX_COMMON/LOCAL/SystemManager.prefab</span><span class="tail"><span class="lock" style="background:var(--a-add); color:var(--a-add-ink)">yours · since 8:40</span><button class="sm">Release</button></span></div>
+        <div class="note i" style="margin-bottom:10px"><b>Claims only work between people running gitgud.</b> Sourcetree and Unity don't see them, and nothing stops a commit.</div>
+      </div>
+    </div>
+    <div class="cols">
+      <div><h4>Good at</h4><ul><li>The only variant that covers unsaved work, the 9:00 case: the claim exists before the first save.</li><li>Feels like the locks Bitbucket can't give.</li></ul></div>
+      <div><h4>Costs</h4><ul><li>Worthless until the team uses gitgud; today that's you. A claim nobody else sees is a note to yourself.</li><li>Stale claims (forgot to release, went on holiday) erode trust fast.</li><li>A ref under <code>refs/gitgud/</code> pushed to a shared repo: needs the team's OK.</li></ul></div>
+    </div>
+  </section>
+
+  <!-- ===================== states ===================== -->
+  <section class="sec" id="states">
+    <div class="fh"><h2>States</h2><span class="tag t-prop">proposal</span><span class="idea">drawn for B; A shows the same rows without the toast.</span></div>
+    <div class="states">
+      <div class="state">
+        <h3>Nothing overlaps</h3>
+        <p>The strip says it checked. No mark, no chip.</p>
+        <div class="app"><div class="strip"><b>playfield</b> · PartyGame · <span>↑1 ↓4</span><span class="mark n" style="margin-left:4px"><span class="who" style="background:#7fd9a6">✓</span>no overlap with origin</span><span class="r">fetched 2 min ago</span></div></div>
+      </div>
+      <div class="state">
+        <h3>Can't tell: old fetch, offline, or no upstream</h3>
+        <p>The radar is only as fresh as the last fetch. Old data is said, not hidden.</p>
+        <div class="app">
+          <div class="strip"><b>playfield</b> · PartyGame · <span class="mark w" style="margin-left:4px"><span class="who" style="background:#f2c46a">?</span>overlap unknown · last fetch 3 h ago (offline)</span><span class="r"><button class="sm">Fetch</button></span></div>
+          <div class="strip"><b>escape1</b> · Dev-Max · <span class="mark n" style="margin-left:4px"><span class="who" style="background:#8b95a5">–</span>no upstream: compared with origin/main</span></div>
+        </div>
+      </div>
+      <div class="state">
+        <h3>Busy day: many files, several people, long names</h3>
+        <p>hyperdash at its worst: the catalog asset touched by three people, a scene name 39 characters long. Grouped per file, people stacked.</p>
+        <div class="app">
+          <div>
+            <div class="sub">Changes · 14 · <span class="warn">6 also changed on origin</span><span class="r"><button class="sm pri">Pull now</button></span></div>
+            <div class="f hot2"><span class="st">M</span><span class="p m">Assets/VEX_GAMES/PartyGame/Manager/PartyGameGameCatalog.asset</span><span class="tail"><span class="mark b"><span class="who" style="background:#7fd9a6">JG</span><span class="who" style="background:#56b4e9">MM</span><span class="who" style="background:#e8b84a">JB</span>won't merge · 12 min</span></span></div>
+            <div class="f hot2"><span class="st">M</span><span class="p m">Assets/Scenes/Hyper Dash 5 - Party Game - Kaiju.unity</span><span class="tail"><span class="mark b"><span class="who" style="background:#56b4e9">MM</span>won't merge · 1 h</span></span></div>
+            <div class="f hot2"><span class="st">M</span><span class="p m">ProjectSettings/TagManager.asset</span><span class="tail"><span class="mark b"><span class="who" style="background:#f2c46a">JP</span>won't merge · 3 h</span></span></div>
+            <div class="f hot"><span class="st">M</span><span class="p m">Assets/_DEV/DEV_JG/FeetDetection/FeetDetection.cs</span><span class="tail"><span class="mark w"><span class="who" style="background:#7fd9a6">JG</span>may conflict</span></span></div>
+            <div class="f"><span class="st">M</span><span class="p m">Assets/VEX_GAMES/Scripts/DashSystem.cs</span><span class="tail"><span class="mark n"><span class="who" style="background:#e8b84a">JB</span>merges</span></span></div>
+            <div class="f"><span class="st">M</span><span class="p m">Assets/translations.csv</span><span class="tail"><span class="mark n"><span class="who" style="background:#8b95a5">SP</span>merges</span></span></div>
+            <div class="f"><span class="st">M</span><span class="p m mu">+ 8 files nobody else changed</span><span class="tail"></span></div>
+          </div>
+        </div>
+      </div>
+      <div class="state">
+        <h3>Your unpushed commit overlaps, the working copy doesn't</h3>
+        <p>You committed Lobby.unity an hour ago and didn't push; JG pushed a change to it since. The mark sits on the graph row of your commit.</p>
+        <div class="app"><div class="g">
+          <div class="gr"><span><span class="dot" style="background:#cdb4ff"></span></span><span class="s"><span class="ref o">origin/PartyGame</span>JG - Lobby: new seat layout for 6 players</span><span class="who" style="background:#7fd9a6">JG</span><span class="d">40 min</span></div>
+          <div class="gr"><span><span class="dot" style="background:#2f6fd6"></span></span><span class="s"><span class="ref">PartyGame</span>MD - Lobby: countdown before the first game <span class="mark b"><span class="who" style="background:#7fd9a6">JG</span>Lobby.unity won't merge</span></span><span class="who" style="background:#ff9d80">MD</span><span class="d">1 h</span></div>
+        </div></div>
+      </div>
+      <div class="state">
+        <h3>Pulled: it merged</h3>
+        <p>After "Pull now". If the scene needed a merge, R9's table opened first; this is after.</p>
+        <div class="app"><div class="card">
+          <div><span class="ok"><b>Up to date with origin.</b></span> Lobby.unity merged by property: JG's 6 seats and your countdown, 0 clashes.</div>
+          <div class="hint">The marks clear; the radar watches again from the new base.</div>
+        </div></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec" id="questions">
+    <div class="fh"><h2>Open questions</h2><span class="tag t-prop">open</span></div>
+    <ol class="q">
+      <li><s>A, B, C or D?</s> <span class="tag t-dec">decided 2026-11-26</span> B (Max: "B Heads-up"), with A's marks. C and D not now.</li>
+      <li><span class="tag t-dec">decided 2026-11-26 · "GO"</span> <b>What it compares against:</b> your upstream only, or your upstream plus the repo's main branch (<code>main</code> /
+        <code>PartyGame</code>) when you're on a feature branch? Claude's pick: upstream, plus the main branch when they differ.</li>
+      <li><span class="tag t-dec">decided 2026-11-26 · "q3: 2 minutes"</span> <b>Freshness:</b> the active tab fetches every 2 min
+        (quiet, no LFS objects), the rest every 10.</li>
+      <li><span class="tag t-dec">decided 2026-11-26 · "GO"</span> <b>Which kinds interrupt:</b> only files that won't merge (LFS / binary), or also code where both sides changed the same lines?
+        Claude's pick: won't-merge only; may-conflict stays a mark.</li>
+      <li><span class="tag t-dec">decided 2026-11-26</span> <b>Windows notifications:</b> a setting, on by default (Max: "it should be a
+        setting, default ON").</li>
+    </ol>
+  </section>
+</div>

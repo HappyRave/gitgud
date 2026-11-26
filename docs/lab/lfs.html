@@ -1,0 +1,421 @@
+<title>R10 Partial LFS Download</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+:root {
+  --bg: #f4f5f8; --panel: #ffffff; --line: #dde1e8; --fg: #18202c; --muted: #5a6577;
+  --accent: #e0561f; --pick: #efe6ff; --pick-ink: #5b2fa6; --open: #fff1d6; --open-ink: #8a5a00;
+  --a-bg: #14181f; --a-panel: #1a1f28; --a-line: #2a313c; --a-fg: #dde2ea; --a-muted: #8b95a5; --a-hover: #20262f;
+  --a-sel: #22324b; --a-warn: #3a2b12; --a-warn-ink: #f2c46a; --a-bad: #3d1f1a; --a-bad-ink: #ff9d80;
+  --a-add: #173326; --a-add-ink: #7fd9a6; --a-blue: #56b4e9;
+  --body: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --mono: "Cascadia Mono", Consolas, "Courier New", monospace;
+}
+:root { --dec-bg: #ddf3e6; --dec-ink: #1d6b3f; --fact-bg: #e3edf9; --fact-ink: #1f4f86; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #10141b; --panel: #171d26; --line: #29313d; --fg: #e4e8ef; --muted: #96a0b0;
+  --accent: #ff7a45; --pick: #2c2141; --pick-ink: #cdb4ff; --open: #3a2d12; --open-ink: #f5c86a;
+  --dec-bg: #173326; --dec-ink: #7fd9a6; --fact-bg: #1a2b40; --fact-ink: #9cc6f2; color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #10141b; --panel: #171d26; --line: #29313d; --fg: #e4e8ef; --muted: #96a0b0;
+  --accent: #ff7a45; --pick: #2c2141; --pick-ink: #cdb4ff; --open: #3a2d12; --open-ink: #f5c86a;
+  --dec-bg: #173326; --dec-ink: #7fd9a6; --fact-bg: #1a2b40; --fact-ink: #9cc6f2; color-scheme: dark; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.55 var(--body); }
+.wrap { max-width: 1240px; margin: 0 auto; padding-block: 28px 72px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+h1, h2 { text-wrap: balance; }
+.sec > * { min-width: 0; }
+table.data { display: block; overflow-x: auto; max-width: 100%; }
+@media (max-width: 720px) { .cols { grid-template-columns: 1fr; } h1 { font-size: 28px; } }
+h1 { font-size: 34px; line-height: 1.1; margin: 4px 0 10px; }
+h2 { font-size: 22px; margin: 0; } h3 { font-size: 15px; margin: 0; } h4 { margin: 0 0 4px; font-size: 13px; }
+p { margin: 0; max-width: 84ch; }
+code { font: 13px var(--mono); }
+.eyebrow { font: 600 11.5px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.tag { display: inline-block; font: 600 11px var(--mono); padding: 2px 7px; border-radius: 4px; white-space: nowrap; vertical-align: 1px; }
+.t-pick { background: var(--pick); color: var(--pick-ink); }
+.t-prop { background: var(--open); color: var(--open-ink); }
+.t-dec { background: var(--dec-bg); color: var(--dec-ink); }
+.t-fact { background: var(--fact-bg); color: var(--fact-ink); }
+.brief { display: grid; gap: 6px; font-size: 14px; padding: 12px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; margin: 14px 0; }
+.sec { padding-top: 40px; display: grid; gap: 14px; }
+.sec > .fh { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; border-bottom: 2px solid var(--line); padding-bottom: 8px; }
+.lab { font: 700 14px var(--mono); color: var(--accent); }
+.idea { color: var(--muted); font-size: 14px; }
+.cols { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; font-size: 14px; }
+.cols ul, ul.notes { margin: 0; padding-left: 20px; display: grid; gap: 3px; font-size: 14px; }
+.pickline { font-size: 14px; padding: 10px 12px; border-left: 3px solid var(--pick-ink); background: var(--panel); border-radius: 0 6px 6px 0; }
+ol.q { margin: 0; padding-left: 22px; display: grid; gap: 10px; font-size: 14.5px; }
+table.data { border-collapse: collapse; font-size: 13.5px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+table.data th, table.data td { padding: 5px 12px; text-align: right; border-bottom: 1px solid var(--line); white-space: nowrap; }
+table.data th:first-child, table.data td:first-child { text-align: left; }
+table.data th { font-size: 12px; color: var(--muted); font-weight: 600; }
+.states { display: grid; gap: 22px; }
+.state { display: grid; gap: 8px; }
+.state > p { font-size: 14px; color: var(--muted); }
+
+/* ---------- the app, dark, at real size ---------- */
+.app { background: var(--a-bg); color: var(--a-fg); border: 1px solid var(--a-line); border-radius: 8px; overflow-x: auto; overflow-y: hidden; font: 12.5px/1.4 var(--body); }
+.app > * { min-width: 720px; }
+.app .m { font-family: var(--mono); font-size: 11.5px; }
+.app button { all: unset; box-sizing: border-box; cursor: pointer; font: 12px var(--body); padding: 3px 9px; border-radius: 4px;
+  border: 1px solid var(--a-line); background: var(--a-panel); color: var(--a-fg); white-space: nowrap; }
+.app button.pri { background: #2f6fd6; border-color: #2f6fd6; color: #fff; font-weight: 600; }
+.app button.sm { padding: 1px 7px; font-size: 11.5px; }
+.app .k { font: 600 9.5px var(--mono); border: 1px solid var(--a-line); border-radius: 3px; padding: 0 3px; color: var(--a-muted); margin-left: 3px; }
+.ph { display: flex; align-items: center; gap: 8px; padding: 7px 12px; border-bottom: 1px solid var(--a-line); background: var(--a-panel); flex-wrap: wrap; }
+.ph .name { font-weight: 600; } .ph .ct { color: var(--a-muted); } .ph .r { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+.mu { color: var(--a-muted); } .bad { color: var(--a-bad-ink); } .ok { color: var(--a-add-ink); } .warn { color: var(--a-warn-ink); }
+.chip { display: inline-flex; align-items: center; gap: 4px; font: 600 10px var(--mono); padding: 1px 6px; border-radius: 9px; white-space: nowrap; background: var(--a-hover); color: var(--a-muted); }
+.chip.ok { background: var(--a-add); color: var(--a-add-ink); } .chip.w { background: var(--a-warn); color: var(--a-warn-ink); } .chip.b { background: var(--a-bad); color: var(--a-bad-ink); }
+.dlg { display: grid; grid-template-rows: auto 1fr auto; max-width: 860px; margin: 18px auto; border: 1px solid var(--a-line); border-radius: 8px; background: var(--a-panel); box-shadow: 0 10px 40px #0008; }
+.dlg .foot { display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-top: 1px solid var(--a-line); }
+.dlg .foot .sp { flex: 1; }
+.scrim { background: color-mix(in srgb, var(--a-bg) 85%, #000); padding: 6px 0; }
+.bar { height: 8px; border-radius: 4px; background: var(--a-hover); overflow: hidden; display: flex; }
+.bar i { display: block; height: 100%; }
+.sumline { display: grid; gap: 5px; padding: 10px 12px; border-bottom: 1px solid var(--a-line); }
+.sumline .big { font-size: 15px; } .sumline .big b { font-size: 18px; }
+.legend { display: flex; gap: 12px; font-size: 11px; color: var(--a-muted); flex-wrap: wrap; }
+.legend i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; }
+.tree { padding: 4px 0; max-height: 360px; overflow: hidden; }
+.tn { display: grid; grid-template-columns: 18px minmax(0, 1fr) 80px 64px 210px; gap: 10px; align-items: center; padding: 2px 12px; white-space: nowrap; }
+.tn.h { font: 600 10px var(--mono); color: var(--a-muted); text-transform: uppercase; letter-spacing: .05em; border-bottom: 1px solid var(--a-line); padding-bottom: 4px; }
+.tn .nm { overflow: hidden; text-overflow: ellipsis; }
+.tn .sz, .tn .n { text-align: right; font: 11.5px var(--mono); color: var(--a-muted); }
+.tn.sel { background: var(--a-sel); }
+.cb { width: 13px; height: 13px; border-radius: 3px; border: 1px solid var(--a-muted); display: inline-grid; place-items: center; font: 700 10px/1 var(--body); }
+.cb.on { background: #2f6fd6; border-color: #2f6fd6; color: #fff; }
+.cb.part { background: #2f6fd6; border-color: #2f6fd6; color: #fff; }
+.cb.lock { background: var(--a-hover); border-color: var(--a-line); color: var(--a-muted); }
+.ind { display: inline-block; width: 14px; }
+.note { margin: 8px 12px; padding: 7px 10px; border-radius: 5px; font-size: 12px; display: grid; gap: 3px; }
+.note.w { background: var(--a-warn); color: var(--a-warn-ink); } .note.w b { color: var(--a-fg); }
+.note.i { background: var(--a-hover); color: var(--a-muted); } .note.i b { color: var(--a-fg); }
+.twocol { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.twocol > div + div { border-left: 1px solid var(--a-line); }
+.sub { font: 600 10px var(--mono); color: var(--a-muted); text-transform: uppercase; letter-spacing: .05em; padding: 8px 12px 3px; }
+.li { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; gap: 6px; align-items: center; padding: 3px 12px; }
+.li .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.li .sz { font: 11.5px var(--mono); color: var(--a-muted); }
+.rule { display: grid; grid-template-columns: 18px minmax(0, 1fr) 110px 120px; gap: 8px; align-items: center; padding: 6px 12px; border-bottom: 1px solid var(--a-line); }
+.rule .d { font-size: 11.5px; color: var(--a-muted); }
+.rule .m { color: var(--a-muted); }
+.seg { display: inline-flex; border: 1px solid var(--a-line); border-radius: 4px; overflow: hidden; }
+.seg span { padding: 1px 8px; font-size: 11.5px; color: var(--a-muted); } .seg span.on { background: var(--a-sel); color: var(--a-fg); }
+/* library rows */
+.lib .row { display: grid; grid-template-columns: 22px minmax(0, 1fr) 110px 190px 90px; gap: 10px; align-items: center; padding: 5px 12px; border-bottom: 1px solid var(--a-line); }
+.lib .row.h { font: 600 10px var(--mono); color: var(--a-muted); text-transform: uppercase; letter-spacing: .05em; }
+.lib .row .r { text-align: right; }
+.lib .row .mini { display: grid; gap: 2px; font: 11px var(--mono); color: var(--a-muted); }
+/* working copy / file rows */
+.files .f { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 3px 12px; }
+.files .f .p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cloud { display: inline-block; width: 14px; text-align: center; color: var(--a-blue); }
+.card { margin: 14px; padding: 12px 14px; border: 1px solid var(--a-line); border-radius: 6px; background: var(--a-panel); display: grid; gap: 8px; max-width: 640px; }
+.card .acts { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.card .hint { color: var(--a-muted); font-size: 11.5px; }
+.steps { display: flex; gap: 6px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--a-line); font-size: 11.5px; color: var(--a-muted); }
+.steps b { color: var(--a-fg); } .steps .on { color: var(--a-fg); font-weight: 600; } .steps .dn { color: var(--a-add-ink); }
+</style>
+<div class="wrap">
+  <div class="eyebrow">Round 10 · 2026-11-26 · decided: B, keep downloads · first build done (Ctrl+K › LFS downloads; clone dialog)</div>
+  <h1>R10 · Partial LFS download</h1>
+  <div class="brief">
+    <div><b>Brief</b> (Max, 2026-11-26): "Let's start on partial lfs". Spec Q7, "Sparse checkout / <code>lfs.fetchinclude</code> UI",
+      was "later" (2026-11-21); this round brings it forward. The spec's positioning puts "fast on big and LFS repos" (your pain 1)
+      under everything else.</div>
+    <div class="idea">Every number below was measured on your machine on 2026-11-26 (your D:\VEX repos at their current HEAD); repo
+      and folder names are real. Nothing was changed in those repos.</div>
+  </div>
+
+  <section class="sec" id="facts">
+    <div class="fh"><h2>What the numbers say</h2><span class="tag t-fact">measured 2026-11-26</span></div>
+    <p class="idea">Your Library has 28 repos; 13 hold LFS objects, <b>140 GiB</b> in their <code>.git/lfs</code> stores, and the same
+      again checked out in the work trees. The "used by the build" column follows every GUID reference from the scenes enabled in
+      <code>EditorBuildSettings</code> through prefabs, materials, controllers and other assets, and adds what Unity loads
+      without a reference (code, DLLs, <code>Resources</code>, <code>Editor</code>, <code>StreamingAssets</code>).</p>
+    <table class="data">
+      <tr><th>Repo</th><th>LFS at HEAD</th><th>Used by the build scenes</th><th>Share</th><th>Biggest unused</th></tr>
+      <tr><td>horrorescape</td><td>33.6 GiB · 8,246 files</td><td>12.8 GiB + 0.7 always needed</td><td>40%</td><td>Plugins/TheThinWoman 4.2 · Abandoned_Psychiatric_Hospitals 2.4</td></tr>
+      <tr><td>mission-z-2</td><td>16.3 GiB · 9,103 files</td><td>1.7 GiB</td><td>10%</td><td>EXTERNAL_PACKS/MissionZ1 1.9 · _Manufactory 1.8</td></tr>
+      <tr><td>escape1</td><td>8.5 GiB · 13,297 files</td><td>3.6 GiB</td><td>42%</td><td>Archanor/Polygon Arsenal 0.7 · Editor/x64 0.6</td></tr>
+    </table>
+    <ul class="notes">
+      <li><b>Asset packs are used in part, not all or nothing.</b> horrorescape's build uses 4.1 of Abandoned_Psychiatric_Hospitals' 6.5 GiB
+        and 0.7 of TheThinWoman's 4.9. Skipping a whole pack folder breaks scenes; keeping it downloads gigabytes nothing uses.</li>
+      <li><b>Sandboxes aren't safe to skip by name.</b> The build scenes use 1.65 of <code>_DEBUG/DEV_Sam</code>'s 2.58 GiB and 0.33 of
+        <code>DEV_ JustinFrancois</code>' 1.0. A "skip other people's sandboxes" rule would break the build.</li>
+      <li><b>History doubles it.</b> escape1's store holds 15.7 GiB for 8.5 at HEAD: old versions. That half is LFS prune's job
+        (Settings › Caches already has it), not this round's.</li>
+    </ul>
+    <ul class="notes">
+      <li><span class="tag t-fact">fact</span> git-lfs (3.8.1, bundled) reads <code>lfs.fetchinclude</code> / <code>lfs.fetchexclude</code>
+        on fetch, pull <i>and</i> checkout: an excluded file stays a small pointer file in the work tree. Because it's plain git config,
+        Sourcetree and the terminal follow the same choice.</li>
+      <li><span class="tag t-prop">open, test</span> What Unity does with pointer files it can't import (a <code>.png</code> that is
+        130 bytes of text): import errors in the console for sure; whether it ever rewrites their <code>.meta</code> needs a test on a
+        copy before anything ships.</li>
+    </ul>
+  </section>
+
+  <section class="sec" id="shared">
+    <div class="fh"><h2>What every variant shares</h2><span class="tag t-prop">proposal</span></div>
+    <ul class="notes">
+      <li><b>Clone: pointers first, then choose.</b> <code>git clone</code> runs with LFS smudge off (seconds, not an hour), so every
+        file's size is known before anything big downloads. The choice is made with real sizes, then gitgud downloads what you
+        chose, with the clone's existing LFS progress.</li>
+      <li><b>Stored as git-lfs config</b> in the repo's <code>.git/config</code> (never committed): pull, checkout and Sourcetree
+        respect it.</li>
+      <li><b>A skipped file isn't lost</b>: its row shows ☁ "not downloaded" in the working copy, history and file tree. The viewers
+        already fetch one on open (≤ 25 MiB at once, a Fetch button above that). "Download" on any file, folder or selection.</li>
+      <li><b>Library</b> gets an LFS column: "13.5 / 33.6 GiB", so you see which repos are partial.</li>
+      <li><b>Pull says what it skipped</b>: "214 MB downloaded · 1.3 GiB not downloaded (skipped)", with the Download link.</li>
+      <li><b>Default stays "everything"</b> until you choose otherwise, per repo (see question 2).</li>
+    </ul>
+  </section>
+
+  <!-- ===================== A ===================== -->
+  <section class="sec" id="a">
+    <div class="fh"><span class="lab">A</span><h2>Folders</h2><span class="tag t-prop">proposal</span></div>
+    <p class="idea">The Gluon / Anchorpoint model: a folder tree with sizes and a checkbox per folder. Unticked folders become
+      <code>lfs.fetchexclude</code> entries. What the build scenes use is shown next to each folder, so you can see what a skip
+      would break.</p>
+    <div class="app scrim">
+      <div class="dlg">
+        <div class="ph"><span class="name">LFS downloads · horrorescape</span><span class="ct">· choose folders</span><span class="r"><button class="sm">Close</button></span></div>
+        <div>
+          <div class="sumline">
+            <div class="big"><b>22.5 GiB</b> <span class="mu">of 33.6 GiB will be on disk · 11.2 GiB skipped</span></div>
+            <div class="bar"><i style="width:67%;background:#2f6fd6"></i><i style="width:33%;background:var(--a-hover)"></i></div>
+          </div>
+          <div class="tree">
+            <div class="tn h"><span></span><span>Folder</span><span style="text-align:right">LFS size</span><span style="text-align:right">Files</span><span>Used by the build</span></div>
+            <div class="tn"><span class="cb part">–</span><span class="nm">▾ Assets/Plugins</span><span class="sz">19.85 GB</span><span class="n">3,802</span><span class="m mu">8.3 GB</span></div>
+            <div class="tn"><span class="cb on">✓</span><span class="nm"><span class="ind"></span>Abandoned_Psychiatric_Hospitals</span><span class="sz">6.47 GB</span><span class="n">—</span><span class="m mu">4.09 GB</span></div>
+            <div class="tn sel"><span class="cb">&nbsp;</span><span class="nm"><span class="ind"></span>TheThinWoman</span><span class="sz">4.90 GB</span><span class="n">—</span><span class="m bad">0.73 GB · breaks 4 scenes</span></div>
+            <div class="tn"><span class="cb on">✓</span><span class="nm"><span class="ind"></span>Hospital</span><span class="sz">2.11 GB</span><span class="n">—</span><span class="m mu">1.71 GB</span></div>
+            <div class="tn"><span class="cb on">✓</span><span class="nm"><span class="ind"></span>Horror_Pack_1</span><span class="sz">2.07 GB</span><span class="n">—</span><span class="m mu">1.73 GB</span></div>
+            <div class="tn"><span class="cb">&nbsp;</span><span class="nm"><span class="ind"></span>_Manufactory</span><span class="sz">1.85 GB</span><span class="n">—</span><span class="m ok">unused</span></div>
+            <div class="tn"><span class="cb">&nbsp;</span><span class="nm"><span class="ind"></span>LeartesStudios</span><span class="sz">1.83 GB</span><span class="n">—</span><span class="m bad">0.08 GB · breaks 1 scene</span></div>
+            <div class="tn"><span class="cb on">✓</span><span class="nm">▸ Assets/Scenes</span><span class="sz">4.15 GB</span><span class="n">236</span><span class="m mu">1.44 GB</span></div>
+            <div class="tn"><span class="cb part">–</span><span class="nm">▾ Assets/_DEBUG</span><span class="sz">3.88 GB</span><span class="n">1,153</span><span class="m mu">1.98 GB</span></div>
+            <div class="tn"><span class="cb">&nbsp;</span><span class="nm"><span class="ind"></span>DEV_Sam</span><span class="sz">2.58 GB</span><span class="n">—</span><span class="m bad">1.65 GB · breaks 7 scenes</span></div>
+            <div class="tn"><span class="cb on">✓</span><span class="nm"><span class="ind"></span>DEV_ JustinFrancois</span><span class="sz">1.01 GB</span><span class="n">—</span><span class="m mu">0.33 GB</span></div>
+            <div class="tn"><span class="cb on">✓</span><span class="nm"><span class="ind"></span>DEV_Max <span class="chip">you</span></span><span class="sz">0.00 GB</span><span class="n">—</span><span class="m mu">—</span></div>
+            <div class="tn"><span class="cb on">✓</span><span class="nm">▸ Assets/Locale</span><span class="sz">1.68 GB</span><span class="n">689</span><span class="m mu">—</span></div>
+            <div class="tn"><span class="cb on">✓</span><span class="nm">▸ Assets/VEX_GAME</span><span class="sz">1.56 GB</span><span class="n">175</span><span class="m mu">0.6 GB</span></div>
+          </div>
+          <div class="note w"><b>3 skipped folders hold files the build scenes use (2.46 GB).</b> Unity will show them as missing in the scenes that use them. <span><button class="sm">Show the files</button> <button class="sm">Keep what's used, skip the rest</button></span></div>
+        </div>
+        <div class="foot"><span class="mu">Saved as <code>lfs.fetchexclude</code> in .git/config</span><span class="sp"></span><button class="sm">Cancel</button><button class="pri">Apply · free 11.2 GiB</button></div>
+      </div>
+    </div>
+    <p class="idea" style="font-size:12.5px">Scene counts in the warnings ("breaks 4 scenes") are <span class="tag t-prop">placeholder</span>s; the GB values are measured.</p>
+    <div class="cols">
+      <div><h4>Good at</h4><ul><li>Predictable: what you tick is what you get; one config line per folder, readable in Sourcetree's terminal.</li><li>Familiar from Gluon / Anchorpoint.</li><li>Works for non-Unity repos unchanged.</li></ul></div>
+      <div><h4>Costs</h4><ul><li>Your repos don't split by folder: the packs are used in part, so the honest choice is mostly "keep everything" or "break scenes". Saves 1.85 GB safely in horrorescape (<code>_Manufactory</code>).</li><li>The warning column needs the scene analysis anyway (B's engine), only to tell you not to tick.</li></ul></div>
+    </div>
+  </section>
+
+  <!-- ===================== B ===================== -->
+  <section class="sec" id="b">
+    <div class="fh"><span class="lab">B</span><h2>What your scenes use</h2><span class="tag t-dec">decided 2026-11-26 · "B"</span></div>
+    <p class="idea">You choose scenes, not folders. gitgud follows their references with the GUID index it already has and downloads
+      exactly those files, plus what Unity always loads (code, DLLs, Resources, Editor, StreamingAssets). Default: the build's
+      scenes. Add a test scene or a prefab you work on and its dependencies come with it. After each pull the list is worked out
+      again, so a scene that starts using another pack file gets it.</p>
+    <div class="app scrim">
+      <div class="dlg">
+        <div class="ph"><span class="name">LFS downloads · horrorescape</span><span class="ct">· what your scenes use</span><span class="r"><span class="seg"><span class="on">Scenes</span><span>Folders</span></span><button class="sm">Close</button></span></div>
+        <div>
+          <div class="sumline">
+            <div class="big"><b>13.5 GiB</b> <span class="mu">of 33.6 GiB will be on disk · 20.1 GiB not used by these scenes</span></div>
+            <div class="bar"><i style="width:38%;background:#2f6fd6"></i><i style="width:2%;background:#7fd9a6"></i><i style="width:60%;background:var(--a-hover)"></i></div>
+            <div class="legend"><span><i style="background:#2f6fd6"></i>used by the scenes · 12.8 GiB</span><span><i style="background:#7fd9a6"></i>always kept · 0.7 GiB</span><span><i style="background:var(--a-hover)"></i>not downloaded · 20.1 GiB</span></div>
+          </div>
+          <div class="twocol">
+            <div>
+              <div class="sub">Scenes and prefabs to keep working · 13</div>
+              <div class="li"><span class="cb on">✓</span><span class="nm">Every scene in Build Settings <span class="chip">12</span></span><span class="sz">12.79 GB</span></div>
+              <div class="li"><span class="cb on">✓</span><span class="nm m">Assets/_DEBUG/DEV_Max/Test_Lighting.unity</span><span class="sz">+0.21 GB</span></div>
+              <div class="li"><span></span><span class="nm"><button class="sm">+ Add a scene or prefab…</button></span><span></span></div>
+              <div class="sub">Always kept</div>
+              <div class="li"><span class="cb lock">✓</span><span class="nm">Code, DLLs, Resources, Editor, StreamingAssets</span><span class="sz">0.67 GB</span></div>
+            </div>
+            <div>
+              <div class="sub">Not downloaded, by folder · 5,862 files</div>
+              <div class="li"><span class="cloud">☁</span><span class="nm">Plugins/TheThinWoman</span><span class="sz">4.16 of 4.90 GB</span></div>
+              <div class="li"><span class="cloud">☁</span><span class="nm">Plugins/Abandoned_Psychiatric_Hospitals</span><span class="sz">2.39 of 6.47 GB</span></div>
+              <div class="li"><span class="cloud">☁</span><span class="nm">Plugins/_Manufactory</span><span class="sz">1.84 of 1.85 GB</span></div>
+              <div class="li"><span class="cloud">☁</span><span class="nm">Plugins/LeartesStudios</span><span class="sz">1.76 of 1.83 GB</span></div>
+              <div class="li"><span class="cloud">☁</span><span class="nm">Scenes/Horror 2 - GameplayScene - Merged</span><span class="sz">1.69 of 1.69 GB</span></div>
+              <div class="li"><span class="cloud">☁</span><span class="nm">Scenes/HorrorScenes</span><span class="sz">1.02 of 2.35 GB</span></div>
+              <div class="li"><span class="cloud">☁</span><span class="nm">_DEBUG/DEV_Sam</span><span class="sz">0.93 of 2.58 GB</span></div>
+              <div class="li"><span></span><span class="nm mu">+ smaller folders</span><span></span></div>
+            </div>
+          </div>
+          <div class="note i"><b>Unity will list the files that aren't downloaded as unimportable</b> if it scans them (errors in the console), but nothing the chosen scenes open is missing.</div>
+        </div>
+        <div class="foot"><span class="mu">Saved as <code>lfs.fetchinclude</code> (2,384 paths) in .git/config</span><span class="sp"></span><button class="sm">Download everything</button><button class="pri">Apply · free 20.1 GiB</button></div>
+      </div>
+    </div>
+    <p class="idea" style="font-size:12.5px">DEV_Max's test scene and its +0.21 GB are <span class="tag t-prop">placeholder</span>s (your sandbox is empty in horrorescape); every other number is measured.</p>
+    <div class="cols">
+      <div><h4>Good at</h4><ul><li>Fits how Unity projects are actually laid out: packs used in part, sandboxes the build depends on. 60% less in horrorescape, 90% less in mission-z-2, without a broken scene.</li><li>No folder knowledge needed; the default (the build's scenes) is right on day one.</li><li>Only a Unity-aware client can do this: Gluon, Anchorpoint and Sourcetree have only folders.</li></ul></div>
+      <div><h4>Costs</h4><ul><li>The include list is thousands of paths in <code>.git/config</code>, and changes after pulls. Readable by git-lfs and Sourcetree, but not by a person.</li><li>References made outside GUIDs (Addressables groups, <code>AssetDatabase</code> paths in editor scripts) are missed; it needs a "keep this folder" escape (the Folders tab).</li><li>The most work: dependency walk at clone time on pointers (scenes and prefabs stored in LFS have to come down first).</li></ul></div>
+    </div>
+    <div class="pickline"><b>Claude's pick: B.</b> The numbers decide it. Your repos don't split by folder (A), so the only way to
+      save the 60–90% without breaking a scene is to follow what the scenes use, and gitgud already has the GUID index to do that.
+      A's tree stays inside B as the "Folders" tab, for keep-this-folder overrides and non-Unity repos.</div>
+  </section>
+
+  <!-- ===================== C ===================== -->
+  <section class="sec" id="c">
+    <div class="fh"><span class="lab">C</span><h2>Rules for every repo</h2><span class="tag t-prop">proposal</span></div>
+    <p class="idea">One set of rules in Settings, applied to all 150 repos (each repo can override): kinds of files you rarely need,
+      by name pattern. No per-repo choosing at clone. gitgud turns the rules into each repo's <code>lfs.fetchexclude</code>.</p>
+    <div class="app scrim">
+      <div class="dlg">
+        <div class="ph"><span class="name">Settings › LFS downloads</span><span class="ct">· for every repo</span><span class="r"><button class="sm">Close</button></span></div>
+        <div>
+          <div class="rule" style="font: 600 10px var(--mono); color: var(--a-muted); text-transform: uppercase; letter-spacing: .05em"><span></span><span>Skip</span><span>Pattern</span><span style="text-align:right">Saves (13 repos)</span></div>
+          <div class="rule"><span class="cb on">✓</span><span>Source art<div class="d">Photoshop, Blender, Substance, Max files: Unity uses the exported textures</div></span><span class="m">*.psd *.blend *.spp *.max</span><span style="text-align:right" class="m">placeholder</span></div>
+          <div class="rule"><span class="cb on">✓</span><span>Videos<div class="d">.mp4 / .mov: 1.9 GB in hyperdash alone</div></span><span class="m">*.mp4 *.mov</span><span style="text-align:right" class="m">placeholder</span></div>
+          <div class="rule"><span class="cb">&nbsp;</span><span>Other people's sandboxes<div class="d bad">The build uses 1.65 GB of DEV_Sam in horrorescape</div></span><span class="m">*/DEV_*/ except DEV_Max</span><span style="text-align:right" class="m">placeholder</span></div>
+          <div class="rule"><span class="cb">&nbsp;</span><span>Lightmaps of scenes not in the build<div class="d">needs the scene analysis (B)</div></span><span class="m">—</span><span style="text-align:right" class="m">—</span></div>
+          <div class="rule"><span></span><span><button class="sm">+ Add a rule…</button></span><span></span><span></span></div>
+          <div class="note w"><b>A .psd used directly as a texture is a source file and a texture at once</b> (horrorescape has 1.4 GB of .psd; how much is used by the build isn't measured yet). A rule would break those.</div>
+        </div>
+        <div class="foot"><span class="mu">Each repo can override in its own LFS downloads</span><span class="sp"></span><button class="pri">Apply to 13 repos</button></div>
+      </div>
+    </div>
+    <p class="idea" style="font-size:12.5px">The "Saves" column is a <span class="tag t-prop">placeholder</span>; I haven't measured by extension across repos.</p>
+    <div class="cols">
+      <div><h4>Good at</h4><ul><li>Set once for 150 repos; new clones follow it.</li><li>Simple patterns any git tool understands.</li></ul></div>
+      <div><h4>Costs</h4><ul><li>File kinds don't predict use in Unity: a .psd can be a live texture, a video can be in a cutscene.</li><li>Saves the least of the three on your repos: the big bytes are textures, audio and meshes the patterns can't tell apart.</li></ul></div>
+    </div>
+  </section>
+
+  <!-- ===================== states ===================== -->
+  <section class="sec" id="states">
+    <div class="fh"><h2>States</h2><span class="tag t-prop">proposal</span><span class="idea">drawn for B; A and C differ only in the choose step. Sizes are measured; times, the pull's numbers and the Library's branches are placeholders.</span></div>
+    <div class="states">
+      <div class="state">
+        <h3>Clone: pointers first, then choose</h3>
+        <p>The clone dialog's second step: pointers first, then the scenes and prefabs stored in LFS (they hold the references), then the choice.</p>
+        <div class="app">
+          <div class="steps"><span class="dn">✓ Cloned without LFS</span>›<span class="dn">✓ Read the scenes and prefabs</span>›<span class="on">Choose what to download</span>›<span>Download</span></div>
+          <div class="card">
+            <div><b>horrorescape</b> holds <b>33.6 GiB</b> in LFS. The 12 scenes in Build Settings use <b>13.5 GiB</b> of it.</div>
+            <div class="bar"><i style="width:40%;background:#2f6fd6"></i><i style="width:60%;background:var(--a-hover)"></i></div>
+            <div class="acts"><button class="pri">Download what the build uses · 13.5 GiB</button><button>Everything · 33.6 GiB</button><button class="sm">Choose…</button></div>
+            <div class="hint">You can change it any time: Library › right-click › LFS downloads.</div>
+          </div>
+        </div>
+      </div>
+      <div class="state">
+        <h3>Library</h3>
+        <p>The LFS column. A partial repo shows what's on disk of what's in the tree.</p>
+        <div class="app lib">
+          <div class="row h"><span></span><span>Repository</span><span>Branch</span><span>LFS on disk</span><span class="r">Changed</span></div>
+          <div class="row"><span>◆</span><span>horrorescape</span><span class="m mu">main</span><span class="mini"><span>13.5 / 33.6 GiB <span class="chip">partial</span></span><span class="bar" style="height:4px"><i style="width:40%;background:#2f6fd6"></i></span></span><span class="r mu">2 h ago</span></div>
+          <div class="row"><span>◆</span><span>hyperdash</span><span class="m mu">develop</span><span class="mini"><span>20.4 GiB</span><span class="bar" style="height:4px"><i style="width:100%;background:#2f6fd6"></i></span></span><span class="r mu">today</span></div>
+          <div class="row"><span>◆</span><span>mission-z-2</span><span class="m mu">main</span><span class="mini"><span>1.9 / 16.3 GiB <span class="chip">partial</span></span><span class="bar" style="height:4px"><i style="width:12%;background:#2f6fd6"></i></span></span><span class="r mu">3 d ago</span></div>
+        </div>
+      </div>
+      <div class="state">
+        <h3>A file that isn't downloaded</h3>
+        <p>In the file tree, history and working copy: ☁ and its size. Opening it in a viewer fetches it (existing). Selection → Download.</p>
+        <div class="app files">
+          <div class="f"><span class="cloud">☁</span><span class="p m">Assets/Plugins/TheThinWoman/Textures/ThinWoman_Body_D.tga</span><span class="m mu">42.7 MB · <button class="sm">Download</button></span></div>
+          <div class="f"><span class="cloud">☁</span><span class="p m">Assets/Plugins/TheThinWoman/Audio/Breath_03.wav</span><span class="m mu">3.1 MB</span></div>
+          <div class="f"><span></span><span class="p m">Assets/Plugins/TheThinWoman/Prefabs/ThinWoman.prefab</span><span class="m mu">used by Horror 2</span></div>
+        </div>
+      </div>
+      <div class="state">
+        <h3>After a pull</h3>
+        <p>Someone's commit made a build scene use a file that wasn't downloaded: the new list brings it in. The summary says both sides.</p>
+        <div class="app"><div class="card">
+          <div><b>Pulled 6 commits.</b> <span class="ok">214 MB downloaded</span>, including <b>38 files</b> Horror 2 now uses from TheThinWoman.</div>
+          <div class="hint">1.3 GiB of new files no chosen scene uses weren't downloaded. <button class="sm">Download them</button></div>
+        </div></div>
+      </div>
+      <div class="state">
+        <h3>Unity is open</h3>
+        <p>Downloading changes files under Assets/ while Unity watches them, like a checkout. Same guard as checkout: the existing <code>Temp/UnityLockfile</code> check.</p>
+        <div class="app"><div class="card">
+          <div class="warn"><b>Unity has horrorescape open.</b> It will import 2,384 files as they arrive.</div>
+          <div class="acts"><button class="pri">Download anyway</button><button>Download after Unity closes</button></div>
+        </div></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec" id="later">
+    <div class="fh"><h2>Getting a skipped file later</h2><span class="tag t-prop">proposal</span><span class="idea">Max: "what when I need to get one of the ommited files later?"</span></div>
+    <p class="idea">Four ways in, from the most automatic to the most manual. Each one downloads now (<code>git lfs pull -I</code> on those paths)
+      and, so the file doesn't fall back to a pointer, keeps it in the list.</p>
+    <ul class="notes">
+      <li><b>1 · Add the scene or prefab you're starting on.</b> Its whole dependency tree comes down, and later pulls keep it
+        up to date. Best when you know what you're about to work on.</li>
+      <li><b>2 · Unity asks for it.</b> When you open a scene in Unity that uses skipped files, Unity fails to import them and logs
+        each one. gitgud reads Unity's <code>Editor.log</code> while the project is open and offers them in one click (state below).
+        <span class="tag t-prop">open, test</span> the exact log line for a pointer file.</li>
+      <li><b>3 · Download in gitgud.</b> ☁ rows in the working copy, history and file tree: Download on a file, a folder or a
+        selection. Opening a skipped file in a viewer fetches it (as today: 25 MiB at once, a Fetch button above).</li>
+      <li><b>4 · Download everything</b>, in the dialog's footer: the repo becomes complete again.</li>
+    </ul>
+    <ul class="notes">
+      <li><span class="tag t-fact">fact</span> <b>Why "keep it in the list" matters:</b> git-lfs applies the include list on every
+        checkout and pull. A file downloaded once but not in the list goes back to a pointer the next time someone changes it.
+        So every download above adds its paths to the list, under "Kept by you", until you remove them.</li>
+    </ul>
+    <div class="states">
+      <div class="state">
+        <h3>Unity hit skipped files</h3>
+        <p>You opened <code>DEV_Sam/Sam_TestRoom.unity</code> in Unity; it isn't in your list. gitgud saw the import failures in the log.</p>
+        <div class="app"><div class="card">
+          <div class="warn"><b>Unity couldn't import 38 files that aren't downloaded</b> (212 MB), used by Sam_TestRoom.unity.</div>
+          <div class="acts"><button class="pri">Download and keep Sam_TestRoom's files</button><button>Only these 38</button><button class="sm">Show them</button></div>
+          <div class="hint">Unity re-imports them as they arrive. The 38 files and 212 MB are placeholders.</div>
+        </div></div>
+      </div>
+      <div class="state">
+        <h3>The list, with what you kept</h3>
+        <p>The dialog's left column gains a "Kept by you" group: downloads you asked for, removable one by one.</p>
+        <div class="app"><div class="dlg" style="margin:14px auto">
+          <div class="sub">Scenes and prefabs to keep working</div>
+          <div class="li"><span class="cb on">✓</span><span class="nm">Every scene in Build Settings <span class="chip">12</span></span><span class="sz">12.79 GB</span></div>
+          <div class="li"><span class="cb on">✓</span><span class="nm m">Assets/_DEBUG/DEV_Sam/Sam_TestRoom.unity <span class="chip">from Unity</span></span><span class="sz">+0.21 GB</span></div>
+          <div class="sub">Kept by you</div>
+          <div class="li"><span class="cb on">✓</span><span class="nm m">Assets/Plugins/TheThinWoman/Textures/ <span class="chip">folder</span></span><span class="sz">1.12 GB</span></div>
+          <div class="li"><span class="cb on">✓</span><span class="nm m">Assets/VEX_GAME/Videos/Intro_FR.mp4</span><span class="sz">96 MB</span></div>
+          <div class="sub">Always kept</div>
+          <div class="li" style="padding-bottom:10px"><span class="cb lock">✓</span><span class="nm">Code, DLLs, Resources, Editor, StreamingAssets</span><span class="sz">0.67 GB</span></div>
+        </div></div>
+        <p style="font-size:12.5px">Sizes in this list other than the build's and "always kept" are placeholders.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec" id="questions">
+    <div class="fh"><h2>Open questions</h2><span class="tag t-prop">open</span></div>
+    <ol class="q">
+      <li><s>A, B or C?</s> <span class="tag t-dec">decided 2026-11-26</span> B (Max: "B"), with A's folder tree as its override tab.</li>
+      <li><b>Default for a new clone:</b> keep "everything" (today's behaviour, the choice offered in the clone dialog), or default to
+        "what the build uses"? Claude's pick: offer it in the clone dialog, primary button = what the build uses.</li>
+      <li><b>Making an existing repo partial:</b> files already downloaded can stay (saves nothing until a prune) or be turned back
+        into pointers (frees the 20 GiB at once; Unity re-imports them as missing). Claude's pick: turn them back, as a step you
+        confirm, with Unity closed.</li>
+      <li><b>Where it lives</b> for an open repo: a dialog from the Library's right-click and the strip's LFS stat, or a section of
+        Settings › Caches? Claude's pick: the dialog.</li>
+      <li><b>Unity and pointer files</b> needs a test before building: open a partial copy of horrorescape in Unity and check that no
+        <code>.meta</code> is rewritten. Can I do that on a copy in batch mode with the editor closed, or would you rather run it?</li>
+      <li><span class="tag t-dec">decided 2026-11-26 · "Yes"</span> <b>Keep what you download:</b> every download (from Unity's log, a ☁ row, a viewer) stays in the list under "Kept by you"
+        until you remove it, so it keeps updating. The alternative is one-off downloads that can fall back to pointers when the file
+        changes. Claude's pick: keep, since a texture silently turning back into a pointer after a pull is the worst surprise
+        this feature can make.</li>
+    </ol>
+  </section>
+</div>

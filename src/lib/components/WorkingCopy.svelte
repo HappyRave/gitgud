@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { CommitOptions, Hunk, LfsLock, LineSelect, MetaIssue, Side, Status } from "$lib/api";
+  import type { CommitOptions, Hunk, LfsLock, LineSelect, MetaIssue, Overlap, Side, Status } from "$lib/api";
   import { workingKey } from "$lib/keys";
   import { prefs, setPaneSize } from "$lib/prefs.svelte";
   import { matchesLfsPattern } from "$lib/unity";
@@ -31,6 +31,10 @@
     locks = [],
     lfsPatterns = [],
     locksSupported = false,
+    overlap = null,
+    pullAfterCommit = false,
+    onpull,
+    oncommitpull,
     selected = $bindable(null),
     onstage,
     onunstage,
@@ -57,6 +61,13 @@
     locks?: LfsLock[];
     lfsPatterns?: string[];
     locksSupported?: boolean;
+    /** Files also changed on the upstream (R11 overlap radar). */
+    overlap?: Overlap | null;
+    /** "Commit, then pull" is armed: the next commit pulls. */
+    pullAfterCommit?: boolean;
+    onpull?: () => void;
+    /** Arms a pull after the next commit and focuses the message. */
+    oncommitpull?: () => void;
     /** The file whose diff is shown. */
     selected?: FileRef | null;
     onstage: (paths: string[]) => void;
@@ -136,6 +147,15 @@
   export function focus() {
     pane?.focus();
   }
+
+  /** Focuses the commit message ("Commit, then pull"). */
+  export function focusCommit() {
+    commitBox?.focus();
+  }
+
+  /** Overlaps worth pulling for: the ones git may not merge by itself. */
+  const risky = $derived((overlap?.files ?? []).filter((f) => f.risk !== "merges"));
+  const riskyDirty = $derived(risky.some((f) => f.dirty));
 
   function onKeydown(event: KeyboardEvent) {
     // Only with nothing focused or focus in this pane: the graph and sidebar have their own arrows.
@@ -220,6 +240,7 @@
       {locks}
       {lfsPatterns}
       {locksSupported}
+      {overlap}
       {onstage}
       {onunstage}
       onselectfile={(path, side, mods) => applySelection(applyFileClick(fileOrder(status), currentSelection(), { path, side }, mods))}
@@ -274,6 +295,26 @@
         <button class="stashbtn" disabled={busy} onclick={onstash}>Stash…</button>
       {/if}
     </p>
+  {/if}
+  {#if risky.length && overlap && onpull}
+    <div class="overlap" role="status">
+      <span>
+        {#if pullAfterCommit}
+          <b>Pulls after this commit</b> to merge {risky.length === 1 ? risky[0].path.slice(risky[0].path.lastIndexOf("/") + 1) : `${risky.length} files`}
+          with {overlap.against[0]}.
+        {:else}
+          <b>{risky.length} {risky.length === 1 ? "file" : "files"} changed on {overlap.against[0]} since you started.</b>
+          Pull first, while the merge is small.
+        {/if}
+      </span>
+      {#if !pullAfterCommit}
+        {#if riskyDirty && oncommitpull}
+          <button class="sm pri" disabled={busy} onclick={oncommitpull}>Commit, then pull</button>
+        {:else}
+          <button class="sm pri" disabled={busy} onclick={onpull}>Pull now</button>
+        {/if}
+      {/if}
+    </div>
   {/if}
   <CommitBox bind:this={commitBox} {repoId} staged={stagedCount} {branch} {busy} {oncommit} {ondraft} />
 </div>
@@ -336,6 +377,23 @@
     display: flex;
     align-items: center;
     gap: 8px;
+  }
+  .overlap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 6px 10px 0;
+    padding: 6px 9px;
+    border-radius: 5px;
+    background: var(--warn);
+    color: var(--warn-ink);
+    font-size: 12px;
+  }
+  .overlap b {
+    color: var(--fg);
+  }
+  .overlap span {
+    flex: 1;
   }
   .stashbtn {
     margin-left: auto;

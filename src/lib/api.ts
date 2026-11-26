@@ -929,6 +929,65 @@ export interface BranchStack {
   levels: StackLevel[];
 }
 
+/** What a partial repo keeps downloaded (R10-B). */
+export interface PartialState {
+  /** Follow the scenes enabled in Build Settings. */
+  buildScenes: boolean;
+  /** More scenes or prefabs, repo paths. */
+  scenes: string[];
+  /** Files and folders downloaded on request, kept until removed. */
+  kept: string[];
+}
+
+export interface Share {
+  bytes: number;
+  files: number;
+}
+
+export interface LfsPlan {
+  /** A partial state is saved for the repo. */
+  partial: boolean;
+  state: PartialState;
+  buildScenes: string[];
+  allScenes: string[];
+  total: Share;
+  used: Share;
+  /** Code, plugins, Resources, Editor, outside Assets/. */
+  always: Share;
+  kept: Share;
+  skipped: Share;
+  skippedFolders: { folder: string; skipped: Share; total: Share }[];
+  onDisk: Share;
+  missing: string[];
+  fetchedToRead: number;
+}
+
+/** How a file both sides changed will merge (R11). */
+export type Risk = "wontMerge" | "mayConflict" | "merges";
+
+export interface OverlapFile {
+  /** The asset's path; its `.meta` is folded in. */
+  path: string;
+  risk: Risk;
+  /** The remote branch it changed on, e.g. `origin/PartyGame`. */
+  on: string;
+  /** Newest first. */
+  authors: string[];
+  commits: number;
+  /** Unix seconds. */
+  newest: number;
+  newestCommit: string;
+  /** The working copy has changes to it (else only unpushed commits do). */
+  dirty: boolean;
+}
+
+export interface Overlap {
+  /** Remote branches compared with, upstream first. */
+  against: string[];
+  /** Won't-merge first, then newest first. */
+  files: OverlapFile[];
+}
+
 export interface LfsCacheStats {
   objectCount: number;
   totalBytes: number;
@@ -1303,6 +1362,11 @@ export interface Commands {
   pr_url_with_base: { args: { id: number; branch: string; base?: string | null }; result: string | null };
   lfs_cache_stats: { args: { id: number }; result: LfsCacheStats };
   lfs_prune: { args: { id: number }; result: LfsCacheStats };
+  lfs_partial_plan: { args: { id: number; state: PartialState | null }; result: LfsPlan };
+  lfs_partial_apply: { args: { id: number; state: PartialState | null }; result: LfsPlan };
+  lfs_partial_download: { args: { id: number; paths: string[] }; result: LfsPlan };
+  overlap: { args: { id: number }; result: Overlap | null };
+  notify: { args: { title: string; body: string }; result: null };
   lfs_fetch_object: { args: { id: number; oid: string; size: number; path?: string | null }; result: boolean };
   ai_providers: { args: Record<string, never>; result: AiProviderStatus };
   ai_draft_commit_message: { args: { id: number; provider?: string | null }; result: string };
@@ -1354,7 +1418,10 @@ export interface Commands {
   scan_folder: { args: { root: string }; result: ScanResult };
   library_rescan_folder: { args: { folderId: string }; result: ScanResult };
   library_apply_scan: { args: { entries: AddRepoEntry[]; removeIds: string[] }; result: LibrarySnapshot };
-  clone_repo: { args: { url: string; dest: string; folderPath: string | null; longPaths: boolean }; result: string };
+  clone_repo: {
+    args: { url: string; dest: string; folderPath: string | null; longPaths: boolean; lfsPartial: boolean };
+    result: string;
+  };
   cancel_clone: { args: Record<string, never>; result: boolean };
   fetch_many: { args: { paths: string[] }; result: RepoSummary[] };
   update_check: { args: { manual: boolean }; result: UpdateInfo | null };
@@ -1498,7 +1565,7 @@ export interface Progress {
   total: number;
 }
 
-export type TaskOp = "fetch" | "pull" | "push";
+export type TaskOp = "fetch" | "pull" | "push" | "lfs";
 
 /** Calls `handler` with each progress line of a running fetch, pull or push. */
 export const onTaskProgress = (handler: (id: number, op: TaskOp, progress: Progress) => void) =>
@@ -1570,8 +1637,8 @@ export const scanFolder = (root: string) => call("scan_folder", { root });
 export const libraryRescanFolder = (folderId: string) => call("library_rescan_folder", { folderId });
 export const libraryApplyScan = (entries: AddRepoEntry[], removeIds: string[]) =>
   call("library_apply_scan", { entries, removeIds });
-export const cloneRepo = (url: string, dest: string, folderPath: string | null, longPaths: boolean) =>
-  call("clone_repo", { url, dest, folderPath, longPaths });
+export const cloneRepo = (url: string, dest: string, folderPath: string | null, longPaths: boolean, lfsPartial = false) =>
+  call("clone_repo", { url, dest, folderPath, longPaths, lfsPartial });
 export const cancelClone = () => call("cancel_clone", {});
 export const fetchMany = (paths: string[]) => call("fetch_many", { paths });
 export const unityInfo = (id: number) => call("unity_info", { id });
@@ -1670,6 +1737,16 @@ export const prUrlWithBase = (id: number, branch: string, base: string | null = 
   call("pr_url_with_base", { id, branch, base });
 export const lfsCacheStats = (id: number) => call("lfs_cache_stats", { id });
 export const lfsPrune = (id: number) => call("lfs_prune", { id });
+/** What `state` (null: the saved one, else the build's scenes) would download. */
+export const lfsPartialPlan = (id: number, state: PartialState | null) => call("lfs_partial_plan", { id, state });
+/** Makes the repo partial with `state`, or whole again with null. */
+export const lfsPartialApply = (id: number, state: PartialState | null) => call("lfs_partial_apply", { id, state });
+/** Downloads files or folders and keeps them in the partial repo's list. */
+export const lfsPartialDownload = (id: number, paths: string[]) => call("lfs_partial_download", { id, paths });
+/** Files changed both in your work and on the upstream as last fetched; null: nothing to compare with. */
+export const overlap = (id: number) => call("overlap", { id });
+/** A Windows notification. */
+export const notify = (title: string, body: string) => call("notify", { title, body });
 export const lfsFetchObject = (id: number, oid: string, size: number, path: string | null = null) =>
   call("lfs_fetch_object", { id, oid, size, path });
 export const aiProviders = () => call("ai_providers", {});

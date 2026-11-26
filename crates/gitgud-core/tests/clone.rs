@@ -33,6 +33,7 @@ fn clone_local_repo_reports_progress_and_sets_longpaths() {
         bare.to_str().unwrap(),
         &dest,
         true,
+        false,
         &Cancel::default(),
         &mut |p| progress.push(p),
     )
@@ -51,6 +52,7 @@ fn clone_local_repo_reports_progress_and_sets_longpaths() {
         &cli(),
         bare.to_str().unwrap(),
         &dest,
+        false,
         false,
         &Cancel::default(),
         &mut |_| {},
@@ -74,7 +76,8 @@ fn cancel_clone_kills_process_tree_and_cleans_up_partial_dest() {
     let cancel = Cancel::default();
 
     let result = std::thread::scope(|s| {
-        let handle = s.spawn(|| clone_repo(&cli(), &url, &dest, false, &cancel, &mut |_| {}));
+        let handle =
+            s.spawn(|| clone_repo(&cli(), &url, &dest, false, false, &cancel, &mut |_| {}));
         // Give git + remote-http time to spawn and connect to the listener.
         let deadline = Instant::now() + Duration::from_millis(400);
         while Instant::now() < deadline && !dest.exists() {

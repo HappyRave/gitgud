@@ -18,6 +18,8 @@
   let destEdited = $state(false);
   let folderPath = $state("");
   let longPaths = $state(true);
+  /** R10-B: pointers first, then what the build's scenes use. Repos without Unity scenes still get every file. */
+  let lfsPartial = $state(true);
   let cloning = $state(false);
   let progress = $state<CloneProgress | null>(null);
   let error = $state<string | null>(null);
@@ -75,7 +77,7 @@
     error = null;
     progress = null;
     try {
-      const cloned = await cloneRepo(url.trim(), dest.trim(), folderPath.trim() || null, longPaths);
+      const cloned = await cloneRepo(url.trim(), dest.trim(), folderPath.trim() || null, longPaths, lfsPartial);
       oncloned(cloned);
     } catch (err) {
       const msg = String(err);
@@ -141,6 +143,11 @@
     <label class="chk">
       <input type="checkbox" bind:checked={longPaths} disabled={cloning} />
       <span>Enable Windows long paths (<code>core.longpaths</code>)</span>
+    </label>
+
+    <label class="chk">
+      <input type="checkbox" bind:checked={lfsPartial} disabled={cloning} />
+      <span>LFS: download only what the build's scenes use (change it later from Ctrl+K › LFS downloads)</span>
     </label>
 
     {#if cloning}

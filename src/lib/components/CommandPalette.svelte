@@ -36,6 +36,7 @@
     onoplog: () => void;
     oncreatetag?: () => void;
     onoptimizegraph?: () => void;
+    onlfsdownloads?: () => void;
   }
 
   type BranchOp = "checkout" | "merge" | "rebase" | "delete";
@@ -95,6 +96,9 @@
         { id: "oplog", label: "Toggle operation history (Op log)", group: repo.repoName, hint: "Ctrl+3", run: repo.onoplog },
         ...(repo.onoptimizegraph
           ? [{ id: "optimize-graph", label: "Optimize commit-graph cache", group: repo.repoName, git: "git commit-graph write", run: repo.onoptimizegraph }]
+          : []),
+        ...(repo.onlfsdownloads
+          ? [{ id: "lfs-downloads", label: "LFS downloads: choose what to download…", group: repo.repoName, git: "git lfs pull", run: repo.onlfsdownloads }]
           : []),
         { id: "undo", label: "Undo last repository action", group: repo.repoName, hint: "Ctrl+Z", disabled: !repo.canUndo, run: repo.onundo },
         { id: "redo", label: "Redo last undone action", group: repo.repoName, hint: "Ctrl+Y", disabled: !repo.canRedo, run: repo.onredo },

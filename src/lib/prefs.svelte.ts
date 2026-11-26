@@ -16,6 +16,7 @@ const VOLUME_KEY = "gitgud.media.volume";
 const AUTO_3D_KEY = "gitgud.preview.auto3d";
 const TEXTURE_MAX_KEY = "gitgud.preview.textureMax";
 const SKIPPED_UPDATE_KEY = "gitgud.update.skipped";
+const OVERLAP_NOTIFY_KEY = "gitgud.overlap.notify";
 
 /** Largest texture side in 3D previews; 0 keeps textures at their native size. */
 export type TextureMax = 0 | 4096 | 2048 | 1024;
@@ -160,7 +161,14 @@ export const prefs = $state({
   textureMax: readTextureMax(),
   /** The release "Skip this version" was pressed for; the startup check stays quiet about it. */
   skippedUpdate: readStorage(SKIPPED_UPDATE_KEY),
+  /** The overlap radar's heads-up also shows as a Windows notification while gitgud is in the background (R11: on by default). */
+  overlapNotify: readStorage(OVERLAP_NOTIFY_KEY) !== "0",
 });
+
+export function setOverlapNotify(on: boolean) {
+  prefs.overlapNotify = on;
+  writeStorage(OVERLAP_NOTIFY_KEY, on ? "1" : "0");
+}
 
 export function setSkippedUpdate(version: string) {
   prefs.skippedUpdate = version;

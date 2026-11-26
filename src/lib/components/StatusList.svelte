@@ -1,7 +1,9 @@
 <script lang="ts">
-  import type { Change, Entry, Head, LfsLock, MetaIssue, Side, Status } from "$lib/api";
+  import type { Change, Entry, Head, LfsLock, MetaIssue, Overlap, Side, Status } from "$lib/api";
+  import { overlapFor } from "$lib/overlap/radar";
   import { fileKey, fileOrder, selectedPathsForSide } from "$lib/working";
   import LockIcon from "./LockIcon.svelte";
+  import OverlapMark from "./OverlapMark.svelte";
 
   let {
     status,
@@ -13,6 +15,7 @@
     locks = [],
     lfsPatterns = [],
     locksSupported = false,
+    overlap = null,
     onstage,
     onunstage,
     onselectfile,
@@ -33,6 +36,8 @@
     locks?: LfsLock[];
     lfsPatterns?: string[];
     locksSupported?: boolean;
+    /** Files also changed on the upstream (R11 overlap radar), marked on their rows. */
+    overlap?: Overlap | null;
     onstage: (paths: string[]) => void;
     onunstage: (paths: string[]) => void;
     onselectfile?: (path: string, side: Side, mods?: { ctrl: boolean; shift: boolean }) => void;
@@ -222,7 +227,8 @@
         {@const lock = lockByPath.get(entry.path)}
         {@const lfs = isLfsPath(entry.path)}
         {@const rowSelected = isRowSelected(entry.path, group.side)}
-        <li class:selected={rowSelected}>
+        {@const theirs = overlapFor(overlap, entry.path)}
+        <li class:selected={rowSelected} class:overlap-bad={theirs?.risk === "wontMerge"}>
           <span class="badge l-{letter === '?' ? 'q' : letter === '!' ? 'x' : letter}">{letter}</span>
           {#if group.side && onselectfile}
             {@const side = group.side}
@@ -249,6 +255,9 @@
             >
           {:else}
             <span class="path" title={entry.path}><span class="dir">{entry.path.slice(0, cut)}</span>{entry.path.slice(cut)}</span>
+          {/if}
+          {#if theirs}
+            <OverlapMark file={theirs} />
           {/if}
           {#if lfs}
             <span class="lfs-tag" title="Tracked by Git LFS">LFS</span>
@@ -454,6 +463,9 @@
     border-radius: 3px;
     background: var(--sel);
     color: var(--l0);
+  }
+  li.overlap-bad:not(.selected) {
+    background: color-mix(in srgb, var(--bad) 45%, transparent);
   }
   .lock-tag.theirs {
     background: var(--warn);

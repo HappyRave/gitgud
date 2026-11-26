@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, within } from "@testing-library/svelte";
 import { emit } from "@tauri-apps/api/event";
 import { describe, expect, it, vi } from "vitest";
-import type { Commands, MergeRow, MergeState, ProposalSummary, RebaseState, Row, SequencerState, Status } from "$lib/api";
+import type { Commands, MergeRow, MergeState, OverlapFile, ProposalSummary, RebaseState, Row, SequencerState, Status } from "$lib/api";
 import { prefs } from "$lib/prefs.svelte";
 import { mockCommands } from "$lib/test/ipc";
 import Page from "./+page.svelte";
@@ -137,6 +137,8 @@ function app(extra: Handlers = {}) {
     lfs_unlock: () => null,
     lfs_locks_in_push: () => [],
     background_refresh: () => false,
+    overlap: () => null,
+    notify: () => null,
     tags: () => [],
     create_tag: () => ({ id: 1, root: "C:/work/repo", rows: 1, graphVersion: 0 }),
     delete_tag: () => ({ id: 1, root: "C:/work/repo", rows: 1, graphVersion: 0 }),
@@ -3184,5 +3186,111 @@ describe("Unity, LFS locks, Smart Merge verify, and open-editor guard", () => {
     await fireEvent.keyDown(inspSep, { key: "Home" });
     expect(body.style.getPropertyValue("--insp-w")).toBe("");
     localStorage.removeItem("gitgud.ui.panes");
+  });
+});
+
+describe("overlap radar (R11-B)", () => {
+  const SCENE: OverlapFile = {
+    path: "a.txt",
+    risk: "wontMerge",
+    on: "origin/main",
+    authors: ["JG"],
+    commits: 1,
+    newest: Math.floor(Date.now() / 1000) - 40 * 60,
+    newestCommit: "c".repeat(40),
+    dirty: true,
+  };
+  const radar = (files = [SCENE]) => ({ against: ["origin/main"], files });
+  const RADAR_WAIT = { timeout: 4000 };
+
+  it("gives one heads-up per origin commit, marks the row, and commits then pulls", async () => {
+    let version = 0;
+    const calls = app({
+      launch_path: () => "C:/work/repo",
+      repo_status: () =>
+        version === 0 ? { ...STATUS, entries: [{ path: "a.txt", kind: "tracked", index: "modified", worktree: null }] } : STATUS,
+      overlap: () => radar(),
+      refresh_repo: () => ({ id: 1, root: "C:/work/repo", rows: 1, graphVersion: 0 }),
+      commit: () => {
+        version++;
+        return { id: 1, root: "C:/work/repo", rows: 1, graphVersion: 0 };
+      },
+      pull: () => ({ opened: { id: 1, root: "C:/work/repo", rows: 1, graphVersion: 0 }, outcome: { kind: "upToDate" } }),
+    });
+    render(Page);
+    await screen.findByText("first commit");
+
+    const toast = await screen.findByRole("alert", { name: "Overlap heads-up" }, RADAR_WAIT);
+    expect(toast).toHaveTextContent("a.txt changed on origin/main 40 min ago");
+    expect(toast).toHaveTextContent("JG changed it and you're editing it");
+    expect(screen.getByText(/won't merge/, { selector: ".mark" })).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "" })).toHaveTextContent("1 file changed on origin/main since you started.");
+
+    await fireEvent.click(within(toast).getByRole("button", { name: "Not now" }));
+    expect(screen.queryByRole("alert", { name: "Overlap heads-up" })).not.toBeInTheDocument();
+    await emit("repo-changed", 1);
+    await vi.waitFor(() => expect(calls.filter((c) => c.cmd === "overlap").length).toBeGreaterThan(1), RADAR_WAIT);
+    expect(screen.queryByRole("alert", { name: "Overlap heads-up" }), "told once per origin commit").not.toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Commit, then pull" }));
+    expect(screen.getByRole("textbox", { name: "Commit message" })).toHaveFocus();
+    expect(screen.getByText("Pulls after this commit")).toBeInTheDocument();
+    await fireEvent.input(screen.getByRole("textbox", { name: "Commit message" }), { target: { value: "MD - lobby" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Commit 1 file" }));
+    await vi.waitFor(() => expect(calls.some((c) => c.cmd === "pull")).toBe(true));
+    expect(calls.findIndex((c) => c.cmd === "commit")).toBeLessThan(calls.findIndex((c) => c.cmd === "pull"));
+  }, 15_000);
+
+  it("says it again when origin changes the file again", async () => {
+    let commit = "c".repeat(40);
+    const calls = app({
+      launch_path: () => "C:/work/repo",
+      overlap: () => radar([{ ...SCENE, newestCommit: commit }]),
+      refresh_repo: () => ({ id: 1, root: "C:/work/repo", rows: 1, graphVersion: 0 }),
+    });
+    render(Page);
+    const toast = await screen.findByRole("alert", { name: "Overlap heads-up" }, RADAR_WAIT);
+    await fireEvent.click(within(toast).getByRole("button", { name: "Not now" }));
+
+    commit = "d".repeat(40);
+    await emit("repo-changed", 1);
+    expect(await screen.findByRole("alert", { name: "Overlap heads-up" }, RADAR_WAIT)).toBeInTheDocument();
+    expect(calls.some((c) => c.cmd === "notify")).toBe(false);
+  }, 15_000);
+
+  it("stays quiet for files git can merge", async () => {
+    const calls = app({ launch_path: () => "C:/work/repo", overlap: () => radar([{ ...SCENE, risk: "mayConflict" }]) });
+    render(Page);
+    await vi.waitFor(() => expect(calls.some((c) => c.cmd === "overlap")).toBe(true), RADAR_WAIT);
+    expect(await screen.findByText(/may conflict/, { selector: ".mark" })).toBeInTheDocument();
+    expect(screen.queryByRole("alert", { name: "Overlap heads-up" })).not.toBeInTheDocument();
+  });
+
+  it("sends a Windows notification while gitgud is in the background, unless turned off", async () => {
+    const focus = vi.spyOn(document, "hasFocus").mockReturnValue(false);
+    try {
+      const calls = app({ launch_path: () => "C:/work/repo", overlap: () => radar() });
+      render(Page);
+      await vi.waitFor(() => expect(calls.some((c) => c.cmd === "notify")).toBe(true), RADAR_WAIT);
+      const args = calls.find((c) => c.cmd === "notify")!.args as { title: string; body: string };
+      expect(args.title).toBe("gitgud · repo: a.txt changed on origin/main 40 min ago");
+      expect(args.body).toMatch(/^JG changed it/);
+    } finally {
+      focus.mockRestore();
+    }
+  });
+
+  it("doesn't notify with the setting off", async () => {
+    const focus = vi.spyOn(document, "hasFocus").mockReturnValue(false);
+    prefs.overlapNotify = false;
+    try {
+      const calls = app({ launch_path: () => "C:/work/repo", overlap: () => radar() });
+      render(Page);
+      expect(await screen.findByRole("alert", { name: "Overlap heads-up" }, RADAR_WAIT)).toBeInTheDocument();
+      expect(calls.some((c) => c.cmd === "notify")).toBe(false);
+    } finally {
+      prefs.overlapNotify = true;
+      focus.mockRestore();
+    }
   });
 });
