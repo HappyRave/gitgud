@@ -1631,6 +1631,29 @@ impl Session {
         })
     }
 
+    /// The TerrainData asset `path` at `version` as GLB ([`Repo::terrain_glb`]), its LFS
+    /// object fetched first when it is small enough.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`], or as [`Repo::terrain_glb`].
+    pub fn terrain_glb(
+        &self,
+        id: u32,
+        path: &str,
+        version: &crate::image::Version,
+        max: u32,
+    ) -> Result<Vec<u8>, Error> {
+        let repo = self.get(id)?.repo.clone();
+        if let Some((oid, size)) = lfs::parse_lfs_pointer(&repo.file_at(path, version)?)
+            && size <= lfs::AUTO_FETCH_MAX_BYTES
+            && !lfs::lfs_is_hydrated(&repo, &oid)
+            && repo.primary_remote_url().is_some()
+        {
+            self.lfs_fetch_object(id, &oid, size, Some(path))?;
+        }
+        repo.terrain_glb(path, version, max)
+    }
+
     /// A model file's meshes as the viewer packed them, kept in repo `id`'s preview cache
     /// under `key` (the file's content, kind and parser version, chosen by the viewer).
     ///

@@ -1,6 +1,6 @@
 import { modelInfo } from "$lib/api";
 import { type ImageAt, imageUrl, protocolUrl } from "$lib/images";
-import { previewTexture } from "$lib/prefs.svelte";
+import { prefs, previewTexture } from "$lib/prefs.svelte";
 import type { Object3D } from "three";
 import { clone as cloneSkinned } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { loadShared } from "./shared";
@@ -61,6 +61,7 @@ export async function openSide(
         // The scene's info carries its model files' infos; asking stays for anything it lacks.
         info: (p) => (info.models?.[p] ? Promise.resolve(info.models[p]) : modelInfo(repoId, p, version)),
         geometryUrl: (key) => protocolUrl("geometry", new URLSearchParams({ repo: String(repoId), key })),
+        terrainUrl: (p) => `${modelUrl(repoId, p, side.at, bust)}&terrain=1&max=${prefs.textureMax}`,
         progress: (p) => progress.reporter(key(p)),
         onPiece,
       });

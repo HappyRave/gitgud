@@ -28,8 +28,9 @@ import { clone as cloneSkinned } from "three/examples/jsm/utils/SkeletonUtils.js
 import { modelCache } from "./cache";
 import { loadShared, materialKey } from "./shared";
 import { inlineBatcher } from "./inlineBatch";
-import { type LoadedModel, remapMaterials, TrackedFiles } from "./load";
+import { type LoadedModel, loadModel, remapMaterials, TrackedFiles } from "./load";
 import { Approximations } from "./approximations";
+import { prefs } from "$lib/prefs.svelte";
 import { PARSER_VERSION } from "./geometryCache";
 import type { Step } from "./progress";
 import { type LoadTexture, MISSING_COLOR, materialFrom } from "./materials";
@@ -44,6 +45,8 @@ export interface PrefabContext {
   refUrl: (near: string) => (ref: string) => string;
   imageUrl: (path: string) => string;
   info: (path: string) => Promise<ModelInfo>;
+  /** A TerrainData asset as GLB, its painted layers baked into its texture. */
+  terrainUrl: (path: string) => string;
   /** Where gitgud keeps a model file's parsed meshes under `key`; without it nothing is kept. */
   geometryUrl?: (key: string) => string;
   loadTexture?: LoadTexture;
@@ -249,6 +252,22 @@ export function buildPrefab(scene: ModelScene, materials: ModelMaterial[], ctx: 
     return m;
   };
 
+  /** A terrain with its baked texture; by content, so an unchanged terrain loads once for both sides. */
+  const terrain = (ref: { path: string; key: string | null }) => {
+    const report = ctx.progress?.(ref.path);
+    const load = () =>
+      loadModel({
+        kind: "glb",
+        url: ctx.terrainUrl(ref.path),
+        refUrl: (r) => r,
+        imageUrl: ctx.imageUrl,
+        info: null,
+        name: ref.path.slice(ref.path.lastIndexOf("/") + 1),
+        onProgress: report,
+      });
+    return ref.key ? modelCache.model(`terrain:${ref.key}|${prefs.textureMax}`, load) : load();
+  };
+
   const fallback = new MeshStandardMaterial({ color: "#bbbbbb", name: "(no material)" });
   const drawn = async (ref: MeshRef, mats: number[]): Promise<Object3D | null> => {
     const pick = (count: number) => {
@@ -270,6 +289,15 @@ export function buildPrefab(scene: ModelScene, materials: ModelMaterial[], ctx: 
         return new Mesh(src.geometry, pick(src.geometry.groups.length));
       } catch (e) {
         missing.push(`${ref.path} › Mesh &${ref.id}: ${e instanceof Error ? e.message : String(e)}`);
+        return missingMesh();
+      }
+    }
+    if (ref.type === "terrain") {
+      try {
+        return (await terrain(ref)).root.clone();
+      } catch (e) {
+        // The backend's reason already names the file.
+        missing.push(e instanceof Error ? e.message : String(e));
         return missingMesh();
       }
     }

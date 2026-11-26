@@ -421,7 +421,9 @@ export type MeshRef =
   | { type: "builtin"; name: "Cube" | "Sphere" | "Capsule" | "Cylinder" | "Plane" | "Quad" }
   | { type: "missing" }
   /** A Mesh stored inside the scene or prefab file itself, served as GLB by its fileID; `key` names its content. */
-  | { type: "inline"; path: string; id: string; key: string };
+  | { type: "inline"; path: string; id: string; key: string }
+  /** A Unity Terrain: its TerrainData asset, served as GLB with its painted layers baked; `key` names its content. */
+  | { type: "terrain"; path: string; key: string | null };
 
 /** One GameObject of an assembled prefab, already in three.js's right-handed space. */
 export interface ModelNode {

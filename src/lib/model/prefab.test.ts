@@ -107,6 +107,7 @@ const ctx = {
   refUrl: () => (r: string) => r,
   imageUrl: (p: string) => p,
   info: async (): Promise<ModelInfo> => ({ kind: "fbx", key: null, materials: [], remaps: {}, scale: 1, scene: null, fromDisk: 0 }),
+  terrainUrl: (p: string) => `t://${p}`,
   loadTexture: () => new Texture(),
 };
 
@@ -221,6 +222,25 @@ describe("assemblePrefab", () => {
     expect(one.map).not.toBeNull();
     expect(drawn("Terrain 2").material).toBe(one);
     expect(model.approximated).toEqual(["Custom/Ground"]);
+  });
+
+  it("draws a terrain from its GLB with its own baked material, loaded once per content", async () => {
+    vi.mocked(loadModel).mockClear();
+    const terrainNode = (name: string, key: string | null) => node(name, { mesh: { type: "terrain", path: "Assets/Island.asset", key } });
+    const scene: ModelScene = { nodes: [terrainNode("Ground", "blob-island")], missing: [], clips: [] };
+    const first = await assemblePrefab(scene, [], ctx);
+    await assemblePrefab({ ...scene, nodes: [terrainNode("Ground", "blob-island")] }, [], ctx);
+    const calls = vi.mocked(loadModel).mock.calls.map(([src]) => src);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ kind: "glb", url: "t://Assets/Island.asset" });
+    expect(calls[0].geometryOnly).toBeUndefined();
+    const ground = first.root.getObjectByName("Ground")!;
+    expect(ground.getObjectByProperty("isMesh", true)).toBeTruthy();
+    expect(first.missing).toEqual([]);
+
+    vi.mocked(loadModel).mockRejectedValueOnce(new Error("Assets/Island.asset: not a Unity binary file"));
+    const broken = await assemblePrefab({ ...scene, nodes: [terrainNode("Ground", null)] }, [], ctx);
+    expect(broken.missing).toEqual(["Assets/Island.asset: not a Unity binary file"]);
   });
 
   it("keeps a model file's parsed meshes under its content, kind and parser version", async () => {

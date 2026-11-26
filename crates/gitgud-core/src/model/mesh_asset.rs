@@ -278,7 +278,7 @@ pub(crate) fn mesh_asset_to_glb(text: &str) -> Result<Vec<u8>, Error> {
     Ok(glb(&gltf, bin))
 }
 
-fn glb(json: &serde_json::Value, mut bin: Vec<u8>) -> Vec<u8> {
+pub(crate) fn glb(json: &serde_json::Value, mut bin: Vec<u8>) -> Vec<u8> {
     let mut j = serde_json::to_vec(json).unwrap_or_default();
     while !j.len().is_multiple_of(4) {
         j.push(b' ');

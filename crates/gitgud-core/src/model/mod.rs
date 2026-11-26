@@ -7,7 +7,10 @@ mod mesh_asset;
 mod meta;
 mod prefab;
 mod scriptable;
+mod serialized;
 mod sprites;
+mod terrain;
+mod terrain_glb;
 pub(crate) mod tree;
 mod yaml;
 

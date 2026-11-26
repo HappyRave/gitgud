@@ -27,8 +27,9 @@ const SKINNED_MESH_RENDERER: u32 = 137;
 const PREFAB_INSTANCE: u32 = 1001;
 const MESH: u32 = 43;
 const LOD_GROUP: u32 = 205;
+const TERRAIN: u32 = 218;
 /// The classes whose contents the builder reads; the rest only need their header.
-const READ: [u32; 9] = [
+const READ: [u32; 10] = [
     GAME_OBJECT,
     TRANSFORM,
     RECT_TRANSFORM,
@@ -38,6 +39,7 @@ const READ: [u32; 9] = [
     SKINNED_MESH_RENDERER,
     PREFAB_INSTANCE,
     LOD_GROUP,
+    TERRAIN,
 ];
 
 /// The file being read and its documents, for meshes stored inside it.
@@ -72,6 +74,9 @@ pub enum MeshRef {
         id: String,
         key: String,
     },
+    /// A Unity Terrain: its TerrainData asset (binary), served as GLB with its painted
+    /// layers baked; `key` names the asset's content.
+    Terrain { path: String, key: Option<String> },
     /// The referenced mesh isn't in this version.
     Missing,
 }
@@ -398,7 +403,7 @@ impl<'a, 'g> PrefabBuilder<'a, 'g> {
         for d in docs.iter().filter(|d| !d.stripped) {
             if !matches!(
                 d.class_id,
-                MESH_FILTER | MESH_RENDERER | SKINNED_MESH_RENDERER | ANIMATOR
+                MESH_FILTER | MESH_RENDERER | SKINNED_MESH_RENDERER | ANIMATOR | TERRAIN
             ) {
                 continue;
             }
@@ -443,6 +448,10 @@ impl<'a, 'g> PrefabBuilder<'a, 'g> {
                         mats.push(self.material(r, &owner)?);
                     }
                     tree.nodes[ix].out.materials = mats;
+                }
+                TERRAIN => {
+                    tree.nodes[ix].out.mesh =
+                        self.terrain(obj_ref(&d.body["m_TerrainData"]), &owner)?;
                 }
                 _ => {
                     let controller = obj_ref(&d.body["m_Controller"]).and_then(|r| r.guid);
@@ -719,6 +728,22 @@ impl<'a, 'g> PrefabBuilder<'a, 'g> {
             id: Some(r.file_id),
             scale,
         }))
+    }
+
+    /// A Terrain's mesh: its TerrainData asset, or missing.
+    fn terrain(&mut self, r: Option<ObjRef>, owner: &str) -> Result<Option<MeshRef>, Error> {
+        let Some(guid) = r.and_then(|r| r.guid) else {
+            return Ok(None);
+        };
+        let Some(path) = self.guids.path(&guid)? else {
+            self.missing.push(format!(
+                "{owner} › Terrain.m_TerrainData → guid {} (not in this version)",
+                short(&guid)
+            ));
+            return Ok(Some(MeshRef::Missing));
+        };
+        let key = self.guids.files.key(&path);
+        Ok(Some(MeshRef::Terrain { path, key }))
     }
 
     fn material(&mut self, r: Option<ObjRef>, owner: &str) -> Result<usize, Error> {
@@ -1077,6 +1102,50 @@ mod tests {
         assert_eq!(
             super::super::model_kind("Assets/Harbour.unity"),
             Some(super::super::ModelKind::Prefab)
+        );
+    }
+
+    #[test]
+    fn draws_a_terrain_from_its_terrain_data() {
+        const DATA: &str = "7777aaaa000000000000000000000000";
+        let repo = project();
+        let terrain = |id: u32, guid: &str| {
+            format!(
+                "--- !u!218 &{id}\nTerrain:\n  m_GameObject: {{fileID: 30}}\n  m_TerrainData: {{fileID: 15600000, guid: {guid}, type: 2}}\n"
+            )
+        };
+        let scene = [
+            HEADER.to_owned(),
+            go(30, "Ground", &[31, 32]),
+            tf(
+                31,
+                30,
+                0,
+                "{x: -50, y: 0, z: -50}",
+                "{x: 0, y: 0, z: 0, w: 1}",
+            ),
+            terrain(32, DATA),
+            go(40, "Gone", &[41, 42]),
+            tf(41, 40, 0, "{x: 0, y: 0, z: 0}", "{x: 0, y: 0, z: 0, w: 1}"),
+            terrain(42, "dead0000000000000000000000000007").replace("fileID: 30", "fileID: 40"),
+        ]
+        .concat();
+        repo.write("Assets/Ground.asset", "binary terrain data")
+            .write("Assets/Ground.asset.meta", &format!("guid: {DATA}\n"))
+            .write("Assets/Island.unity", &scene)
+            .commit_all("island");
+        let (scene, _) = build(&repo, "Assets/Island.unity");
+        let (_, ground) = named(&scene, "Ground");
+        assert_eq!(ground.position, [50.0, 0.0, -50.0]);
+        assert!(
+            matches!(&ground.mesh, Some(MeshRef::Terrain { path, key: Some(_) }) if path == "Assets/Ground.asset"),
+            "{:?}",
+            ground.mesh
+        );
+        assert_eq!(named(&scene, "Gone").1.mesh, Some(MeshRef::Missing));
+        assert_eq!(
+            scene.missing,
+            vec!["Gone › Terrain.m_TerrainData → guid dead…007 (not in this version)".to_owned()]
         );
     }
 

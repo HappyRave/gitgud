@@ -107,12 +107,19 @@ The v0.1.1 / v0.1.2 commits don't record which checks ran; re-run the full list 
    Left on speed, in order of worth: the main thread (about 2 s of CPU in three.js object handling and
    WebGL calls; the final `refresh` is one 290 ms task), cold texture compression (a faster BC preset,
    or PNG first and compress in the background), scene-stored mesh batches (about 250 ms each, off the
-   critical path). Correctness gaps found the same day: **Unity Terrain components aren't drawn**
-   (only MeshFilter / MeshRenderer / SkinnedMeshRenderer / Animator / LOD Group are read); custom shaders
-   whose textures are all data (a noise map) show that texture instead of a flat colour; particles,
-   sprites, UI and lights aren't drawn; following Amplify graphs (`ASEBEGIN` blocks: 172 of 449 shaders in
+   critical path). **Unity Terrain is drawn since 2026-11-26** (heightmap + painted layers baked
+   into one texture, from the binary TerrainData; see CLAUDE.md). Checked against cyberclash's
+   SnowTerrain, whose "Terrain To Mesh" conversion and exported base map / splat alpha are an exact
+   oracle (heights 0.1% off, alpha maps identical, bake matching Unity's base map), and on kraken-island's
+   `Blocking_Act1.unity` at `58718da64` (sand-only blocking terrains, mostly under the sea plane). All 26
+   TerrainData files the VEX scenes use read except two Unity 5.2 ones (format 15, a third-party demo,
+   refused with the reason). Left on terrain: **trees** (skipped by Max, 2026-11-26: no VEX terrain has
+   any), detail meshes / grass, holes, a viewer for a TerrainData file opened on its own, and missing
+   layer textures only logged (not in the ⚠ panel). Other correctness gaps: custom shaders whose
+   textures are all data (a noise map) show that texture instead of a flat colour; particles, sprites,
+   UI and lights aren't drawn; following Amplify graphs (`ASEBEGIN` blocks: 172 of 449 shaders in
    mission-z-2, 114 node types) was costed at 2–3 days and left for later. Not yet seen live by Max:
-   the per-shader "base map" choice.
+   the per-shader "base map" choice and the terrain.
 1. Build with `pnpm package` and test the NSIS installer from `target/release/bundle/nsis/` interactively on a Windows user profile (install, CLI `PATH`, uninstall).
 2. Start `pnpm tauri dev`, open a real Unity + LFS repo plus a multi-repo Library folder, and do a structured walkthrough of M1–M9 themes/density, WebView2 accelerator keys (`Ctrl+P`/`Ctrl+F`/`Ctrl+R`), Settings' **Local latency** timings, and the v0.1.1/v0.1.2 pieces (splitters, multi-select staging, texture viewer on real DDS/EXR/PSD, LFS auto-fetch, LFS conflict inspector).
 3. Address any layout polish or Unity YAML parser edge cases uncovered on real `.unity`/`.prefab` assets, plus live GitHub/Bitbucket remote LFS lock checks (`O1`) and Sourcetree baseline (`O9`).

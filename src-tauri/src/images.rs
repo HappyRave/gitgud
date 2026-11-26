@@ -12,7 +12,8 @@ use tauri::http::{Response, StatusCode, header};
 /// show a version of an image without base64 over IPC. `at` is `head`,
 /// `index`, `worktree`, `yours`, `theirs`, or `commit` / `parent` with `commit=<id>`.
 /// `/model` serves a 3D model the same way (with `mesh=<fileID>`, a Mesh stored inside
-/// a scene or prefab, as GLB); `/ref?path=<model>&ref=<name>`
+/// a scene or prefab, as GLB; with `terrain=1`, a TerrainData asset as GLB, its painted
+/// layers baked into a `max` px texture); `/ref?path=<model>&ref=<name>`
 /// serves the file that model refers to as `ref` (a texture, a glTF buffer);
 /// `/file` serves any file as stored (audio, video, PDF, fonts, data); `/audio`
 /// a sound file decoded to WAV, for formats the webview can't play (AIFF).
@@ -140,6 +141,13 @@ fn read(
             })
             .map_err(fail)?;
             Ok((bytes, "application/octet-stream"))
+        }
+        "/model" if param("terrain").is_some() => {
+            let bytes = timed(&mut steps.read, || {
+                session.terrain_glb(repo, &path, &version, max.unwrap_or(0))
+            })
+            .map_err(fail)?;
+            Ok((bytes, "model/gltf-binary"))
         }
         "/model" if param("mesh").is_some() => {
             let mesh = param("mesh").unwrap_or_default();
