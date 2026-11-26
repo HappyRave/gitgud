@@ -7,7 +7,8 @@ use crate::image::image_type;
 use crate::repo::Error;
 
 const MATERIAL_CLASS: u32 = 21;
-const BUILTIN_EXTRA: &str = "0000000000000000f000000000000000";
+/// The GUID of Unity's built-in extra resources (default material, built-in shaders).
+pub(crate) const BUILTIN_EXTRA: &str = "0000000000000000f000000000000000";
 
 /// Shaders the viewer's standard material renders faithfully, by GUID.
 const KNOWN_SHADERS: [(&str, &str); 5] = [
@@ -104,17 +105,19 @@ impl Material {
 
     /// Reads the `.mat` at `path`; a file that isn't there gives a missing material.
     pub(crate) fn load(path: &str, guids: &Guids<'_>) -> Result<Self, Error> {
+        let doc = match guids.files.read_text(path)? {
+            Some(text) => material_doc(&text),
+            None => None,
+        };
+        match doc {
+            Some(body) => Self::read(path, &body, guids),
+            None => Ok(Self::missing(base_name(path).trim_end_matches(".mat"))),
+        }
+    }
+
+    /// The material `b` (the body of the `.mat` at `path`) describes.
+    fn read(path: &str, b: &yaml_rust2::Yaml, guids: &Guids<'_>) -> Result<Self, Error> {
         let stem = base_name(path).trim_end_matches(".mat").to_owned();
-        let Some(text) = guids.files.read_text(path)? else {
-            return Ok(Self::missing(&stem));
-        };
-        let Some(doc) = docs(&text)
-            .into_iter()
-            .find(|d| d.class_id == MATERIAL_CLASS)
-        else {
-            return Ok(Self::missing(&stem));
-        };
-        let b = &doc.body;
         let (shader, approximated) = shader_name(b, guids)?;
         let props = &b["m_SavedProperties"];
         let mut m = Self {
@@ -351,12 +354,9 @@ impl MaterialView {
     pub(crate) fn load(path: &str, guids: &Guids<'_>) -> Result<Self, Error> {
         let not_found = || Error::Refused(format!("{path} has no material in that version"));
         let text = guids.files.read_text(path)?.ok_or_else(not_found)?;
-        let doc = docs(&text)
-            .into_iter()
-            .find(|d| d.class_id == MATERIAL_CLASS)
-            .ok_or_else(not_found)?;
-        let material = Material::load(path, guids)?;
-        let b = &doc.body;
+        let body = material_doc(&text).ok_or_else(not_found)?;
+        let b = &body;
+        let material = Material::read(path, b, guids)?;
         let known: Option<Vec<String>> = material
             .approximated
             .then(|| shader_properties(b, guids))
@@ -380,12 +380,7 @@ impl MaterialView {
             });
         };
         for (key, tex) in keyed_list(&props["m_TexEnvs"]) {
-            let name = match obj_ref(&tex["m_Texture"]).and_then(|r| r.guid) {
-                Some(g) => guids
-                    .path(&g)?
-                    .map_or_else(|| format!("missing ({g})"), |p| base_name(&p).to_owned()),
-                None => "none".to_owned(),
-            };
+            let name = guids.ref_label(&tex["m_Texture"])?;
             let scale = vec2(&tex["m_Scale"], [1.0, 1.0]);
             let offset = vec2(&tex["m_Offset"], [0.0, 0.0]);
             let mut value = name;
@@ -424,6 +419,14 @@ impl MaterialView {
     }
 }
 
+/// The body of the Material document in `.mat` text.
+fn material_doc(text: &str) -> Option<yaml_rust2::Yaml> {
+    docs(text)
+        .into_iter()
+        .find(|d| d.class_id == MATERIAL_CLASS)
+        .map(|d| d.body)
+}
+
 /// `#RRGGBB`, or `#RRGGBBAA` when not opaque; HDR values above 1 show as floats.
 fn hex(c: [f32; 4]) -> String {
     if c.iter().any(|v| *v > 1.0 || *v < 0.0) {
@@ -456,7 +459,7 @@ fn shader_properties(
     let Some(path) = guids.path(&guid)?.filter(|p| p.ends_with(".shader")) else {
         return Ok(None);
     };
-    let Some(text) = guids.files.read_text(&path)? else {
+    let Some(text) = guids.read_kept(&path)? else {
         return Ok(None);
     };
     let Some(start) = text.find("Properties") else {
@@ -522,7 +525,7 @@ fn shader_name(material: &yaml_rust2::Yaml, guids: &Guids<'_>) -> Result<(String
     let Some(path) = guids.path(&guid)? else {
         return Ok(("(missing shader)".into(), true));
     };
-    if let Some(text) = guids.files.read_text(&path)?
+    if let Some(text) = guids.read_kept(&path)?
         && let Some(name) = text.lines().find_map(|l| {
             let rest = l.trim().strip_prefix("Shader")?.trim();
             rest.strip_prefix('"')?.split('"').next().map(str::to_owned)

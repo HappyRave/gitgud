@@ -240,7 +240,8 @@ replaying at most 255 rows (spike 4.3).
   when the GPU has S3TC + sRGB, `gpuFormats.ts`) they come GPU-compressed as DDS (BC1 / BC3 with
   mips, flipped, `gpu_texture.rs` via `image_dds` encode), uploaded as is by
   `BitmapTextureLoader`; other images still decode with `createImageBitmap`. Only LOD0 of a LOD
-  Group is drawn. Meshes stored inside a scene or prefab (`MeshRef::Inline`, with a content `key`
+  Group is drawn. Meshes stored inside a scene or prefab, or in another YAML file (a Mesh
+  `.asset`, another prefab) (`MeshRef::Inline`, with a content `key`
   so both sides and reopenings share them) are served as GLB by `fileID` through the protocol's
   `/model?…&mesh=`, or several per answer with `&meshes=a,b` (`Repo::inline_meshes`,
   `meshBundle.ts`; `inlineBatch.ts` asks 32 at a time). A scene's or prefab's `model_info`

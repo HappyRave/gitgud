@@ -1,15 +1,14 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use serde::Serialize;
 use yaml_rust2::Yaml;
 
+use super::anim::ANIMATION_CLIP;
 use super::guids::Guids;
 use super::meta::Meta;
 use super::tree::base_name;
 use super::yaml::{docs, num, quat, scalar, vec3};
 use crate::repo::Error;
-
-const ANIMATION_CLIP: u32 = 74;
 
 /// One key of a curve as Unity's Curve Editor shows it.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -181,6 +180,7 @@ fn read_clip(text: &str, guids: &Guids<'_>) -> Result<Option<Clip>, Error> {
         }
     }
     let mut flipbooks = Vec::new();
+    let mut metas = HashMap::new();
     for c in b["m_PPtrCurves"].as_vec().into_iter().flatten() {
         let path = scalar(&c["path"]).unwrap_or_default();
         let attr = scalar(&c["attribute"]).unwrap_or_default();
@@ -188,7 +188,7 @@ fn read_clip(text: &str, guids: &Guids<'_>) -> Result<Option<Clip>, Error> {
         for k in c["curve"].as_vec().into_iter().flatten() {
             let t = num(&k["time"]).unwrap_or(0.0);
             end = end.max(t);
-            keys.push((t, object_name(&k["value"], guids)?));
+            keys.push((t, object_name(&k["value"], guids, &mut metas)?));
         }
         if !keys.is_empty() {
             let name = if attr == "m_Sprite" {
@@ -212,23 +212,31 @@ fn read_clip(text: &str, guids: &Guids<'_>) -> Result<Option<Clip>, Error> {
     }))
 }
 
-/// A referenced object's name: the sprite's name from its texture's `.meta`, else the file's.
-fn object_name(r: &Yaml, guids: &Guids<'_>) -> Result<String, Error> {
+/// A referenced object's name: the sprite's name from its texture's `.meta`, else as
+/// [`Guids::ref_label`]. `metas` keeps the `.meta`s read, by asset path.
+fn object_name(
+    r: &Yaml,
+    guids: &Guids<'_>,
+    metas: &mut HashMap<String, Option<Meta>>,
+) -> Result<String, Error> {
     let id = scalar(&r["fileID"]).unwrap_or_default();
-    let Some(guid) = scalar(&r["guid"]).filter(|g| !g.is_empty()) else {
-        return Ok(if id == "0" {
-            "none".into()
-        } else {
-            format!("&{id}")
-        });
+    let path = match scalar(&r["guid"]).filter(|g| !g.is_empty()) {
+        Some(guid) => guids.path(&guid)?,
+        None => None,
     };
-    let Some(path) = guids.path(&guid)? else {
-        return Ok(format!("missing ({guid})"));
+    let Some(path) = path else {
+        return guids.ref_label(r);
     };
-    let sub = guids
-        .files
-        .read_text(&format!("{path}.meta"))?
-        .and_then(|t| Meta::parse(&t).names.get(&id).cloned());
+    if !metas.contains_key(&path) {
+        let meta = guids
+            .files
+            .read_text(&format!("{path}.meta"))?
+            .map(|t| Meta::parse(&t));
+        metas.insert(path.clone(), meta);
+    }
+    let sub = metas[&path]
+        .as_ref()
+        .and_then(|m| m.names.get(&id).cloned());
     Ok(sub.unwrap_or_else(|| base_name(&path).to_owned()))
 }
 

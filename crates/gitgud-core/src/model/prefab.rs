@@ -3,9 +3,9 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use yaml_rust2::Yaml;
 
-use super::guids::Guids;
-use super::material::Material;
-use super::mesh_asset;
+use super::guids::{Guids, short};
+use super::material::{BUILTIN_EXTRA, Material};
+use super::mesh_asset::{self, MESH_CLASS as MESH};
 use super::meta::Meta;
 use super::tree::base_name;
 use super::yaml::{Doc, ObjRef, docs_reading, num, obj_ref, quat, scalar, vec3};
@@ -13,9 +13,10 @@ use super::{ModelKind, model_kind};
 use crate::repo::Error;
 
 const BUILTIN_RESOURCES: &str = "0000000000000000e000000000000000";
-const BUILTIN_EXTRA: &str = "0000000000000000f000000000000000";
 const DEFAULT_MATERIAL: &str = "10303";
 const MAX_DEPTH: usize = 12;
+/// More material slots than a renderer has in practice: a larger override is corrupt.
+const MAX_MATERIALS: usize = 1024;
 
 const GAME_OBJECT: u32 = 1;
 const TRANSFORM: u32 = 4;
@@ -25,7 +26,6 @@ const MESH_FILTER: u32 = 33;
 const ANIMATOR: u32 = 95;
 const SKINNED_MESH_RENDERER: u32 = 137;
 const PREFAB_INSTANCE: u32 = 1001;
-const MESH: u32 = 43;
 const LOD_GROUP: u32 = 205;
 const TERRAIN: u32 = 218;
 /// The classes whose contents the builder reads; the rest only need their header.
@@ -126,17 +126,46 @@ struct Tree {
     nodes: Vec<Node>,
 }
 
+/// Node lookups by `fileID`, built once the nodes are in (a scene has thousands).
+#[derive(Default)]
+struct Index {
+    transform: HashMap<i64, usize>,
+    game_object: HashMap<i64, usize>,
+    filter: HashMap<i64, usize>,
+    renderer: HashMap<i64, usize>,
+}
+
 impl Tree {
-    fn find(&self, pred: impl Fn(&Node) -> bool) -> Option<usize> {
-        self.nodes.iter().position(pred)
+    fn index(&self) -> Index {
+        let mut ix = Index::default();
+        for (i, n) in self.nodes.iter().enumerate() {
+            ix.transform.entry(n.transform).or_insert(i);
+            ix.game_object.entry(n.game_object).or_insert(i);
+            if let Some(f) = n.filter {
+                ix.filter.entry(f).or_insert(i);
+            }
+            if let Some(r) = n.renderer {
+                ix.renderer.entry(r).or_insert(i);
+            }
+        }
+        ix
     }
 
-    fn by_transform(&self, id: i64) -> Option<usize> {
-        self.find(|n| n.transform == id)
-    }
-
-    fn by_game_object(&self, id: i64) -> Option<usize> {
-        self.find(|n| n.game_object == id)
+    /// Marks the nodes at `roots` and everything under them removed.
+    fn remove_subtrees(&mut self, roots: &[usize]) {
+        let mut children: Vec<Vec<usize>> = vec![Vec::new(); self.nodes.len()];
+        for (i, n) in self.nodes.iter().enumerate() {
+            if let Some(p) = n.out.parent {
+                children[p].push(i);
+            }
+        }
+        let mut todo = roots.to_vec();
+        while let Some(i) = todo.pop() {
+            if !self.nodes[i].removed {
+                self.nodes[i].removed = true;
+                todo.extend_from_slice(&children[i]);
+            }
+        }
     }
 }
 
@@ -154,8 +183,10 @@ pub(crate) struct PrefabBuilder<'a, 'g> {
     pub materials: Vec<Material>,
     material_ix: HashMap<String, usize>,
     pub missing: Vec<String>,
-    /// Nested prefabs already assembled, by path and depth: a prefab is often placed many times.
-    nested: HashMap<(String, usize), Tree>,
+    /// Nested prefabs already assembled, by path: a prefab is often placed many times.
+    nested: HashMap<String, Tree>,
+    /// The prefabs being assembled, outermost first, so one that places itself is caught.
+    building: Vec<String>,
     /// Model `.meta`s already read, by model path: a scene names the same few thousands of times.
     metas: HashMap<String, std::rc::Rc<Meta>>,
     /// `.mat` files to load into `materials` once the walk is done, by index: their
@@ -173,6 +204,7 @@ impl<'a, 'g> PrefabBuilder<'a, 'g> {
             material_ix: HashMap::new(),
             missing: Vec::new(),
             nested: HashMap::new(),
+            building: Vec::new(),
             metas: HashMap::new(),
             unloaded: Vec::new(),
             parsed: HashMap::new(),
@@ -203,6 +235,7 @@ impl<'a, 'g> PrefabBuilder<'a, 'g> {
             .read_text(path)?
             .ok_or_else(|| Error::Refused(format!("{path} is not in that version")))?;
         let docs = parse(&text);
+        self.building.push(path.to_owned());
         let tree = self.tree(path, &text, docs, 0)?;
         let unloaded = std::mem::take(&mut self.unloaded);
         let paths: Vec<String> = unloaded.iter().map(|(_, p)| p.clone()).collect();
@@ -250,7 +283,8 @@ impl<'a, 'g> PrefabBuilder<'a, 'g> {
             };
             if let Some(src) = self.guids.path(&guid)?
                 && model_kind(&src) == Some(ModelKind::Prefab)
-                && !self.nested.contains_key(&(src.clone(), depth + 1))
+                && !self.nested.contains_key(&src)
+                && !self.building.contains(&src)
                 && !self.parsed.contains_key(&src)
                 && !paths.contains(&src)
             {
@@ -348,7 +382,7 @@ impl<'a, 'g> PrefabBuilder<'a, 'g> {
             let m = &d.body["m_Modification"];
             let parent = obj_ref(&m["m_TransformParent"]).map(|r| id(&r.file_id));
             let first = tree.nodes.len();
-            match self.instance(d, depth)? {
+            match self.instance(d, depth, &local)? {
                 Some(sub) => {
                     for mut n in sub.nodes {
                         n.out.parent = n.out.parent.map(|p| p + first);
@@ -384,19 +418,21 @@ impl<'a, 'g> PrefabBuilder<'a, 'g> {
             }
         }
         let resolve = |x: i64| alias.get(&x).copied().unwrap_or(x);
+        let ix = tree.index();
+        let by_transform = |x: i64| ix.transform.get(&x).copied();
 
         for (i, p) in instance_roots {
-            tree.nodes[i].out.parent = tree.by_transform(resolve(p));
+            tree.nodes[i].out.parent = by_transform(resolve(p));
         }
         for d in docs
             .iter()
             .filter(|d| matches!(d.class_id, TRANSFORM | RECT_TRANSFORM) && !d.stripped)
         {
-            let Some(child) = tree.by_transform(id(&d.file_id)) else {
+            let Some(child) = by_transform(id(&d.file_id)) else {
                 continue;
             };
             if let Some(f) = obj_ref(&d.body["m_Father"]) {
-                tree.nodes[child].out.parent = tree.by_transform(resolve(id(&f.file_id)));
+                tree.nodes[child].out.parent = by_transform(resolve(id(&f.file_id)));
             }
         }
 
@@ -410,7 +446,7 @@ impl<'a, 'g> PrefabBuilder<'a, 'g> {
             let Some(go) = obj_ref(&d.body["m_GameObject"]) else {
                 continue;
             };
-            let Some(ix) = tree.by_game_object(resolve(id(&go.file_id))) else {
+            let Some(&ix) = ix.game_object.get(&resolve(id(&go.file_id))) else {
                 continue;
             };
             let me = id(&d.file_id);
@@ -463,6 +499,7 @@ impl<'a, 'g> PrefabBuilder<'a, 'g> {
         }
 
         // Only a LOD Group's most detailed level is drawn: the others would stack on it.
+        let by_renderer = tree.index().renderer;
         for d in docs
             .iter()
             .filter(|d| d.class_id == LOD_GROUP && !d.stripped)
@@ -487,7 +524,7 @@ impl<'a, 'g> PrefabBuilder<'a, 'g> {
                 if keep.contains(&r) {
                     continue;
                 }
-                if let Some(ix) = tree.find(|n| n.renderer == Some(r)) {
+                if let Some(&ix) = by_renderer.get(&r) {
                     tree.nodes[ix].out.mesh = None;
                     tree.nodes[ix].out.materials.clear();
                 }
@@ -497,7 +534,13 @@ impl<'a, 'g> PrefabBuilder<'a, 'g> {
     }
 
     /// The nodes a PrefabInstance brings in, its modifications applied.
-    fn instance(&mut self, d: &Doc, depth: usize) -> Result<Option<Tree>, Error> {
+    /// `local` is the file placing the instance, for overrides naming its own meshes.
+    fn instance(
+        &mut self,
+        d: &Doc,
+        depth: usize,
+        local: &Local<'_>,
+    ) -> Result<Option<Tree>, Error> {
         let Some(src_guid) = obj_ref(&d.body["m_SourcePrefab"]).and_then(|r| r.guid) else {
             return Ok(None);
         };
@@ -511,32 +554,16 @@ impl<'a, 'g> PrefabBuilder<'a, 'g> {
         let m = &d.body["m_Modification"];
         let mods = modifications(&m["m_Modifications"]);
         let mut tree = match model_kind(&src) {
-            Some(ModelKind::Prefab) if depth < MAX_DEPTH => {
-                let key = (src.clone(), depth + 1);
-                if let Some(tree) = self.nested.get(&key) {
-                    tree.clone()
-                } else {
-                    let (text, docs) = match self.parsed.remove(&src) {
-                        Some(parsed) => parsed,
-                        None => {
-                            let Some(text) = self.guids.files.read_text(&src)? else {
-                                return Ok(None);
-                            };
-                            let docs = parse(&text);
-                            (text, docs)
-                        }
-                    };
-                    let tree = self.tree(&src, &text, docs, depth + 1)?;
-                    self.nested.insert(key, tree.clone());
-                    tree
-                }
-            }
-            Some(ModelKind::Prefab) => return Ok(None),
+            Some(ModelKind::Prefab) => match self.nested_tree(&src, depth)? {
+                Some(tree) => tree,
+                None => return Ok(None),
+            },
             Some(_) => self.model_instance(&src)?,
             None => return Ok(None),
         };
+        let ix = tree.index();
         for md in &mods {
-            self.apply(&mut tree, md)?;
+            self.apply(&mut tree, &ix, md, local)?;
         }
         for r in m["m_RemovedComponents"]
             .as_vec()
@@ -545,26 +572,61 @@ impl<'a, 'g> PrefabBuilder<'a, 'g> {
             .filter_map(obj_ref)
         {
             let x = id(&r.file_id);
-            for n in &mut tree.nodes {
-                if n.filter == Some(x) {
-                    n.out.mesh = None;
-                }
-                if n.renderer == Some(x) {
-                    n.out.materials.clear();
-                    n.out.mesh = n.out.mesh.take().filter(|_| !n.out.skinned);
+            if let Some(&i) = ix.filter.get(&x) {
+                tree.nodes[i].out.mesh = None;
+            }
+            if let Some(&i) = ix.renderer.get(&x) {
+                let n = &mut tree.nodes[i].out;
+                n.materials.clear();
+                if n.skinned {
+                    n.mesh = None;
                 }
             }
         }
-        for r in m["m_RemovedGameObjects"]
+        let removed: Vec<usize> = m["m_RemovedGameObjects"]
             .as_vec()
             .into_iter()
             .flatten()
             .filter_map(obj_ref)
-        {
-            if let Some(ix) = tree.by_game_object(id(&r.file_id)) {
-                remove_subtree(&mut tree, ix);
-            }
+            .filter_map(|r| ix.game_object.get(&id(&r.file_id)).copied())
+            .collect();
+        if !removed.is_empty() {
+            tree.remove_subtrees(&removed);
         }
+        Ok(Some(tree))
+    }
+
+    /// The nested prefab `src`, assembled once; `None` (and a missing entry) when it
+    /// places itself or nests too deep, or isn't in this version.
+    fn nested_tree(&mut self, src: &str, depth: usize) -> Result<Option<Tree>, Error> {
+        if let Some(tree) = self.nested.get(src) {
+            return Ok(Some(tree.clone()));
+        }
+        if self.building.iter().any(|b| b == src) {
+            self.missing
+                .push(format!("Nested prefab {src} places itself"));
+            return Ok(None);
+        }
+        if depth >= MAX_DEPTH {
+            self.missing
+                .push(format!("{src} is nested more than {MAX_DEPTH} levels deep"));
+            return Ok(None);
+        }
+        let (text, docs) = match self.parsed.remove(src) {
+            Some(parsed) => parsed,
+            None => {
+                let Some(text) = self.guids.files.read_text(src)? else {
+                    return Ok(None);
+                };
+                let docs = parse(&text);
+                (text, docs)
+            }
+        };
+        self.building.push(src.to_owned());
+        let tree = self.tree(src, &text, docs, depth + 1);
+        self.building.pop();
+        let tree = tree?;
+        self.nested.insert(src.to_owned(), tree.clone());
         Ok(Some(tree))
     }
 
@@ -586,11 +648,7 @@ impl<'a, 'g> PrefabBuilder<'a, 'g> {
                         path: path.to_owned(),
                         name: None,
                         id: None,
-                        scale: if meta.global_scale > 0.0 {
-                            meta.global_scale
-                        } else {
-                            1.0
-                        },
+                        scale: meta.global_scale,
                     }),
                     materials: Vec::new(),
                     skinned: false,
@@ -605,63 +663,84 @@ impl<'a, 'g> PrefabBuilder<'a, 'g> {
         })
     }
 
-    fn apply(&mut self, tree: &mut Tree, md: &Modification) -> Result<(), Error> {
+    fn apply(
+        &mut self,
+        tree: &mut Tree,
+        ix: &Index,
+        md: &Modification,
+        local: &Local<'_>,
+    ) -> Result<(), Error> {
         let p = md.path.as_str();
         let value = || num(&Yaml::String(md.value.clone()));
+        let transform = ix.transform.get(&md.target).copied();
+        let game_object = ix.game_object.get(&md.target).copied();
+        let renderer = ix.renderer.get(&md.target).copied();
         if let Some(axis) = p
             .strip_prefix("m_LocalPosition.")
             .or_else(|| p.strip_prefix("m_LocalScale."))
         {
-            let Some(ix) = tree.by_transform(md.target) else {
+            let Some(t) = transform else {
                 return Ok(());
             };
             let v = if p.starts_with("m_LocalPosition") {
-                &mut tree.nodes[ix].out.position
+                &mut tree.nodes[t].out.position
             } else {
-                &mut tree.nodes[ix].out.scale
+                &mut tree.nodes[t].out.scale
             };
             if let (Some(i), Some(x)) = (axis_ix(axis), value()) {
                 v[i] = x;
             }
         } else if let Some(axis) = p.strip_prefix("m_LocalRotation.") {
-            if let (Some(ix), Some(i), Some(x)) =
-                (tree.by_transform(md.target), axis_ix(axis), value())
-            {
-                tree.nodes[ix].out.rotation[i] = x;
+            if let (Some(t), Some(i), Some(x)) = (transform, axis_ix(axis), value()) {
+                tree.nodes[t].out.rotation[i] = x;
             }
         } else if p == "m_Name" {
-            if let Some(ix) = tree.by_game_object(md.target) {
-                tree.nodes[ix].out.name = md.value.clone();
+            if let Some(g) = game_object {
+                tree.nodes[g].out.name = md.value.clone();
             }
         } else if p == "m_IsActive" {
-            if let Some(ix) = tree.by_game_object(md.target) {
-                tree.nodes[ix].out.active = md.value.trim() != "0";
+            if let Some(g) = game_object {
+                tree.nodes[g].out.active = md.value.trim() != "0";
             }
         } else if p == "m_Mesh" {
-            if let Some(ix) =
-                tree.find(|n| n.filter == Some(md.target) || n.renderer == Some(md.target))
-            {
-                let owner = tree.nodes[ix].out.name.clone();
-                tree.nodes[ix].out.mesh =
-                    self.mesh(md.reference.clone(), &owner, "m_Mesh", None)?;
+            if let Some(n) = ix.filter.get(&md.target).copied().or(renderer) {
+                let owner = tree.nodes[n].out.name.clone();
+                tree.nodes[n].out.mesh =
+                    self.mesh(md.reference.clone(), &owner, "m_Mesh", Some(local))?;
             }
         } else if let Some(rest) = p.strip_prefix("m_Materials.Array.data[") {
-            let slot: Option<usize> = rest.trim_end_matches(']').parse().ok();
-            if let (Some(ix), Some(slot)) = (tree.find(|n| n.renderer == Some(md.target)), slot) {
-                let owner = tree.nodes[ix].out.name.clone();
-                let m = self.material(md.reference.clone(), &owner)?;
-                let mats = &mut tree.nodes[ix].out.materials;
-                if mats.len() <= slot {
-                    mats.resize(slot + 1, m);
-                }
-                mats[slot] = m;
+            let Some(r) = renderer else {
+                return Ok(());
+            };
+            let owner = tree.nodes[r].out.name.clone();
+            let slot = rest
+                .trim_end_matches(']')
+                .parse::<usize>()
+                .ok()
+                .filter(|&s| s < MAX_MATERIALS);
+            let Some(slot) = slot else {
+                self.missing
+                    .push(format!("{owner} › Renderer.{p}: not a material slot"));
+                return Ok(());
+            };
+            let m = self.material(md.reference.clone(), &owner)?;
+            let mats = &mut tree.nodes[r].out.materials;
+            if mats.len() <= slot {
+                mats.resize(slot + 1, m);
             }
+            mats[slot] = m;
         } else if p == "m_Materials.Array.size"
-            && let (Some(ix), Some(n)) = (tree.find(|n| n.renderer == Some(md.target)), value())
+            && let (Some(r), Some(n)) = (renderer, value())
         {
-            let n = n.max(0.0) as usize;
+            if !(0.0..=MAX_MATERIALS as f32).contains(&n) {
+                let owner = &tree.nodes[r].out.name;
+                self.missing.push(format!(
+                    "{owner} › Renderer.{p} = {n}: not a material count"
+                ));
+                return Ok(());
+            }
             let fill = self.material(None, "")?;
-            tree.nodes[ix].out.materials.resize(n, fill);
+            tree.nodes[r].out.materials.resize(n as usize, fill);
         }
         Ok(())
     }
@@ -695,7 +774,13 @@ impl<'a, 'g> PrefabBuilder<'a, 'g> {
                 id: r.file_id,
             }));
         }
-        let guid = r.guid.clone().unwrap_or_default().to_ascii_lowercase();
+        let Some(guid) = r.guid.as_deref().map(str::to_ascii_lowercase) else {
+            self.missing.push(format!(
+                "{owner} › {prop} → &{} (not a Mesh in this file)",
+                r.file_id
+            ));
+            return Ok(Some(MeshRef::Missing));
+        };
         if guid == BUILTIN_RESOURCES {
             let name = match r.file_id.as_str() {
                 "10202" => "Cube",
@@ -715,18 +800,30 @@ impl<'a, 'g> PrefabBuilder<'a, 'g> {
             ));
             return Ok(Some(MeshRef::Missing));
         };
+        // A Mesh stored in another YAML file: served by its `fileID` like this file's own.
+        if matches!(
+            model_kind(&path),
+            Some(ModelKind::UnityMesh | ModelKind::Prefab)
+        ) {
+            let Some(key) = self.guids.files.key(&path) else {
+                self.missing.push(format!(
+                    "{owner} › {prop} → {path} (not readable in this version)"
+                ));
+                return Ok(Some(MeshRef::Missing));
+            };
+            return Ok(Some(MeshRef::Inline {
+                key: format!("{key}:{}", r.file_id),
+                path,
+                id: r.file_id,
+            }));
+        }
         let meta = self.model_meta(&path)?;
-        let scale = if meta.global_scale > 0.0 {
-            meta.global_scale
-        } else {
-            1.0
-        };
         let name = meta.names.get(&r.file_id).cloned();
         Ok(Some(MeshRef::Asset {
             path,
             name,
             id: Some(r.file_id),
-            scale,
+            scale: meta.global_scale,
         }))
     }
 
@@ -818,33 +915,6 @@ fn axis_ix(axis: &str) -> Option<usize> {
         "z" => Some(2),
         "w" => Some(3),
         _ => None,
-    }
-}
-
-fn short(guid: &str) -> String {
-    if guid.len() > 10 {
-        format!("{}…{}", &guid[..4], &guid[guid.len() - 3..])
-    } else {
-        guid.to_owned()
-    }
-}
-
-fn remove_subtree(tree: &mut Tree, root: usize) {
-    tree.nodes[root].removed = true;
-    loop {
-        let mut changed = false;
-        for i in 0..tree.nodes.len() {
-            if !tree.nodes[i].removed
-                && let Some(p) = tree.nodes[i].out.parent
-                && tree.nodes[p].removed
-            {
-                tree.nodes[i].removed = true;
-                changed = true;
-            }
-        }
-        if !changed {
-            break;
-        }
     }
 }
 
@@ -1201,6 +1271,126 @@ mod tests {
                 .nodes
                 .iter()
                 .any(|n| n.name == "Lost" || n.name == "Skiff")
+        );
+    }
+
+    #[test]
+    fn reports_a_prefab_that_places_itself_instead_of_expanding_it() {
+        const LOOP: &str = "1001000000000000000000000000000a";
+        let repo = project();
+        let instance = |id: u32| {
+            format!(
+                "--- !u!1001 &{id}\nPrefabInstance:\n  m_Modification:\n    m_TransformParent: {{fileID: 0}}\n    m_Modifications: []\n  m_SourcePrefab: {{fileID: 100100000, guid: {LOOP}, type: 3}}\n"
+            )
+        };
+        let text = [
+            HEADER.to_owned(),
+            go(1, "Ring", &[2]),
+            tf(2, 1, 0, "{x: 0, y: 0, z: 0}", "{x: 0, y: 0, z: 0, w: 1}"),
+            instance(7000),
+            instance(7001),
+            instance(7002),
+        ]
+        .concat();
+        repo.write("Assets/Loop.prefab", &text)
+            .write("Assets/Loop.prefab.meta", &format!("guid: {LOOP}\n"))
+            .commit_all("loop");
+        let (scene, _) = build(&repo, "Assets/Loop.prefab");
+        assert_eq!(scene.nodes.len(), 1);
+        assert_eq!(
+            scene.missing,
+            vec!["Nested prefab Assets/Loop.prefab places itself".to_owned(); 3]
+        );
+    }
+
+    #[test]
+    fn refuses_corrupt_material_overrides_and_odd_guids() {
+        let repo = project();
+        let m = |path: &str, value: &str| {
+            format!(
+                "    - target: {{fileID: 2301, guid: {BOAT}, type: 3}}\n      propertyPath: {path}\n      value: {value}\n      objectReference: {{fileID: 2100000, guid: {NAVY}, type: 2}}\n"
+            )
+        };
+        let text = [
+            HEADER.to_owned(),
+            "--- !u!1001 &7000\nPrefabInstance:\n  m_Modification:\n    m_TransformParent: {fileID: 0}\n    m_Modifications:\n".into(),
+            m("m_Materials.Array.size", "1e30"),
+            m("m_Materials.Array.data[18446744073709551615]", ""),
+            m("m_Materials.Array.data[1]", ""),
+            format!("  m_SourcePrefab: {{fileID: 100100000, guid: {BOAT}, type: 3}}\n"),
+            go(300, "Odd", &[301, 3301]),
+            tf(301, 300, 0, "{x: 0, y: 0, z: 0}", "{x: 0, y: 0, z: 0, w: 1}"),
+            "--- !u!33 &3301\nMeshFilter:\n  m_GameObject: {fileID: 300}\n  m_Mesh: {fileID: 4300000, guid: ééééééééééééé, type: 3}\n".into(),
+        ]
+        .concat();
+        repo.write("Assets/Odd.prefab", &text).commit_all("odd");
+        let (scene, mats) = build(&repo, "Assets/Odd.prefab");
+        let (_, hull) = named(&scene, "Hull");
+        let names: Vec<&str> = hull
+            .materials
+            .iter()
+            .map(|&m| mats[m].name.as_str())
+            .collect();
+        assert_eq!(names, ["Red", "Navy"]);
+        assert_eq!(named(&scene, "Odd").1.mesh, Some(MeshRef::Missing));
+        assert_eq!(scene.missing.len(), 4, "{:?}", scene.missing);
+        assert!(scene.missing[3].contains("éééé…ééé"), "{:?}", scene.missing);
+    }
+
+    #[test]
+    fn an_override_can_draw_a_mesh_stored_in_the_outer_file() {
+        let repo = project();
+        let text = [
+            HEADER.to_owned(),
+            format!("--- !u!1001 &7000\nPrefabInstance:\n  m_Modification:\n    m_TransformParent: {{fileID: 0}}\n    m_Modifications:\n    - target: {{fileID: 3301, guid: {BOAT}, type: 3}}\n      propertyPath: m_Mesh\n      value: \n      objectReference: {{fileID: 4300123}}\n  m_SourcePrefab: {{fileID: 100100000, guid: {BOAT}, type: 3}}\n"),
+            mesh_asset::tri_mesh("4300123"),
+        ]
+        .concat();
+        repo.write("Assets/Edited.prefab", &text)
+            .commit_all("edited");
+        let (scene, _) = build(&repo, "Assets/Edited.prefab");
+        assert!(
+            matches!(
+                &named(&scene, "Hull").1.mesh,
+                Some(MeshRef::Inline { path, id, .. })
+                    if path == "Assets/Edited.prefab" && id == "4300123"
+            ),
+            "{:?}",
+            named(&scene, "Hull").1.mesh
+        );
+    }
+
+    #[test]
+    fn a_mesh_in_another_yaml_file_is_served_by_its_file_id() {
+        const MESHES: &str = "a55e7000000000000000000000000001";
+        let repo = project();
+        let text = [
+            HEADER.to_owned(),
+            go(1, "Rock", &[2, 3]),
+            tf(2, 1, 0, "{x: 0, y: 0, z: 0}", "{x: 0, y: 0, z: 0, w: 1}"),
+            format!("--- !u!33 &3\nMeshFilter:\n  m_GameObject: {{fileID: 1}}\n  m_Mesh: {{fileID: 4300002, guid: {MESHES}, type: 2}}\n"),
+        ]
+        .concat();
+        repo.write("Assets/Rock.prefab", &text)
+            .write(
+                "Assets/Rocks.asset",
+                &format!(
+                    "{HEADER}{}{}",
+                    mesh_asset::tri_mesh("4300001"),
+                    mesh_asset::tri_mesh("4300002")
+                ),
+            )
+            .write("Assets/Rocks.asset.meta", &format!("guid: {MESHES}\n"))
+            .commit_all("rocks");
+        let (scene, _) = build(&repo, "Assets/Rock.prefab");
+        assert!(
+            matches!(
+                &named(&scene, "Rock").1.mesh,
+                Some(MeshRef::Inline { path, id, key })
+                    if path == "Assets/Rocks.asset" && id == "4300002" && key.ends_with(":4300002")
+            ),
+            "{:?}",
+            named(&scene, "Rock").1.mesh
         );
     }
 

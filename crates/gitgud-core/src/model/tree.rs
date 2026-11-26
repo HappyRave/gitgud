@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use gix::traverse::tree::Recorder;
 
@@ -8,7 +8,7 @@ use super::cache::Origin;
 use crate::cli::GitCli;
 use crate::image::Version;
 use crate::lfs::{AUTO_FETCH_MAX_BYTES, parse_lfs_pointer};
-use crate::repo::{Error, Repo, read_err};
+use crate::repo::{Error, Repo, TreeGuids, read_err};
 
 /// The tracked files of one version, for looking up files the asset refers to.
 pub(crate) struct Files<'a> {
@@ -32,6 +32,9 @@ pub(crate) struct Listed {
     blobs: Vec<gix::ObjectId>,
     by_name: HashMap<String, Vec<usize>>,
     tree: Option<gix::ObjectId>,
+    /// The index's or work tree's `.meta` GUIDs, scanned on first use (a commit's are
+    /// kept on the repo instead).
+    live_guids: OnceLock<TreeGuids>,
 }
 
 #[derive(Clone, Copy)]
@@ -89,17 +92,18 @@ impl<'a> Files<'a> {
         })
     }
 
-    /// Whether `path` can be read at this version: it is in it, or it is a gitignored
-    /// file on disk, which every version reads from disk.
+    /// Whether `path` can be read at this version: it is in it, it is an untracked
+    /// file of the work tree, or it is a gitignored file on disk, which every version
+    /// reads from disk.
     pub fn has(&self, path: &str) -> bool {
         if self.contains(path) {
             return true;
         }
-        let disk = self.repo.ignored_on_disk(path);
-        if disk {
+        if self.repo.ignored_on_disk(path) {
             self.from_disk.borrow_mut().insert(path.to_owned());
+            return true;
         }
-        disk
+        matches!(self.version, Version::Worktree) && self.repo.root().join(path).is_file()
     }
 
     /// How many gitignored files were used from disk so far.
@@ -109,6 +113,10 @@ impl<'a> Files<'a> {
 
     pub fn paths(&self) -> &[String] {
         &self.listed.paths
+    }
+
+    pub fn live_guids(&self) -> &OnceLock<TreeGuids> {
+        &self.listed.live_guids
     }
 
     /// The blob of `paths()[i]`, when the version is a commit.
@@ -322,6 +330,7 @@ fn listed(repo: &Repo, version: &Version) -> Result<Arc<Listed>, Error> {
         blobs,
         by_name,
         tree,
+        live_guids: OnceLock::new(),
     });
     let mut kept = repo.listings.lock().expect("listings lock poisoned");
     kept.retain(|(k, _)| *k != key);
@@ -481,6 +490,26 @@ mod tests {
             assert_eq!(files.read_text("Assets/none.mat").unwrap(), None);
             repo.write("Pack/b.mat", "on disk");
         }
+    }
+
+    #[test]
+    fn the_work_tree_has_its_untracked_files() {
+        let repo = TestRepo::init();
+        repo.write("Assets/a.mat", "committed").commit_all("one");
+        repo.write("Assets/new.fbx", "not added yet");
+        let r = crate::repo::open(repo.path()).unwrap();
+        let now = Files::new(&r, &Version::Worktree).unwrap();
+        assert!(now.has("Assets/new.fbx"));
+        assert_eq!(
+            now.read_text("Assets/new.fbx").unwrap().as_deref(),
+            Some("not added yet")
+        );
+        assert!(!now.has("Assets/none.fbx"));
+        assert!(
+            !Files::new(&r, &Version::Head)
+                .unwrap()
+                .has("Assets/new.fbx")
+        );
     }
 
     #[test]

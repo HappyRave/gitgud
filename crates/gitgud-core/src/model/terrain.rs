@@ -81,10 +81,14 @@ impl Repo {
                 .layers
                 .iter()
                 .map(|l| {
-                    l.texture
-                        .as_deref()
-                        .and_then(|p| files.key(p))
-                        .unwrap_or_default()
+                    let texture = l.texture.as_deref().and_then(|p| files.key(p));
+                    format!(
+                        "{}@{:?}{:?}{:?}",
+                        texture.unwrap_or_default(),
+                        l.tile,
+                        l.offset,
+                        l.tint
+                    )
                 })
                 .collect();
             format!("terrain|{k}|{}|{size}|{TERRAIN_VERSION}", layers.join(","))
@@ -240,7 +244,7 @@ fn layers(
         };
         out.push(Layer {
             texture,
-            tile: pair(s.get("tileSize"), [15.0, 15.0]),
+            tile: tile_size(pair(s.get("tileSize"), DEFAULT_TILE), "splat", missing),
             offset: pair(s.get("tileOffset"), [0.0, 0.0]),
             tint: [1.0; 3],
         });
@@ -248,10 +252,22 @@ fn layers(
     Ok(out)
 }
 
+/// Unity's tile size for a new layer, in metres.
+const DEFAULT_TILE: [f32; 2] = [15.0, 15.0];
+
+/// `tile`, or the default with a note when it isn't a positive size.
+fn tile_size(tile: [f32; 2], owner: &str, missing: &mut Vec<String>) -> [f32; 2] {
+    if tile.iter().all(|t| t.is_finite() && *t > 0.0) {
+        return tile;
+    }
+    missing.push(format!("{owner} › tile size {tile:?} isn't a size"));
+    DEFAULT_TILE
+}
+
 fn blank() -> Layer {
     Layer {
         texture: None,
-        tile: [15.0, 15.0],
+        tile: DEFAULT_TILE,
         offset: [0.0, 0.0],
         tint: [1.0; 3],
     }
@@ -285,7 +301,7 @@ fn terrain_layer(path: &str, guids: &Guids<'_>, missing: &mut Vec<String>) -> Re
     let tint = vec3(&b["m_DiffuseRemapMax"], [1.0; 3]);
     Ok(Layer {
         texture,
-        tile: vec2(&b["m_TileSize"], [15.0, 15.0]),
+        tile: tile_size(vec2(&b["m_TileSize"], DEFAULT_TILE), path, missing),
         offset: vec2(&b["m_TileOffset"], [0.0, 0.0]),
         tint,
     })
@@ -298,6 +314,9 @@ fn texture(tex: &Value) -> Result<RgbaImage, Error> {
         return Err(Error::Read(format!("{name} has no size")));
     };
     let (w, h) = (u32::try_from(w).unwrap_or(0), u32::try_from(h).unwrap_or(0));
+    if w == 0 || h == 0 {
+        return Err(Error::Read(format!("{name} is {w} × {h} pixels")));
+    }
     let data = tex.get("image data").bytes().unwrap_or_default();
     let n = w as usize * h as usize * 4;
     if data.len() < n {

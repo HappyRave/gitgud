@@ -8,9 +8,19 @@ use super::meta::Meta;
 use super::yaml::{docs, num, obj_ref, quat, scalar, vec3};
 use crate::repo::Error;
 
-const ANIMATION_CLIP: u32 = 74;
+pub(crate) const ANIMATION_CLIP: u32 = 74;
 const ANIMATOR_STATE: u32 = 1102;
 const BLEND_TREE: u32 = 206;
+const OVERRIDE_CONTROLLER: u32 = 221;
+/// Override controllers stacked on override controllers, at most.
+const MAX_OVERRIDES: usize = 8;
+
+/// A clip reference: its file's GUID and its `fileID` there.
+type Motion = (String, String);
+
+fn motion(r: &Yaml) -> Option<Motion> {
+    obj_ref(r).and_then(|r| Some((r.guid?.to_ascii_lowercase(), r.file_id)))
+}
 
 /// Where a clip's keys come from.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -151,29 +161,52 @@ pub(crate) fn anim_clip(text: &str) -> Option<(String, ClipSource)> {
     ))
 }
 
-/// Every clip an Animator Controller's states and blend trees play.
-pub(crate) fn controller_clips(
+/// The clips an Animator Controller's states and blend trees play; for an Override
+/// Controller, its base controller's with the overrides swapped in.
+fn controller_motions(
     path: &str,
     guids: &Guids<'_>,
-) -> Result<Vec<(String, ClipSource)>, Error> {
-    let Some(text) = guids.files.read_text(path)? else {
-        return Ok(Vec::new());
-    };
+    depth: usize,
+) -> Result<BTreeSet<Motion>, Error> {
     let mut motions = BTreeSet::new();
+    let Some(text) = guids.files.read_text(path)? else {
+        return Ok(motions);
+    };
     for d in docs(&text) {
         match d.class_id {
-            ANIMATOR_STATE => motions
-                .extend(obj_ref(&d.body["m_Motion"]).and_then(|r| Some((r.guid?, r.file_id)))),
+            ANIMATOR_STATE => motions.extend(motion(&d.body["m_Motion"])),
             BLEND_TREE => {
                 for child in d.body["m_Childs"].as_vec().into_iter().flatten() {
-                    motions.extend(
-                        obj_ref(&child["m_Motion"]).and_then(|r| Some((r.guid?, r.file_id))),
-                    );
+                    motions.extend(motion(&child["m_Motion"]));
+                }
+            }
+            OVERRIDE_CONTROLLER if depth < MAX_OVERRIDES => {
+                let base = obj_ref(&d.body["m_Controller"]).and_then(|r| r.guid);
+                if let Some(base) = base.map(|g| guids.path(&g)).transpose()?.flatten() {
+                    motions.extend(controller_motions(&base, guids, depth + 1)?);
+                }
+                for pair in d.body["m_Clips"].as_vec().into_iter().flatten() {
+                    if let (Some(original), Some(with)) = (
+                        motion(&pair["m_OriginalClip"]),
+                        motion(&pair["m_OverrideClip"]),
+                    ) && motions.remove(&original)
+                    {
+                        motions.insert(with);
+                    }
                 }
             }
             _ => {}
         }
     }
+    Ok(motions)
+}
+
+/// Every clip an Animator Controller (or Override Controller) plays.
+pub(crate) fn controller_clips(
+    path: &str,
+    guids: &Guids<'_>,
+) -> Result<Vec<(String, ClipSource)>, Error> {
+    let motions = controller_motions(path, guids, 0)?;
     let mut out = Vec::new();
     for (guid, file_id) in motions {
         let Some(p) = guids.path(&guid)? else {
@@ -276,6 +309,23 @@ mod tests {
         let clips = controller_clips("Assets/Boat.controller", &guids).unwrap();
         let names: Vec<&str> = clips.iter().map(|(n, _)| n.as_str()).collect();
         assert_eq!(names, ["Bob", "Run"]);
+
+        let swim = "a0000000000000000000000000000004";
+        let overrides = format!(
+            "%YAML 1.1\n--- !u!221 &22100000\nAnimatorOverrideController:\n  m_Controller: {{fileID: 9100000, guid: {ctrl}, type: 2}}\n  m_Clips:\n  - m_OriginalClip: {{fileID: 7400000, guid: {anim}, type: 2}}\n    m_OverrideClip: {{fileID: 7400000, guid: {swim}, type: 2}}\n"
+        );
+        repo.write(
+            "Assets/Swim.anim",
+            &ANIM.replace("m_Name: Bob", "m_Name: Swim"),
+        )
+        .write("Assets/Swim.anim.meta", &format!("guid: {swim}\n"))
+        .write("Assets/Fish.overrideController", &overrides)
+        .commit_all("override");
+        let files = Files::new(&r, &v).unwrap();
+        let guids = Guids::new(&files);
+        let clips = controller_clips("Assets/Fish.overrideController", &guids).unwrap();
+        let names: Vec<&str> = clips.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, ["Swim", "Run"]);
         assert_eq!(
             clips[1].1,
             ClipSource::Model {

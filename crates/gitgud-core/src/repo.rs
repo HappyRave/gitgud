@@ -33,7 +33,7 @@ pub struct Repo {
     /// The scenes or prefabs last read for their inline meshes (both sides of a
     /// compare), so a scene's hundreds of meshes don't each re-read it; see
     /// `Repo::inline_mesh`.
-    pub(crate) inline_sources: Mutex<Vec<(String, Arc<crate::model::InlineSource>)>>,
+    pub(crate) inline_sources: Mutex<Vec<(String, crate::model::InlineSlot)>>,
     /// Recent versions' file listings; see `model::tree::Files::new`.
     pub(crate) listings: Mutex<Vec<(crate::model::cache::Origin, Arc<crate::model::tree::Listed>)>>,
 }

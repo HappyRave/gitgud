@@ -5,6 +5,7 @@ use yaml_rust2::{Yaml, YamlLoader};
 use super::yaml::{ObjRef, num, obj_ref, scalar};
 
 const MESH_CLASS: &str = "43";
+const SPRITE_CLASS: &str = "213";
 const CLIP_CLASS: &str = "74";
 const TRANSFORM_CLASS: &str = "4";
 const GAME_OBJECT_CLASS: &str = "1";
@@ -26,8 +27,8 @@ pub(crate) fn hashed_id(class: &str, name: &str, occurrence: usize) -> String {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct Meta {
     pub guid: Option<String>,
-    /// Sub-asset `fileID` → name, from `internalIDToNameTable` or the older
-    /// `fileIDToRecycleName`.
+    /// Mesh and sprite sub-asset `fileID` → name, from `internalIDToNameTable`, the
+    /// sprite sheet's `internalID`s or the older `fileIDToRecycleName`.
     pub names: HashMap<String, String>,
     /// Model material name → the `.mat` Unity uses instead (`externalObjects`).
     pub material_remaps: HashMap<String, ObjRef>,
@@ -76,7 +77,7 @@ impl Meta {
                     continue;
                 };
                 match class.as_str() {
-                    MESH_CLASS => {
+                    MESH_CLASS | SPRITE_CLASS => {
                         meta.names.insert(id, name);
                     }
                     CLIP_CLASS => {
@@ -141,7 +142,19 @@ impl Meta {
                 }
             }
         }
-        if let Some(s) = num(&importer["meshes"]["globalScale"]) {
+        for sprite in importer["spriteSheet"]["sprites"]
+            .as_vec()
+            .into_iter()
+            .flatten()
+        {
+            if let (Some(id), Some(name)) = (scalar(&sprite["internalID"]), scalar(&sprite["name"]))
+                && id != "0"
+            {
+                meta.names.entry(id).or_insert(name);
+            }
+        }
+        // Unity treats a zero or negative scale as unset.
+        if let Some(s) = num(&importer["meshes"]["globalScale"]).filter(|s| *s > 0.0) {
             meta.global_scale = s;
         }
         meta
@@ -190,6 +203,18 @@ mod tests {
         assert_eq!(m.root_game_object.as_deref(), Some(ROOT_GAME_OBJECT));
         assert_eq!(m.clips[&hashed_id("AnimationClip", "Run", 0)], "Run");
         assert_eq!(m.takes["Run"], "Take 001");
+    }
+
+    #[test]
+    fn reads_sprite_names_and_ignores_a_bad_scale() {
+        let m = Meta::parse(
+            "guid: abc\nTextureImporter:\n  internalIDToNameTable:\n  - first:\n      213: 21300000\n    second: hero_0\n  spriteSheet:\n    sprites:\n    - name: hero_1\n      internalID: -1234567890\n    - name: hero_2\n      internalID: 0\n",
+        );
+        assert_eq!(m.names["21300000"], "hero_0");
+        assert_eq!(m.names["-1234567890"], "hero_1");
+        assert_eq!(m.names.len(), 2);
+        let m = Meta::parse("guid: abc\nModelImporter:\n  meshes:\n    globalScale: 0\n");
+        assert_eq!(m.global_scale, 1.0);
     }
 
     #[test]

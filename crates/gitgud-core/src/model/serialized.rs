@@ -431,8 +431,7 @@ impl<'b> SerializedFile<'b> {
             pos: object.start,
             big: self.big,
         };
-        let (value, _) = read_node(&mut r, nodes, 0)?;
-        Ok(value)
+        read_node(&mut r, nodes, 0)
     }
 }
 
@@ -494,16 +493,14 @@ fn primitive(r: &mut Reader<'_>, ty: &str) -> Result<Value, Error> {
     })
 }
 
-/// Reads `nodes[at]` and returns it with the index after its subtree.
-fn read_node(r: &mut Reader<'_>, nodes: &[TypeNode], at: usize) -> Result<(Value, usize), Error> {
+/// Most elements an array's capacity is reserved for up front: its count comes from
+/// the file, so the bytes run out first when it lies.
+const MAX_RESERVE: usize = 1 << 20;
+
+/// Reads `nodes[at]`.
+fn read_node(r: &mut Reader<'_>, nodes: &[TypeNode], at: usize) -> Result<Value, Error> {
     let node = &nodes[at];
     let kids = children(nodes, at);
-    let after = nodes
-        .iter()
-        .enumerate()
-        .skip(at + 1)
-        .find(|(_, n)| n.level <= node.level)
-        .map_or(nodes.len(), |(i, _)| i);
     let mut align = node.meta & ALIGN != 0;
     let value = if node.ty == "string" {
         let n = r.count()?;
@@ -530,23 +527,23 @@ fn read_node(r: &mut Reader<'_>, nodes: &[TypeNode], at: usize) -> Result<(Value
             if el.ty == "UInt8" || el.ty == "char" {
                 Value::Bytes(r.take(n)?.to_vec())
             } else {
-                let mut out = Vec::with_capacity(n);
+                let mut out = Vec::with_capacity(n.min(MAX_RESERVE));
                 for _ in 0..n {
                     out.push(primitive(r, &el.ty)?.f64().unwrap_or(0.0));
                 }
                 Value::Numbers(out)
             }
         } else {
-            let mut out = Vec::with_capacity(n.min(1 << 20));
+            let mut out = Vec::with_capacity(n.min(MAX_RESERVE));
             for _ in 0..n {
-                out.push(read_node(r, nodes, element)?.0);
+                out.push(read_node(r, nodes, element)?);
             }
             Value::List(out)
         }
     } else {
         let mut fields = Vec::with_capacity(kids.len());
         for k in kids {
-            let (v, _) = read_node(r, nodes, k)?;
+            let v = read_node(r, nodes, k)?;
             fields.push((nodes[k].name.clone(), v));
         }
         Value::Map(fields)
@@ -554,7 +551,7 @@ fn read_node(r: &mut Reader<'_>, nodes: &[TypeNode], at: usize) -> Result<(Value
     if align {
         r.align();
     }
-    Ok((value, after))
+    Ok(value)
 }
 
 /// Writes small binary serialized files for tests: type trees in Unity's blob format.

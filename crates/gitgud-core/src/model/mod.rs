@@ -112,10 +112,16 @@ pub struct ModelInfo {
     pub models: BTreeMap<String, ModelInfo>,
 }
 
-/// How many scenes or prefabs `Repo::inline_mesh` keeps: both sides of a compare.
+/// How many files `Repo::inline_mesh` keeps however big: both sides of a compare.
 const KEPT_INLINE_SOURCES: usize = 2;
+/// More files are kept, least recently used dropped first, while their text stays under this.
+const KEPT_INLINE_BYTES: usize = 512 << 20;
 
-/// A scene or prefab read for its inline meshes, with where each Mesh document is.
+/// A file being read for its inline meshes, or read: requests for the same file wait
+/// on its slot, others go ahead.
+pub(crate) type InlineSlot = Arc<std::sync::Mutex<Option<Arc<InlineSource>>>>;
+
+/// A scene, prefab or Mesh `.asset` read for its meshes, with where each Mesh document is.
 pub(crate) struct InlineSource {
     text: String,
     meshes: HashMap<String, Range<usize>>,
@@ -228,22 +234,41 @@ impl Repo {
         version: &Version,
     ) -> Result<Arc<InlineSource>, Error> {
         let key = format!("{path}@{version:?}");
-        // Held while loading, so the burst of requests reads the file once.
-        let mut kept = self
-            .inline_sources
-            .lock()
-            .expect("inline source lock poisoned");
-        if let Some((_, s)) = kept.iter().find(|(k, _)| *k == key) {
+        let slot = {
+            let mut kept = self
+                .inline_sources
+                .lock()
+                .expect("inline source lock poisoned");
+            let slot = match kept.iter().position(|(k, _)| *k == key) {
+                Some(at) => kept.remove(at).1,
+                None => InlineSlot::default(),
+            };
+            kept.push((key, slot.clone()));
+            let mut bytes = 0;
+            for at in (0..kept.len()).rev() {
+                bytes += kept[at]
+                    .1
+                    .try_lock()
+                    .ok()
+                    .and_then(|s| s.as_ref().map(|s| s.text.len()))
+                    .unwrap_or(0);
+                if at + KEPT_INLINE_SOURCES < kept.len() && bytes > KEPT_INLINE_BYTES {
+                    kept.drain(..=at);
+                    break;
+                }
+            }
+            slot
+        };
+        // Held while loading, so the burst of requests for this file reads it once.
+        let mut source = slot.lock().expect("inline source slot poisoned");
+        if let Some(s) = source.as_ref() {
             return Ok(s.clone());
         }
         let raw = self.file_at(path, version)?;
         let bytes =
             self.lfs_resolve_with_fetch(git, path, raw, crate::lfs::AUTO_FETCH_MAX_BYTES)?;
         let s = Arc::new(InlineSource::new(bytes));
-        if kept.len() >= KEPT_INLINE_SOURCES {
-            kept.remove(0);
-        }
-        kept.push((key, s.clone()));
+        *source = Some(s.clone());
         Ok(s)
     }
 

@@ -33,9 +33,18 @@ pub(crate) fn mesh_key(doc: &str) -> String {
     let body = doc.split_once('\n').map_or("", |(_, b)| b);
     format!("{:016x}", xxhash_rust::xxh64::xxh64(body.as_bytes(), 0))
 }
+
+/// Unity meshes have at most four vertex streams.
+const MAX_STREAMS: usize = 4;
 const POSITION: usize = 0;
 const NORMAL: usize = 1;
 const TEXCOORD0: usize = 4;
+/// Unity's `MeshTopology` values.
+const TRIANGLES: u32 = 0;
+const QUADS: u32 = 2;
+const LINES: u32 = 3;
+const LINE_STRIP: u32 = 4;
+const POINTS: u32 = 5;
 
 #[derive(Debug, Clone, Copy)]
 struct Channel {
@@ -109,10 +118,16 @@ fn raw_value<'t>(text: &'t str, key: &str) -> &'t str {
 /// # Errors
 /// [`Error::Read`] when the file holds no mesh or its vertex layout isn't one this reads.
 pub(crate) fn mesh_asset_to_glb(text: &str) -> Result<Vec<u8>, Error> {
+    // The first Mesh document alone, so its hex runs are the ones read.
+    let range = mesh_documents(text)
+        .into_values()
+        .min_by_key(|r| r.start)
+        .ok_or_else(|| Error::Read("this .asset holds no Mesh".into()))?;
+    let text = &text[range];
     let doc = docs(text)
         .into_iter()
         .find(|d| d.class_id == MESH_CLASS)
-        .ok_or_else(|| Error::Read("this .asset holds no Mesh".into()))?;
+        .ok_or_else(|| Error::Read("the Mesh document doesn't parse".into()))?;
     let m = &doc.body;
     let vd = &m["m_VertexData"];
     let count = num(&vd["m_VertexCount"]).unwrap_or(0.0) as usize;
@@ -131,19 +146,38 @@ pub(crate) fn mesh_asset_to_glb(text: &str) -> Result<Vec<u8>, Error> {
     let indices_raw = hex(raw_value(text, "m_IndexBuffer"));
     let wide = num(&m["m_IndexFormat"]).unwrap_or(0.0) as u32 == 1;
 
+    if let Some(c) = channels.iter().find(|c| c.stream >= MAX_STREAMS) {
+        return Err(Error::Read(format!(
+            "vertex stream {} doesn't exist",
+            c.stream
+        )));
+    }
     let streams = channels.iter().map(|c| c.stream + 1).max().unwrap_or(0);
     let mut strides = vec![0usize; streams];
     for c in channels.iter().filter(|c| c.dimension > 0) {
         let size = format_size(c.format)
             .ok_or_else(|| Error::Read(format!("vertex format {} isn't supported", c.format)))?;
-        strides[c.stream] = strides[c.stream].max(c.offset + size * c.dimension);
+        strides[c.stream] = strides[c.stream].max(c.offset.saturating_add(size * c.dimension));
     }
     let mut starts = vec![0usize; streams];
-    let mut at = 0;
+    let mut at = 0usize;
     for s in 0..streams {
         starts[s] = at;
-        at += strides[s] * count;
+        at = strides[s]
+            .checked_mul(count)
+            .and_then(|n| n.checked_add(at))
+            .ok_or_else(|| Error::Read(format!("{count} vertices don't fit in memory")))?;
         at = at.div_ceil(16) * 16;
+    }
+    // The last stream needn't be padded.
+    let needed = starts
+        .last()
+        .map_or(0, |&s| s + strides[streams - 1] * count);
+    if data.len() < needed {
+        return Err(Error::Read(format!(
+            "the vertex data holds {} bytes, {needed} expected (a compressed mesh?)",
+            data.len()
+        )));
     }
     let attr = |ix: usize, dims: usize| -> Option<Vec<f32>> {
         let c = channels.get(ix).filter(|c| c.dimension > 0)?;
@@ -247,22 +281,49 @@ pub(crate) fn mesh_asset_to_glb(text: &str) -> Result<Vec<u8>, Error> {
         let n = num(&sm["indexCount"]).unwrap_or(0.0) as usize;
         let base = num(&sm["baseVertex"]).unwrap_or(0.0) as u32;
         let topology = num(&sm["topology"]).unwrap_or(0.0) as u32;
-        let Some(slice) = all_indices.get(first..first + n) else {
-            continue;
+        let Some(slice) = first
+            .checked_add(n)
+            .and_then(|end| all_indices.get(first..end))
+        else {
+            return Err(Error::Read(format!(
+                "a sub-mesh's {n} indices from {first} aren't in the index buffer"
+            )));
         };
-        let mut tri: Vec<u32> = slice.iter().map(|i| i + base).collect();
-        if topology == 0 {
-            for t in tri.as_chunks_mut::<3>().0 {
-                t.swap(1, 2);
-            }
-        }
-        let bytes: Vec<u8> = tri.iter().flat_map(|i| i.to_le_bytes()).collect();
+        let shifted = slice.iter().map(|i| i.wrapping_add(base));
+        let (indices, mode): (Vec<u32>, u32) = match topology {
+            // Triangles and quads: the mirror flips their winding.
+            TRIANGLES => (
+                shifted
+                    .collect::<Vec<_>>()
+                    .as_chunks::<3>()
+                    .0
+                    .iter()
+                    .flat_map(|t| [t[0], t[2], t[1]])
+                    .collect(),
+                4,
+            ),
+            QUADS => (
+                shifted
+                    .collect::<Vec<_>>()
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .flat_map(|q| [q[0], q[2], q[1], q[0], q[3], q[2]])
+                    .collect(),
+                4,
+            ),
+            LINES => (shifted.collect(), 1),
+            LINE_STRIP => (shifted.collect(), 3),
+            POINTS => (shifted.collect(), 0),
+            other => return Err(Error::Read(format!("mesh topology {other} is unknown"))),
+        };
+        let bytes: Vec<u8> = indices.iter().flat_map(|i| i.to_le_bytes()).collect();
         let acc = push(
             bytes,
-            json!({ "componentType": 5125, "count": tri.len(), "type": "SCALAR" }),
+            json!({ "componentType": 5125, "count": indices.len(), "type": "SCALAR" }),
             34963,
         );
-        primitives.push(json!({ "attributes": attributes, "indices": acc, "mode": if topology == 0 { 4 } else { 1 } }));
+        primitives.push(json!({ "attributes": attributes, "indices": acc, "mode": mode }));
     }
     let name = scalar(&m["m_Name"]).unwrap_or_default();
     let gltf = json!({
@@ -381,6 +442,45 @@ mod tests {
             .map(|i| u32::from_le_bytes(at(idx, i).try_into().unwrap()))
             .collect();
         assert_eq!(tri, [0, 2, 1], "winding flipped with the mirror");
+    }
+
+    fn gltf_of(glb: &[u8]) -> serde_json::Value {
+        let json_len = u32::from_le_bytes(glb[12..16].try_into().unwrap()) as usize;
+        serde_json::from_slice(&glb[20..20 + json_len]).unwrap()
+    }
+
+    #[test]
+    fn refuses_vertex_data_shorter_than_its_layout() {
+        let short = tri_mesh("1").replace("m_VertexCount: 3", "m_VertexCount: 4000000000");
+        let err = mesh_asset_to_glb(&short).unwrap_err().to_string();
+        assert!(err.contains("48 bytes"), "{err}");
+        let stream = tri_mesh("1").replacen("stream: 0", "stream: 1000000000", 1);
+        assert!(mesh_asset_to_glb(&stream).is_err());
+    }
+
+    #[test]
+    fn triangulates_quads_and_reads_the_first_mesh_only() {
+        let quad = tri_mesh("1")
+            .replace("topology: 0", "topology: 2")
+            .replace("indexCount: 3", "indexCount: 4")
+            .replace(
+                "m_IndexBuffer: 000001000200",
+                "m_IndexBuffer: 0000010002000000",
+            );
+        let other = tri_mesh("2").replace("m_Name: Tri", "m_Name: Other");
+        let gltf = gltf_of(&mesh_asset_to_glb(&format!("%YAML 1.1\n{quad}{other}")).unwrap());
+        assert_eq!(gltf["meshes"][0]["name"], "Tri");
+        let prim = &gltf["meshes"][0]["primitives"][0];
+        assert_eq!(prim["mode"], 4);
+        assert_eq!(
+            gltf["accessors"][prim["indices"].as_u64().unwrap() as usize]["count"],
+            6
+        );
+        let lines = tri_mesh("1").replace("topology: 0", "topology: 3");
+        assert_eq!(
+            gltf_of(&mesh_asset_to_glb(&lines).unwrap())["meshes"][0]["primitives"][0]["mode"],
+            1
+        );
     }
 
     #[test]

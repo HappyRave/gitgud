@@ -121,15 +121,7 @@ fn flatten(
     out: &mut Vec<(String, String)>,
 ) -> Result<(), Error> {
     if is_ref(y) {
-        let id = scalar(&y["fileID"]).unwrap_or_default();
-        let value = match ref_guid(y) {
-            _ if id == "0" => "none".to_owned(),
-            Some(g) => guids
-                .path(&g)?
-                .map_or_else(|| format!("missing ({g})"), |p| base_name(&p).to_owned()),
-            None => format!("&{id}"),
-        };
-        out.push((prefix.to_owned(), value));
+        out.push((prefix.to_owned(), guids.ref_label(y)?));
         return Ok(());
     }
     match y {

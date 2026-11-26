@@ -19,8 +19,8 @@ pub(crate) struct ObjRef {
     pub guid: Option<String>,
 }
 
-/// Splits Unity YAML into documents and parses each body. Documents that don't
-/// parse are skipped.
+/// Splits Unity YAML into documents and parses each body. A body that doesn't parse
+/// is logged and left `Null`.
 pub(crate) fn docs(text: &str) -> Vec<Doc> {
     docs_reading(text, |_, _| true)
 }
@@ -54,29 +54,32 @@ pub(crate) fn docs_reading(text: &str, read: impl Fn(u32, bool) -> bool) -> Vec<
 
     let size: usize = parts.iter().filter_map(|p| p.1).map(str::len).sum();
     if size < PARALLEL_FROM {
-        return parts.into_iter().filter_map(parse).collect();
+        return parts.into_iter().map(parse).collect();
     }
-    parts.into_par_iter().filter_map(parse).collect()
+    parts.into_par_iter().map(parse).collect()
 }
 
-/// The document `part` describes; `None` when its body doesn't parse.
-fn parse(((class_id, file_id, stripped), body): Part<'_>) -> Option<Doc> {
-    let body = match body {
-        Some(text) => {
-            let mut parsed = YamlLoader::load_from_str(text).ok()?;
+/// The document `part` describes.
+fn parse(((class_id, file_id, stripped), body): Part<'_>) -> Doc {
+    let body = match body.map(YamlLoader::load_from_str) {
+        Some(Ok(mut parsed)) => {
             let root = parsed.pop().unwrap_or(Yaml::Null);
             root.as_hash()
                 .and_then(|h| h.values().next().cloned())
                 .unwrap_or(Yaml::Null)
         }
+        Some(Err(e)) => {
+            eprintln!("gitgud: Unity YAML document !u!{class_id} &{file_id} doesn't parse: {e}");
+            Yaml::Null
+        }
         None => Yaml::Null,
     };
-    Some(Doc {
+    Doc {
         class_id,
         file_id,
         stripped,
         body,
-    })
+    }
 }
 
 /// A scalar as text, whatever YAML typed it as.
