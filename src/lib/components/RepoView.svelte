@@ -141,6 +141,7 @@
   } from "$lib/api";
   import OverlapHeadsUp from "$lib/components/OverlapHeadsUp.svelte";
   import CompareView from "$lib/components/CompareView.svelte";
+  import { launchItems } from "$lib/launch";
   import { rev as compareRev, WORKING_COPY } from "$lib/compare/tree";
   import { advice, freshHeadsUps, headline, headsUpKey, stripLabel } from "$lib/overlap/radar";
   import BranchDialog from "$lib/components/BranchDialog.svelte";
@@ -896,6 +897,7 @@
           }),
         onoptimizegraph: optimizeCommitGraph,
         onlfsdownloads: () => (lfsAsk = true),
+        launch: launchItems(opened.root, null, (message) => (error = message)),
         oncompare: () =>
           openCompare(currentPoint(), currentBranch?.upstream ? compareRev(currentBranch.upstream) : WORKING_COPY),
       },
@@ -2079,6 +2081,8 @@
             a={comparing.a}
             b={comparing.b}
             currentBranch={currentBranch?.name ?? null}
+            root={opened.root}
+            onlaunchfail={(message) => (error = message)}
             {busy}
             ontake={takeFromCompare}
             onclose={() => {
@@ -2227,6 +2231,8 @@
             <CommitDetail
               repoId={opened.id}
               commit={selectedCommit}
+              root={opened.root}
+              onlaunchfail={(message) => (error = message)}
               onhistory={(p) => openFileInspect(p, "history", null)}
               onblame={(p, rev) => openFileInspect(p, "blame", rev)}
               onclose={closeDetail}
@@ -2262,6 +2268,7 @@
               {pullAfterCommit}
               onpull={() => startPull("auto", false)}
               oncommitpull={commitThenPull}
+              onlaunchfail={(message) => (error = message)}
               bind:selected={selectedFile}
               onstage={(paths) => write((id) => stage(id, paths), undefined, `Staging ${files(paths)}…`)}
               onunstage={(paths) => write((id) => unstage(id, paths), undefined, `Unstaging ${files(paths)}…`)}

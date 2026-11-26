@@ -15,6 +15,7 @@ use gitgud_core::git::{self, GitInfo};
 use gitgud_core::git_tools::{self, GitInventory};
 use gitgud_core::graph::Row;
 use gitgud_core::history::{Action, HistoryPlan, Step};
+use gitgud_core::launch::{self, Editor, LaunchTools, Terminal};
 use gitgud_core::lfs::{LfsCacheStats, LfsInfo, LfsLock};
 use gitgud_core::library::{
     AddRepoEntry, DEFAULT_SCAN_DEPTH, LibrarySnapshot, LibraryStore, OpenTabState, RepoSummary,
@@ -1766,6 +1767,59 @@ async fn lfs_partial_plan(
 }
 
 #[tauri::command]
+async fn launch_tools() -> LaunchTools {
+    launch::Finder::system().tools()
+}
+
+/// A repo root from the webview: refused unless it is a folder on disk.
+fn launch_root(root: &str) -> Result<std::path::PathBuf, Error> {
+    let root = std::path::PathBuf::from(root);
+    if root.is_dir() {
+        Ok(root)
+    } else {
+        Err(Error::Refused(format!(
+            "{} isn't a folder on disk",
+            root.display()
+        )))
+    }
+}
+
+#[tauri::command]
+async fn reveal_path(root: String, path: Option<String>) -> Result<(), Error> {
+    let root = launch_root(&root)?;
+    let target = launch::inside(&root, path.as_deref())?;
+    launch::spawn(&launch::reveal(&root, &target))
+}
+
+#[tauri::command]
+async fn open_terminal(
+    root: String,
+    path: Option<String>,
+    terminal: Terminal,
+) -> Result<(), Error> {
+    let root = launch_root(&root)?;
+    let target = launch::inside(&root, path.as_deref())?;
+    launch::spawn(&launch::terminal(
+        &launch::Finder::system(),
+        terminal,
+        &root,
+        &target,
+    )?)
+}
+
+#[tauri::command]
+async fn open_in_editor(root: String, path: Option<String>, editor: Editor) -> Result<(), Error> {
+    let root = launch_root(&root)?;
+    let target = launch::inside(&root, path.as_deref())?;
+    launch::spawn(&launch::editor(
+        &launch::Finder::system(),
+        &editor,
+        &root,
+        &target,
+    )?)
+}
+
+#[tauri::command]
 async fn compare(
     session: State<'_, Session>,
     id: u32,
@@ -2142,6 +2196,10 @@ fn app_with_library<R: Runtime>(builder: Builder<R>, library: Option<LibraryStor
             lfs_partial_plan,
             overlap,
             notify,
+            launch_tools,
+            reveal_path,
+            open_terminal,
+            open_in_editor,
             compare,
             compare_file_diff,
             compare_unity_diff,
@@ -3860,6 +3918,52 @@ mod tests {
                 .len(),
             0
         );
+    }
+
+    #[test]
+    fn launching_refuses_paths_outside_the_repo_and_reports_the_tools() {
+        let ipc = Ipc::new();
+        let repo = TestRepo::init();
+        let root = repo.path().to_str().unwrap();
+        let tools = ipc.call("launch_tools", json!({})).unwrap();
+        for key in [
+            "windowsTerminal",
+            "gitBash",
+            "vsCode",
+            "rider",
+            "visualStudio",
+        ] {
+            assert!(tools[key].is_boolean(), "{key}: {tools}");
+        }
+        for (cmd, extra) in [
+            ("reveal_path", json!({})),
+            ("open_terminal", json!({ "terminal": "powerShell" })),
+            ("open_in_editor", json!({ "editor": { "kind": "vsCode" } })),
+        ] {
+            let mut args = json!({ "root": root, "path": "../outside" });
+            args.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            let err = ipc.call(cmd, args).unwrap_err();
+            assert!(
+                err.to_string().contains("isn't inside the repository"),
+                "{cmd}: {err}"
+            );
+        }
+        let err = ipc
+            .call(
+                "open_in_editor",
+                json!({ "root": root, "path": null, "editor": { "kind": "custom", "program": "" } }),
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("Settings › Tools"), "{err}");
+        let err = ipc
+            .call(
+                "reveal_path",
+                json!({ "root": "C:/no/such/folder", "path": null }),
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("isn't a folder on disk"), "{err}");
     }
 
     #[test]

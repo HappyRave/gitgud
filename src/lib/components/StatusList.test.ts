@@ -1,6 +1,7 @@
 import { fireEvent, render as renderComponent, screen, within } from "@testing-library/svelte";
 import { describe, expect, it, vi } from "vitest";
 import type { Entry, Status } from "$lib/api";
+import { mockCommands } from "$lib/test/ipc";
 import StatusList from "./StatusList.svelte";
 
 const status = (entries: Entry[], head: Status["head"] = { kind: "branch", name: "main" }): Status => ({
@@ -207,5 +208,25 @@ describe("StatusList actions", () => {
       shiftKey: true,
     });
     expect(onselectfile).toHaveBeenCalledWith("gone.txt", "unstaged", { ctrl: false, shift: true });
+  });
+
+  it("right-click on a file offers Explorer, a terminal in its folder, the editor and its path", async () => {
+    const calls = mockCommands({ open_terminal: () => null });
+    render({ status: status(ENTRIES) });
+
+    await fireEvent.contextMenu(within(screen.getByRole("list", { name: "Staged" })).getByText("new.txt").closest("li")!);
+    expect(screen.getAllByRole("menuitem").map((i) => i.textContent?.trim())).toEqual([
+      "Show in Explorer",
+      "Open Windows Terminal in its folder",
+      "Open in VS Code",
+      "Copy path",
+    ]);
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Open Windows Terminal in its folder" }));
+    await vi.waitFor(() =>
+      expect(calls).toEqual([{ cmd: "open_terminal", args: { root: "C:/work/repo", path: "new.txt", terminal: "windowsTerminal" } }]),
+    );
+
+    await fireEvent.contextMenu(within(screen.getByRole("list", { name: "Changes" })).getByText("gone.txt").closest("li")!);
+    expect(screen.getByRole("menuitem", { name: "Open in VS Code" }), "a deleted file isn't on disk").toBeDisabled();
   });
 });

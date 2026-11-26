@@ -1,5 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/svelte";
 import { describe, expect, it, vi } from "vitest";
+import { mockCommands } from "$lib/test/ipc";
 import TabBar from "./TabBar.svelte";
 
 const mkTab = (i: number) => ({
@@ -69,5 +70,35 @@ describe("TabBar", () => {
     expect(screen.getByRole("menu", { name: "More open tabs" })).toBeInTheDocument();
     await fireEvent.pointerDown(document.body);
     expect(screen.queryByRole("menu", { name: "More open tabs" })).not.toBeInTheDocument();
+  });
+
+  it("right-click on a repo tab opens it in Explorer, a terminal or the editor, and reports a failure", async () => {
+    const calls = mockCommands({
+      reveal_path: () => null,
+      open_in_editor: () => {
+        throw "VS Code isn't installed; pick another editor in Settings › Tools";
+      },
+    });
+    const onclose = vi.fn();
+    const onerror = vi.fn();
+    render(TabBar, { tabs: [mkTab(0)], activePath: null, onselect: vi.fn(), onclose, onadd: vi.fn(), onquickswitch: vi.fn(), onerror });
+
+    await fireEvent.contextMenu(screen.getByRole("tab", { name: /repo-0/ }), { clientX: 5, clientY: 5 });
+    expect(screen.getAllByRole("menuitem").map((i) => i.textContent?.trim())).toEqual([
+      "Show in Explorer",
+      "Open Windows Terminal here",
+      "Open in VS Code",
+      "Close tab Ctrl+W",
+    ]);
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Show in Explorer" }));
+    expect(calls).toEqual([{ cmd: "reveal_path", args: { root: "C:/work/repo-0", path: null } }]);
+
+    await fireEvent.contextMenu(screen.getByRole("tab", { name: /repo-0/ }), { clientX: 5, clientY: 5 });
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Open in VS Code" }));
+    await vi.waitFor(() => expect(onerror).toHaveBeenCalledWith("VS Code isn't installed; pick another editor in Settings › Tools"));
+
+    await fireEvent.contextMenu(screen.getByRole("tab", { name: /repo-0/ }), { clientX: 5, clientY: 5 });
+    await fireEvent.click(screen.getByRole("menuitem", { name: /Close tab/ }));
+    expect(onclose).toHaveBeenCalledWith("C:/work/repo-0");
   });
 });

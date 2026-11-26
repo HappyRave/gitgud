@@ -1,5 +1,7 @@
 <script lang="ts">
+  import { launchItems } from "$lib/launch";
   import { pathKey } from "$lib/library/filter";
+  import ContextMenu, { type MenuItem } from "./ContextMenu.svelte";
   import LockIcon from "./LockIcon.svelte";
 
   export interface RepoTabInfo {
@@ -20,6 +22,7 @@
     onpalette,
     onshortcuts,
     onsettings,
+    onerror,
   }: {
     tabs: RepoTabInfo[];
     /** `null` when the always-first Library tab is active. */
@@ -31,7 +34,21 @@
     onpalette?: () => void;
     onshortcuts?: () => void;
     onsettings?: () => void;
+    /** A tab menu action failed (an editor that isn't installed…). */
+    onerror?: (message: string) => void;
   } = $props();
+
+  let menu = $state<{ x: number; y: number; items: MenuItem[] } | null>(null);
+
+  function openTabMenu(event: MouseEvent, tab: RepoTabInfo) {
+    event.preventDefault();
+    const fail = (message: string) => (onerror ? onerror(message) : console.error(message));
+    menu = {
+      x: event.clientX,
+      y: event.clientY,
+      items: [...launchItems(tab.path, null, fail), { label: "Close tab", hint: "Ctrl+W", run: () => onclose(tab.path) }],
+    };
+  }
 
   const VISIBLE_CAP = 8;
   let overflowOpen = $state(false);
@@ -104,6 +121,7 @@
             overflowOpen = false;
             onselect(tab.path);
           }}
+          oncontextmenu={(e) => openTabMenu(e, tab)}
         >
           {#if tab.dirtyCount > 0}
             <span class="dot" aria-label="{tab.dirtyCount} uncommitted"></span>
@@ -179,6 +197,10 @@
     <button type="button" class="bare quick" aria-label="Settings" title="Settings (Ctrl+,)" onclick={onsettings}>⚙</button>
   {/if}
 </nav>
+
+{#if menu}
+  <ContextMenu x={menu.x} y={menu.y} items={menu.items} onclose={() => (menu = null)} />
+{/if}
 
 <style>
   .tabs {

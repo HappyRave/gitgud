@@ -11,6 +11,8 @@
     configGetIdentity,
     configSetIdentity,
     hasCommitGraph,
+    launchTools,
+    type LaunchTools,
     lfsCacheStats,
     lfsPrune,
     recentTimings,
@@ -35,12 +37,19 @@
     type TextureMax,
     setDiffLayout,
     setOverlapNotify,
+    setEditor,
+    setTerminal,
+    EDITORS,
+    TERMINALS,
+    type EditorChoice,
+    type TerminalChoice,
     setTheme,
     toggleIgnoreWhitespace,
     type Density,
     type DiffLayout,
     type ThemeMode,
   } from "$lib/prefs.svelte";
+  import { EDITOR_NAME, TERMINAL_NAME } from "$lib/launch";
   import { modelCache, type ModelCacheStats } from "$lib/model/cache";
   import GitSettings from "./GitSettings.svelte";
 
@@ -250,7 +259,31 @@
     }
   }
 
+  let tools = $state<LaunchTools | null>(null);
+
+  /** " (not found)" after a terminal or editor this machine doesn't have. */
+  function installedNote(choice: TerminalChoice | EditorChoice): string {
+    if (!tools) {
+      return "";
+    }
+    const found: Partial<Record<TerminalChoice | EditorChoice, boolean>> = {
+      windowsTerminal: tools.windowsTerminal,
+      gitBash: tools.gitBash,
+      vsCode: tools.vsCode,
+      rider: tools.rider,
+      visualStudio: tools.visualStudio,
+    };
+    if (found[choice] !== false) {
+      return "";
+    }
+    return choice === "windowsTerminal" ? " (not found: PowerShell instead)" : " (not found)";
+  }
+
   onMount(() => {
+    launchTools().then(
+      (t) => (tools = t),
+      (err) => console.error("terminal & editor detection:", err),
+    );
     loadIdentity("global");
     toolDiagnostics().then(
       (d) => (diag = d),
@@ -332,6 +365,12 @@
           class="bare rail-btn"
           class:on={activeSection === "sec-radar"}
           onclick={() => jumpTo("sec-radar")}>Overlap radar</button
+        >
+        <button
+          type="button"
+          class="bare rail-btn"
+          class:on={activeSection === "sec-launch"}
+          onclick={() => jumpTo("sec-launch")}>Terminal &amp; editor</button
         >
         <button
           type="button"
@@ -489,6 +528,39 @@
               />
               <span>Windows notification when a file you're changing won't merge with the remote, while gitgud is in the background</span>
             </label>
+          </div>
+        </section>
+
+        <section id="sec-launch" class="sec">
+          <h3>Terminal &amp; editor</h3>
+          <div class="prefs">
+            <label>
+              <span>Open terminal with</span>
+              <select value={prefs.terminal} onchange={(e) => setTerminal(e.currentTarget.value as TerminalChoice)}>
+                {#each TERMINALS as t (t)}
+                  <option value={t}>{TERMINAL_NAME[t]}{installedNote(t)}</option>
+                {/each}
+              </select>
+            </label>
+            <label>
+              <span>Open in editor with</span>
+              <select value={prefs.editor} onchange={(e) => setEditor(e.currentTarget.value as EditorChoice)}>
+                {#each EDITORS as ed (ed)}
+                  <option value={ed}>{ed === "custom" ? "Another program…" : EDITOR_NAME[ed]}{installedNote(ed)}</option>
+                {/each}
+              </select>
+            </label>
+            {#if prefs.editor === "custom"}
+              <label>
+                <span>Program</span>
+                <input
+                  class="mono"
+                  value={prefs.editorProgram}
+                  placeholder="C:\Program Files\Notepad++\notepad++.exe"
+                  onchange={(e) => setEditor("custom", e.currentTarget.value)}
+                />
+              </label>
+            {/if}
           </div>
         </section>
 

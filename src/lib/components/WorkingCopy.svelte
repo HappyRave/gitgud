@@ -35,6 +35,7 @@
     pullAfterCommit = false,
     onpull,
     oncommitpull,
+    onlaunchfail,
     selected = $bindable(null),
     onstage,
     onunstage,
@@ -68,6 +69,8 @@
     onpull?: () => void;
     /** Arms a pull after the next commit and focuses the message. */
     oncommitpull?: () => void;
+    /** A file menu's Explorer / terminal / editor action failed. */
+    onlaunchfail?: (message: string) => void;
     /** The file whose diff is shown. */
     selected?: FileRef | null;
     onstage: (paths: string[]) => void;
@@ -241,6 +244,7 @@
       {lfsPatterns}
       {locksSupported}
       {overlap}
+      {onlaunchfail}
       {onstage}
       {onunstage}
       onselectfile={(path, side, mods) => applySelection(applyFileClick(fileOrder(status), currentSelection(), { path, side }, mods))}

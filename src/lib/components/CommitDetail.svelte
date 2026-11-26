@@ -11,6 +11,8 @@
     type UnityYamlDiff,
   } from "$lib/api";
   import { imageUrl, isImage } from "$lib/images";
+  import { launchItems } from "$lib/launch";
+  import ContextMenu, { type MenuItem } from "./ContextMenu.svelte";
   import { prefs, setPaneSize, toggleIgnoreWhitespace, viewModeFor } from "$lib/prefs.svelte";
   import { isUnityYaml } from "$lib/unity";
   import { viewerFor } from "$lib/viewers/route";
@@ -24,18 +26,34 @@
   let {
     repoId,
     commit,
+    root = null,
+    onlaunchfail,
     onhistory,
     onblame,
     onclose,
   }: {
     repoId: number;
     commit: string;
+    /** The work tree, for the file rows' Explorer / terminal / editor menu. */
+    root?: string | null;
+    onlaunchfail?: (message: string) => void;
     onhistory?: (path: string) => void;
     onblame?: (path: string, rev: string) => void;
     onclose: () => void;
   } = $props();
 
   const LETTER: Record<Change, string> = { added: "A", modified: "M", deleted: "D", typeChange: "T" };
+
+  let fileMenu = $state<{ x: number; y: number; items: MenuItem[] } | null>(null);
+
+  function openFileMenu(event: MouseEvent, path: string) {
+    if (!root) {
+      return;
+    }
+    event.preventDefault();
+    const fail = (m: string) => (onlaunchfail ? onlaunchfail(m) : console.error(m));
+    fileMenu = { x: event.clientX, y: event.clientY, items: launchItems(root, path, fail) };
+  }
 
   let detailEl = $state<HTMLElement | null>(null);
   let filesEl = $state<HTMLElement | null>(null);
@@ -215,7 +233,7 @@
       >
         {#each detail.files as f (f.path)}
           {@const cut = f.path.lastIndexOf("/") + 1}
-          <li>
+          <li oncontextmenu={(e) => openFileMenu(e, f.path)}>
             <button class="bare" class:current={f.path === file} aria-pressed={f.path === file} title={f.path} onclick={() => showFile(f.path)}>
               <span class="badge l-{LETTER[f.change]}">{LETTER[f.change]}</span><span class="fp"><span class="dir">{f.path.slice(0, cut)}</span>{f.path.slice(cut)}</span>
             </button>
@@ -270,6 +288,10 @@
     <p class="note">Loading…</p>
   {/if}
 </section>
+
+{#if fileMenu}
+  <ContextMenu x={fileMenu.x} y={fileMenu.y} items={fileMenu.items} onclose={() => (fileMenu = null)} />
+{/if}
 
 <style>
   .detail {

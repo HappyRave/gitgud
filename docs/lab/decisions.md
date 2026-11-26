@@ -3,6 +3,25 @@
 Verdicts from the lab rounds (`docs/lab/index.html`), newest first. Each entry: date, Max's words in
 quotes, what came with it, and what isn't applied yet. Feeds the decision log in `docs/spec.md`.
 
+## Open in Explorer, terminal and editor (2026-11-26)
+
+No lab round: menu entries, decided in chat. Brief (Max): "Open in Explorer & terminal next", from
+the gap list against other clients.
+
+- **Decided (2026-11-26):** the terminal is a setting, default Windows Terminal (its default
+  profile), PowerShell when `wt` isn't installed (Max: "Setting, default WT"). "Open in editor" is in
+  too, a setting with VS Code as default (Max: "Yes, setting, VS Code default"). Entries go on repos
+  (Library row, repo tab, Ctrl+K) and on a new right-click menu for file rows (working copy, commit,
+  compare) (Max: "Repo (Library, tab, Ctrl+K), File rows (new right-click)"). Not on sidebar
+  branches.
+- **Claude's picks while building (2026-11-27):** Git Bash and Command Prompt are also in the
+  terminal list; editors are VS Code, Rider, Visual Studio or any program (given the file, or the repo
+  folder). VS Code opens the repo folder at the file (`-g`); Visual Studio opens the file alone
+  (`/Edit`). "Copy path" joined the file menus. The repo tab got a right-click menu (it had none)
+  with "Close tab". A deleted file's editor entry is disabled.
+- **Built (2026-11-27):** all of it; not yet tried by hand in the real app (the tests never start a
+  window).
+
 ## R12 · Compare any two (2026-11-26)
 
 Brief (Max, 2026-11-26): "Compare any two", picked from the gap list against Fork, Sourcetree,

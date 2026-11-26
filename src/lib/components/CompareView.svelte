@@ -23,6 +23,8 @@
   import { age } from "$lib/time";
   import { isUnityYaml } from "$lib/unity";
   import { viewerFor } from "$lib/viewers/route";
+  import { launchItems } from "$lib/launch";
+  import ContextMenu, { type MenuItem } from "./ContextMenu.svelte";
   import DiffView from "./DiffView.svelte";
   import FilePreview from "./FilePreview.svelte";
   import LoadingBar from "./LoadingBar.svelte";
@@ -36,6 +38,8 @@
     b: initialB,
     mode: initialMode = null,
     currentBranch = null,
+    root = null,
+    onlaunchfail,
     busy = false,
     ontake,
     onclose,
@@ -47,6 +51,9 @@
     mode?: CompareMode | null;
     /** The checked-out branch: B is predicted as a merge into it when A is this branch. */
     currentBranch?: string | null;
+    /** The work tree, for the file rows' Explorer / terminal / editor menu. */
+    root?: string | null;
+    onlaunchfail?: (message: string) => void;
     busy?: boolean;
     /** "Take B's version of this file" (R12 Q3). */
     ontake: (rev: string, path: string) => void;
@@ -171,6 +178,17 @@
       loadRaw();
     }
   });
+
+  let fileMenu = $state<{ x: number; y: number; items: MenuItem[] } | null>(null);
+
+  function openFileMenu(event: MouseEvent, path: string) {
+    if (!root) {
+      return;
+    }
+    event.preventDefault();
+    const fail = (m: string) => (onlaunchfail ? onlaunchfail(m) : console.error(m));
+    fileMenu = { x: event.clientX, y: event.clientY, items: launchItems(root, path, fail) };
+  }
 
   function swap() {
     [a, b] = [b, a];
@@ -301,7 +319,7 @@
           {#if flat}
             {#each result.files.slice(0, FLAT_MAX) as f (f.path)}
               {@const cut = f.path.lastIndexOf("/") + 1}
-              <li>
+              <li oncontextmenu={(e) => openFileMenu(e, f.path)}>
                 <button type="button" class="row" class:current={f.path === file} aria-pressed={f.path === file} title={f.path} onclick={() => (file = f.path)}>
                   <span class="badge l-{LETTER[f.change]}">{LETTER[f.change]}</span><span class="p"
                     ><span class="dir">{f.path.slice(0, cut)}</span>{f.path.slice(cut)}</span
@@ -314,7 +332,7 @@
             {/if}
           {:else}
             {#each rows as r (r.kind + r.path)}
-              <li>
+              <li oncontextmenu={(e) => openFileMenu(e, r.path)}>
                 {#if r.kind === "dir"}
                   <button type="button" class="row" style:padding-left="{8 + r.depth * 14}px" aria-expanded={r.open} onclick={() => toggleFolder(r.path)}>
                     <span class="tw">{r.open ? "▾" : "▸"}</span><span class="p dirname">{r.name}</span><span class="cnt">{n(r.count)}</span>
@@ -391,6 +409,10 @@
     </div>
   {/if}
 </section>
+
+{#if fileMenu}
+  <ContextMenu x={fileMenu.x} y={fileMenu.y} items={fileMenu.items} onclose={() => (fileMenu = null)} />
+{/if}
 
 <style>
   .compare {

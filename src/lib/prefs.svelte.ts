@@ -17,6 +17,19 @@ const AUTO_3D_KEY = "gitgud.preview.auto3d";
 const TEXTURE_MAX_KEY = "gitgud.preview.textureMax";
 const SKIPPED_UPDATE_KEY = "gitgud.update.skipped";
 const OVERLAP_NOTIFY_KEY = "gitgud.overlap.notify";
+const TERMINAL_KEY = "gitgud.tools.terminal";
+const EDITOR_KEY = "gitgud.tools.editor";
+const EDITOR_PROGRAM_KEY = "gitgud.tools.editorProgram";
+
+export type TerminalChoice = "windowsTerminal" | "powerShell" | "gitBash" | "cmd";
+export const TERMINALS: readonly TerminalChoice[] = ["windowsTerminal", "powerShell", "gitBash", "cmd"];
+export type EditorChoice = "vsCode" | "rider" | "visualStudio" | "custom";
+export const EDITORS: readonly EditorChoice[] = ["vsCode", "rider", "visualStudio", "custom"];
+
+function readChoice<T extends string>(key: string, options: readonly T[], fallback: T): T {
+  const v = readStorage(key);
+  return options.find((o) => o === v) ?? fallback;
+}
 
 /** Largest texture side in 3D previews; 0 keeps textures at their native size. */
 export type TextureMax = 0 | 4096 | 2048 | 1024;
@@ -163,7 +176,25 @@ export const prefs = $state({
   skippedUpdate: readStorage(SKIPPED_UPDATE_KEY),
   /** The overlap radar's heads-up also shows as a Windows notification while gitgud is in the background (R11: on by default). */
   overlapNotify: readStorage(OVERLAP_NOTIFY_KEY) !== "0",
+  /** "Open terminal here" (Max, 2026-11-26: a setting, default Windows Terminal). */
+  terminal: readChoice(TERMINAL_KEY, TERMINALS, "windowsTerminal"),
+  /** "Open in editor" (Max, 2026-11-26: a setting, default VS Code). */
+  editor: readChoice(EDITOR_KEY, EDITORS, "vsCode"),
+  /** The program for the "custom" editor. */
+  editorProgram: readStorage(EDITOR_PROGRAM_KEY) ?? "",
 });
+
+export function setTerminal(t: TerminalChoice) {
+  prefs.terminal = t;
+  writeStorage(TERMINAL_KEY, t);
+}
+
+export function setEditor(e: EditorChoice, program = prefs.editorProgram) {
+  prefs.editor = e;
+  prefs.editorProgram = program;
+  writeStorage(EDITOR_KEY, e);
+  writeStorage(EDITOR_PROGRAM_KEY, program);
+}
 
 export function setOverlapNotify(on: boolean) {
   prefs.overlapNotify = on;

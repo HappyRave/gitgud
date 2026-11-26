@@ -1013,6 +1013,15 @@ export function installMock(scenario: string) {
       mockLib = { ...mockLib, repos: mockLib.repos.filter((r) => !removeIds.includes(r.id)), undoAction: "Rescan" };
       return mockLib;
     },
+    launch_tools: () => ({ windowsTerminal: true, gitBash: true, vsCode: true, rider: false, visualStudio: true }),
+    reveal_path: () => null,
+    open_terminal: () => null,
+    open_in_editor: ({ editor }) => {
+      if (editor.kind === "rider") {
+        throw "Rider isn't installed; pick another editor in Settings › Tools";
+      }
+      return null;
+    },
     compare: ({ a, b, mode }) => {
       const merged = b.kind === "rev" && b.rev === "hotfix/buoyancy" && mode === "brings";
       const files = merged

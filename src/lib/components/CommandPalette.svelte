@@ -38,6 +38,8 @@
     onoptimizegraph?: () => void;
     onlfsdownloads?: () => void;
     oncompare?: () => void;
+    /** Show in Explorer / Open terminal / Open in editor for the repo. */
+    launch?: { label: string; disabled?: boolean; run: () => void }[];
   }
 
   type BranchOp = "checkout" | "merge" | "rebase" | "delete";
@@ -98,6 +100,7 @@
         ...(repo.onoptimizegraph
           ? [{ id: "optimize-graph", label: "Optimize commit-graph cache", group: repo.repoName, git: "git commit-graph write", run: repo.onoptimizegraph }]
           : []),
+        ...(repo.launch ?? []).map((l, i) => ({ id: `launch-${i}`, label: l.label, group: repo.repoName, disabled: l.disabled, run: l.run })),
         ...(repo.oncompare
           ? [{ id: "compare", label: "Compare two branches, tags or commits…", group: repo.repoName, git: "git diff A...B", run: repo.oncompare }]
           : []),

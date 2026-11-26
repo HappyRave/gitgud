@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tick } from "svelte";
   import { SvelteSet } from "svelte/reactivity";
+  import { launchItems } from "$lib/launch";
   import {
     gitInfo,
     libraryCreateFolder,
@@ -171,6 +172,9 @@
       items.push({ label: "Open in tab", hint: "Enter", run: () => onopen(path) });
     } else {
       items.push({ label: "Locate…", run: () => onlocate(repoId) });
+    }
+    if (!missing) {
+      items.push(...launchItems(path, null, onerror));
     }
     items.push({ label: pinned ? "Unpin" : "Pin to top", run: () => mutate(() => libraryPinRepo(repoId, !pinned)) });
     items.push({ label: "Remove from gitgud", hint: "Del", run: () => mutate(() => libraryRemoveRepo(repoId)) });

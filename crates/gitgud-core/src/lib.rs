@@ -19,6 +19,7 @@ pub mod graph;
 pub mod history;
 pub mod image;
 mod job;
+pub mod launch;
 pub mod lfs;
 pub mod library;
 pub mod merge;

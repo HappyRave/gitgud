@@ -962,6 +962,20 @@ export interface LfsPlan {
   fetchedToRead: number;
 }
 
+/** The terminal "Open terminal here" starts. */
+export type Terminal = "windowsTerminal" | "powerShell" | "gitBash" | "cmd";
+/** The editor "Open in editor" starts. */
+export type Editor = { kind: "vsCode" } | { kind: "rider" } | { kind: "visualStudio" } | { kind: "custom"; program: string };
+
+/** Which terminals and editors this machine has. */
+export interface LaunchTools {
+  windowsTerminal: boolean;
+  gitBash: boolean;
+  vsCode: boolean;
+  rider: boolean;
+  visualStudio: boolean;
+}
+
 /** One side of a comparison (R12): a branch, tag, stash, commit id, or the working copy. */
 export type ComparePoint = { kind: "rev"; rev: string } | { kind: "worktree" };
 /** "brings": B against where A and B split; "snapshot": the two snapshots. */
@@ -1400,6 +1414,10 @@ export interface Commands {
   lfs_partial_plan: { args: { id: number; state: PartialState | null }; result: LfsPlan };
   lfs_partial_apply: { args: { id: number; state: PartialState | null }; result: LfsPlan };
   lfs_partial_download: { args: { id: number; paths: string[] }; result: LfsPlan };
+  launch_tools: { args: Record<string, never>; result: LaunchTools };
+  reveal_path: { args: { root: string; path: string | null }; result: null };
+  open_terminal: { args: { root: string; path: string | null; terminal: Terminal }; result: null };
+  open_in_editor: { args: { root: string; path: string | null; editor: Editor }; result: null };
   compare: { args: { id: number; a: ComparePoint; b: ComparePoint; mode: CompareMode }; result: Comparison };
   compare_file_diff: {
     args: { id: number; from: ComparePoint; to: ComparePoint; path: string; ignoreWhitespace?: boolean };
@@ -1785,6 +1803,14 @@ export const lfsPartialPlan = (id: number, state: PartialState | null) => call("
 export const lfsPartialApply = (id: number, state: PartialState | null) => call("lfs_partial_apply", { id, state });
 /** Downloads files or folders and keeps them in the partial repo's list. */
 export const lfsPartialDownload = (id: number, paths: string[]) => call("lfs_partial_download", { id, paths });
+export const launchTools = () => call("launch_tools", {});
+/** Explorer with repo-relative `path` selected (null: the repo folder). */
+export const revealPath = (root: string, path: string | null) => call("reveal_path", { root, path });
+/** A terminal in `path`'s folder (null: the repo folder). */
+export const openTerminal = (root: string, path: string | null, terminal: Terminal) =>
+  call("open_terminal", { root, path, terminal });
+export const openInEditor = (root: string, path: string | null, editor: Editor) =>
+  call("open_in_editor", { root, path, editor });
 /** Compares two points (R12 compare view). */
 export const compare = (id: number, a: ComparePoint, b: ComparePoint, mode: CompareMode) =>
   call("compare", { id, a, b, mode });

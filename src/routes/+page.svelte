@@ -370,6 +370,7 @@
     onpalette={() => (paletteOpen = true)}
     onshortcuts={() => (shortcutsOpen = true)}
     onsettings={() => (settingsOpen = true)}
+    onerror={(message) => (globalError = message)}
   />
 
   {#if globalError}

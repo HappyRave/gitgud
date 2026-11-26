@@ -162,6 +162,14 @@ describe("CompareView", () => {
     await vi.waitFor(() => expect(calls.filter((c) => c.cmd === "compare").at(-1)?.args).toMatchObject({ b: { kind: "rev", rev: "1a2b3c4" } }));
   });
 
+  it("right-click on a file row opens it in Explorer from the work tree", async () => {
+    const { calls } = setup({ reveal_path: () => null }, { root: "C:/work/repo" });
+    const tree = await screen.findByRole("list", { name: "Changed files" });
+    await fireEvent.contextMenu(within(tree).getByText("b.txt").closest("li")!);
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Show in Explorer" }));
+    await vi.waitFor(() => expect(calls.find((c) => c.cmd === "reveal_path")?.args).toEqual({ root: "C:/work/repo", path: "src/b.txt" }));
+  });
+
   it("shows git's refusal for a side that isn't a commit", async () => {
     setup({
       compare: () => {

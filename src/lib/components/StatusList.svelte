@@ -1,6 +1,8 @@
 <script lang="ts">
   import type { Change, Entry, Head, LfsLock, MetaIssue, Overlap, Side, Status } from "$lib/api";
+  import { launchItems } from "$lib/launch";
   import { overlapFor } from "$lib/overlap/radar";
+  import ContextMenu, { type MenuItem } from "./ContextMenu.svelte";
   import { fileKey, fileOrder, selectedPathsForSide } from "$lib/working";
   import LockIcon from "./LockIcon.svelte";
   import OverlapMark from "./OverlapMark.svelte";
@@ -16,6 +18,7 @@
     lfsPatterns = [],
     locksSupported = false,
     overlap = null,
+    onlaunchfail,
     onstage,
     onunstage,
     onselectfile,
@@ -38,6 +41,8 @@
     locksSupported?: boolean;
     /** Files also changed on the upstream (R11 overlap radar), marked on their rows. */
     overlap?: Overlap | null;
+    /** A file menu's Explorer / terminal / editor action failed. */
+    onlaunchfail?: (message: string) => void;
     onstage: (paths: string[]) => void;
     onunstage: (paths: string[]) => void;
     onselectfile?: (path: string, side: Side, mods?: { ctrl: boolean; shift: boolean }) => void;
@@ -51,6 +56,15 @@
   const LETTER: Record<Change, string> = { added: "A", modified: "M", deleted: "D", typeChange: "T" };
 
   const lockByPath = $derived(new Map(locks.map((l) => [l.path, l])));
+
+  let fileMenu = $state<{ x: number; y: number; items: MenuItem[] } | null>(null);
+
+  function openFileMenu(event: MouseEvent, entry: Entry) {
+    event.preventDefault();
+    const fail = (m: string) => (onlaunchfail ? onlaunchfail(m) : console.error(m));
+    const onDisk = entry.worktree !== "deleted" && !(entry.index === "deleted" && entry.worktree === null);
+    fileMenu = { x: event.clientX, y: event.clientY, items: launchItems(status.root, entry.path, fail, { onDisk }) };
+  }
 
   function isRowSelected(path: string, side: Side | null): boolean {
     if (!side) {
@@ -228,7 +242,7 @@
         {@const lfs = isLfsPath(entry.path)}
         {@const rowSelected = isRowSelected(entry.path, group.side)}
         {@const theirs = overlapFor(overlap, entry.path)}
-        <li class:selected={rowSelected} class:overlap-bad={theirs?.risk === "wontMerge"}>
+        <li class:selected={rowSelected} class:overlap-bad={theirs?.risk === "wontMerge"} oncontextmenu={(e) => openFileMenu(e, entry)}>
           <span class="badge l-{letter === '?' ? 'q' : letter === '!' ? 'x' : letter}">{letter}</span>
           {#if group.side && onselectfile}
             {@const side = group.side}
@@ -305,6 +319,10 @@
     </ul>
   {/each}
 </section>
+
+{#if fileMenu}
+  <ContextMenu x={fileMenu.x} y={fileMenu.y} items={fileMenu.items} onclose={() => (fileMenu = null)} />
+{/if}
 
 <style>
   .wc {

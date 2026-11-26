@@ -8,6 +8,8 @@ import {
   prefs,
   previewTexture,
   setAuto3dLimit,
+  setEditor,
+  setTerminal,
   setTextureMax,
   TEXTURE_MAX_DEFAULT,
 } from "$lib/prefs.svelte";
@@ -80,6 +82,35 @@ describe("SettingsModal", () => {
     expect(prefs.overlapNotify).toBe(true);
     expect(localStorage.getItem("gitgud.overlap.notify")).toBe("1");
     localStorage.removeItem("gitgud.overlap.notify");
+  });
+
+  it("picks the terminal and editor, says which aren't installed, and takes a custom program", async () => {
+    mockCommands({
+      config_get_identity: () => ({ userName: "Max", userEmail: "max@example.com" }),
+      tool_diagnostics: () => ({ gitPath: "C:/Git/git.exe", gitVersion: "2.56.1", lfsVersion: "git-lfs/3.6.0" }),
+      launch_tools: () => ({ windowsTerminal: false, gitBash: true, vsCode: true, rider: false, visualStudio: true }),
+    });
+    render(SettingsModal, { onclose: () => {} });
+    const terminal = (await screen.findByLabelText("Open terminal with")) as HTMLSelectElement;
+    await vi.waitFor(() =>
+      expect([...terminal.options].map((o) => o.textContent)).toEqual([
+        "Windows Terminal (not found: PowerShell instead)",
+        "PowerShell",
+        "Git Bash",
+        "Command Prompt",
+      ]),
+    );
+    const editor = screen.getByLabelText("Open in editor with") as HTMLSelectElement;
+    expect([...editor.options].map((o) => o.textContent)).toEqual(["VS Code", "Rider (not found)", "Visual Studio", "Another program…"]);
+
+    await fireEvent.change(terminal, { target: { value: "gitBash" } });
+    expect(prefs.terminal).toBe("gitBash");
+    await fireEvent.change(editor, { target: { value: "custom" } });
+    await fireEvent.change(await screen.findByLabelText("Program"), { target: { value: "C:\\npp\\notepad++.exe" } });
+    expect(prefs.editor).toBe("custom");
+    expect(localStorage.getItem("gitgud.tools.editorProgram")).toBe("C:\\npp\\notepad++.exe");
+    setTerminal("windowsTerminal");
+    setEditor("vsCode", "");
   });
 
   it("loads diagnostics and identity and saves repo-local or global config", async () => {
