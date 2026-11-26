@@ -27,7 +27,7 @@ function prefab(hp: string, speed: string, guid: string): string {
   ].join("\n");
 }
 
-test("unity repo setup, structural prefab diff, and R4-A property conflict merge", async (t) => {
+test("unity repo setup, structural prefab diff, and a prefab conflict merged by property", async (t) => {
   const repo = new TestRepo();
   t.after(() => repo.remove());
   const guid = "deadbeefdeadbeefdeadbeefdeadbeef";
@@ -78,9 +78,9 @@ test("unity repo setup, structural prefab diff, and R4-A property conflict merge
   await page.getByRole("menuitem", { name: "Merge feature into main…" }).click();
   await page.getByRole("dialog").getByRole("button", { name: /Merge/ }).click();
 
-  const tableSec = page.getByLabel("Unity property merge for Assets/Prefabs/Enemy.prefab");
+  const tableSec = page.getByLabel("Merge by property for Assets/Prefabs/Enemy.prefab");
   await tableSec.waitFor(WAIT);
-  await tableSec.getByRole("table", { name: "Property conflicts" }).getByText("hp", { exact: true }).waitFor(WAIT);
+  await tableSec.getByRole("table", { name: "Changes" }).getByText("hp", { exact: true }).waitFor(WAIT);
   await tableSec.getByRole("button", { name: /Pick all feature/ }).click();
   await page.keyboard.press("Control+Enter");
 
@@ -91,4 +91,69 @@ test("unity repo setup, structural prefab diff, and R4-A property conflict merge
   const merged = readFileSync(join(repo.path, "Assets/Prefabs/Enemy.prefab"), "utf8");
   assert.match(merged, /hp:\s*80/);
   assert.match(merged, /speed:\s*9/);
+});
+
+const LIGHTHOUSE = [
+  "%YAML 1.1",
+  "%TAG !u! tag:unity3d.com,2011:",
+  "--- !u!1 &100",
+  "GameObject:",
+  "  m_Component:",
+  "  - component: {fileID: 101}",
+  "  - component: {fileID: 102}",
+  "  m_Name: Lighthouse",
+  "--- !u!4 &101",
+  "Transform:",
+  "  m_GameObject: {fileID: 100}",
+  "  m_LocalPosition: {x: 0, y: 0, z: 0}",
+  "  m_Children: []",
+  "  m_Father: {fileID: 0}",
+  "--- !u!108 &102",
+  "Light:",
+  "  m_GameObject: {fileID: 100}",
+  "  m_Intensity: 1.2",
+  "  m_Range: 24",
+  "",
+].join("\n");
+
+test("an LFS scene conflict is merged by property and committed", async (t) => {
+  const repo = new TestRepo();
+  t.after(() => repo.remove());
+  repo.git("lfs", "install", "--local");
+  repo
+    .write(".gitattributes", "*.unity filter=lfs diff=lfs merge=lfs -text\n")
+    .write("ProjectSettings/ProjectVersion.txt", "m_EditorVersion: 6000.0.12f1\n")
+    .write("Assets/Level.unity", LIGHTHOUSE)
+    .commitAll("level");
+  repo.git("checkout", "-q", "-b", "lighting");
+  repo.write("Assets/Level.unity", LIGHTHOUSE.replace("m_Range: 24", "m_Range: 30")).commitAll("relight");
+  repo.git("checkout", "-q", "main");
+  repo.write("Assets/Level.unity", LIGHTHOUSE.replace("{x: 0, y: 0, z: 0}", "{x: 0, y: 0.35, z: 0}")).commitAll("raise");
+
+  const app = await launchApp({ GITGUD_OPEN: repo.path });
+  t.after(() => app.close());
+  const { page } = app;
+
+  await page.getByRole("region", { name: "Branches" }).getByRole("button", { name: /lighting/ }).click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Merge lighting into main…" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: /Merge/ }).click();
+
+  const offer = page.getByLabel("Merge by property", { exact: true });
+  await offer.getByText("1 only main").waitFor(WAIT);
+  await offer.getByText("0 clashes").waitFor(WAIT);
+  await page.keyboard.press("m");
+
+  const table = page.getByLabel("Merge by property for Assets/Level.unity");
+  await table.getByText("m_LocalPosition.y", { exact: true }).waitFor(WAIT);
+  await table.getByText("m_Range", { exact: true }).waitFor(WAIT);
+  await table.getByText("No broken references", { exact: false }).waitFor(WAIT);
+  await page.keyboard.press("Control+Enter");
+
+  const banner = page.getByRole("region", { name: "Merge in progress" });
+  await banner.getByRole("button", { name: "Commit merge" }).click();
+  await page.getByRole("status").getByText("Merge committed", { exact: false }).waitFor(WAIT);
+
+  const merged = readFileSync(join(repo.path, "Assets/Level.unity"), "utf8");
+  assert.equal(merged, LIGHTHOUSE.replace("{x: 0, y: 0, z: 0}", "{x: 0, y: 0.35, z: 0}").replace("m_Range: 24", "m_Range: 30"));
+  assert.match(repo.git("cat-file", "-p", "HEAD:Assets/Level.unity"), /^version https:\/\/git-lfs/);
 });

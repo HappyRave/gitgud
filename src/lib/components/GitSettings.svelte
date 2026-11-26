@@ -5,7 +5,6 @@
     gitConfigCompare,
     gitInstallSystem,
     gitInventory,
-    gitLatest,
     gitSetChoice,
     gitUpdateSystem,
     pickGitExe,
@@ -13,9 +12,9 @@
     type GitChoice,
     type GitInstall,
     type GitInventory,
-    type LatestGit,
     type RemoteCheck,
   } from "$lib/api";
+  import { checkLatestGit, gitRelease } from "$lib/gitLatest.svelte";
 
   let { activeRepoId = null }: { activeRepoId?: number | null } = $props();
 
@@ -30,8 +29,7 @@
   let inv = $state<GitInventory | null>(null);
   let error = $state<string | null>(null);
   let switching = $state<Mode | null>(null);
-  let latest = $state<LatestGit | null>(null);
-  let checkingLatest = $state(false);
+  const latest = $derived(gitRelease.latest);
   let confirmUpdate = $state(false);
   let updating = $state(false);
   let updateMsg = $state<string | null>(null);
@@ -81,17 +79,6 @@
     }
   }
 
-  async function checkLatest() {
-    checkingLatest = true;
-    error = null;
-    try {
-      latest = await gitLatest();
-    } catch (err) {
-      error = String(err);
-    } finally {
-      checkingLatest = false;
-    }
-  }
 
   async function updateSystem() {
     confirmUpdate = false;
@@ -182,11 +169,14 @@
     {:else}
       <p class="none">{missing}</p>
     {/if}
-    {#if title === "System"}
+    {#if title === "System" && !install}
       <div class="card-act">
-        {#if !install}
-          <button type="button" onclick={installSystem}>Install Git for Windows</button>
-        {:else if confirmUpdate}
+        <button type="button" onclick={installSystem}>Install Git for Windows</button>
+      </div>
+    {:else if title === "System" && behind}
+      <p class="note">New version: <b class="mono">{latest?.version}</b></p>
+      <div class="card-act">
+        {#if confirmUpdate}
           <span class="confirm">Runs Git for Windows' updater; open Git Bash windows close.</span>
           <button type="button" class="pri" onclick={updateSystem}>Update</button>
           <button type="button" onclick={() => (confirmUpdate = false)}>Cancel</button>
@@ -220,6 +210,7 @@
 </div>
 
 {#if error}<p class="err" role="alert">{error}</p>{/if}
+{#if gitRelease.error}<p class="err" role="alert">{gitRelease.error}</p>{/if}
 
 {#if inv}
   {#if inv.active}
@@ -243,8 +234,8 @@
   {#if updateMsg}<p class="ok">{updateMsg}</p>{/if}
 
   <div class="tools">
-    <button type="button" disabled={checkingLatest} onclick={checkLatest}
-      >{checkingLatest ? "Checking…" : "Check for updates"}</button
+    <button type="button" disabled={gitRelease.checking} onclick={() => checkLatestGit(true)}
+      >{gitRelease.checking ? "Checking…" : "Check for updates"}</button
     >
     {#if latest}<span class="muted">Latest Git for Windows: <b class="mono">{latest.version}</b></span>{/if}
     <button type="button" onclick={load}>Re-check</button>

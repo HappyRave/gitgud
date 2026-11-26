@@ -7,8 +7,8 @@
     type MergeSide,
     type MergeState,
     type UnityInfo,
+    type RowPick,
     type UnityIntegrityIssue,
-    type UnityPropertyPick,
   } from "$lib/api";
   import { groupByKind } from "$lib/merge/resolve";
   import { prefs, setPaneSize } from "$lib/prefs.svelte";
@@ -55,7 +55,7 @@
     /** Resolve to whether the write worked. */
     onresolvewith: (path: string, content: string, how: string) => Promise<boolean>;
     onresolveside: (path: string, side: MergeSide) => Promise<boolean>;
-    onresolveunity?: (path: string, picks: UnityPropertyPick[]) => Promise<boolean>;
+    onresolveunity?: (path: string, picks: RowPick[]) => Promise<boolean>;
     oncommit: () => void;
     onsetupSmartMerge?: () => void;
     onremergeUnity?: () => void;
@@ -83,6 +83,8 @@
   const rawYamlMode = new SvelteSet<string>();
   /** Unity YAML files that could not be parsed as property tables. */
   const unparseableUnity = new SvelteSet<string>();
+  /** LFS Unity YAML files the user chose to merge by property (R9). */
+  const propertyMode = new SvelteSet<string>();
 
   let postIssues = $state<UnityIntegrityIssue[] | null>(null);
   let postCheckedCount = $state(0);
@@ -147,7 +149,7 @@
     }
   }
 
-  async function withUnityPicks(path: string, picks: UnityPropertyPick[]) {
+  async function withUnityPicks(path: string, picks: RowPick[]) {
     if (onresolveunity && (await onresolveunity(path, picks))) {
       advance(path);
     }
@@ -295,7 +297,19 @@
         </div>
       {:else if selected}
         {#key selected.path}
-          {#if selected.kind === "binary" || sidePickOnly.has(selected.path)}
+          {#if selected.kind === "binary" && onresolveunity && propertyMode.has(selected.path)}
+            <UnityMergeTable
+              {repoId}
+              path={selected.path}
+              {revision}
+              yoursLabel={branch}
+              {theirsLabel}
+              {busy}
+              onresolve={(picks) => withUnityPicks(selected.path, picks)}
+              onback={() => propertyMode.delete(selected.path)}
+              onfallbacktext={() => propertyMode.delete(selected.path)}
+            />
+          {:else if selected.kind === "binary" || sidePickOnly.has(selected.path)}
             <SidePick
               {repoId}
               path={selected.path}
@@ -305,6 +319,9 @@
               {busy}
               lock={locks.find((l) => l.path === selected.path) ?? null}
               onpick={(side) => withSide(selected.path, side)}
+              onmergebyproperty={onresolveunity && isUnityYaml(selected.path)
+                ? () => propertyMode.add(selected.path)
+                : undefined}
             />
           {:else if selected.kind === "unityYaml" && onresolveunity && !rawYamlMode.has(selected.path) && !unparseableUnity.has(selected.path)}
             <UnityMergeTable

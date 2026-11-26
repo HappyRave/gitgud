@@ -32,6 +32,35 @@ fn diverged() -> (TestRepo, Session, u32) {
 }
 
 #[test]
+fn a_commit_without_a_branch_merges_by_its_id() {
+    let repo = TestRepo::init();
+    repo.write("a.txt", "a\n").commit_all("base");
+    repo.git(&["checkout", "-q", "-b", "other"]);
+    repo.write("b.txt", "b\n").commit_all("first on other");
+    let commit = head(&repo);
+    repo.write("b.txt", "b2\n").commit_all("second on other");
+    repo.git(&["checkout", "-q", "main"]);
+    repo.write("c.txt", "c\n").commit_all("yours");
+    let before = head(&repo);
+    let session = Session::default();
+    let id = session.open(repo.path()).unwrap().id;
+
+    let git = session.git().unwrap();
+    let r = session.get(id).unwrap().repo.clone();
+    assert!(r.predict_merge(&git, &commit).unwrap().is_empty());
+    session.merge(id, &commit).unwrap();
+
+    assert_eq!(
+        read(&repo, "b.txt").unwrap(),
+        "b\n",
+        "only up to that commit"
+    );
+    assert_eq!(repo.git(&["rev-parse", "HEAD^2"]).trim(), commit);
+    session.undo(id).unwrap();
+    assert_eq!(head(&repo), before);
+}
+
+#[test]
 fn a_clean_merge_commits_and_undo_takes_it_back() {
     let repo = TestRepo::init();
     repo.write("a.txt", "a\n").commit_all("base");

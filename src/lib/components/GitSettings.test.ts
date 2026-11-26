@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, within } from "@testing-library/svelte";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import type { GitChoice, GitInstall, GitInventory } from "$lib/api";
+import { gitRelease } from "$lib/gitLatest.svelte";
 import { mockCommands } from "$lib/test/ipc";
 import GitSettings from "./GitSettings.svelte";
 
@@ -41,6 +42,11 @@ function inventory(choice: GitChoice, over: Partial<GitInventory> = {}): GitInve
 const card = (name: string) => screen.getByLabelText(`${name} git`);
 
 describe("GitSettings", () => {
+  beforeEach(() => {
+    gitRelease.latest = null;
+    gitRelease.error = null;
+  });
+
   it("shows both gits side by side and marks the one in use", async () => {
     mockCommands({ git_inventory: () => inventory({ mode: "auto" }) });
     render(GitSettings, {});
@@ -113,12 +119,28 @@ describe("GitSettings", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Check for updates" }));
     expect(await within(card("System")).findByText("update available")).toBeInTheDocument();
     expect(within(card("Embedded")).queryByText("update available")).not.toBeInTheDocument();
+    expect(card("System")).toHaveTextContent("New version: 2.56.1.windows.1");
 
     await fireEvent.click(screen.getByRole("button", { name: "Update system git…" }));
     expect(calls.some((c) => c.cmd === "git_update_system")).toBe(false);
     expect(screen.getByText(/open Git Bash windows close/)).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "Update" }));
     expect(await screen.findByText(/installer is running/)).toBeInTheDocument();
+  });
+
+  it("offers no system update until a check finds one", async () => {
+    mockCommands({
+      git_inventory: () => inventory({ mode: "auto" }),
+      git_latest: () => ({ version: "2.55.0.windows.2", systemBehind: false, embeddedBehind: false }),
+    });
+    render(GitSettings, {});
+    await screen.findByText("2.55.0.windows.2");
+    expect(screen.queryByRole("button", { name: "Update system git…" })).not.toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Check for updates" }));
+    expect(await screen.findByText(/Latest Git for Windows/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Update system git…" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/New version/)).not.toBeInTheDocument();
   });
 
   it("checks the open repo's remote and compares config on demand", async () => {

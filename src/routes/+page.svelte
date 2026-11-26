@@ -33,6 +33,7 @@
   import UpdateDialog from "$lib/components/UpdateDialog.svelte";
   import { blockBrowserMenu } from "$lib/browserMenu";
   import { checkForUpdates, dismissOffer, skipOffer, updates } from "$lib/updates.svelte";
+  import { checkLatestGit } from "$lib/gitLatest.svelte";
   import {
     isCloseTabKey,
     isCommandPaletteKey,
@@ -326,6 +327,9 @@
   });
 
   let stopFetchMany: (() => void) | undefined;
+  // Git for Windows' version check waits until the window and the first repo have shown.
+  const GIT_CHECK_DELAY_MS = 3000;
+  let gitCheckTimer: ReturnType<typeof setTimeout> | undefined;
 
   onMount(async () => {
     stopFetchMany = await onFetchManyProgress((p) => (fetchingMany = p));
@@ -344,10 +348,12 @@
       activePath =
         savedActive && openTabs.some((t) => pathKey(t.path) === pathKey(savedActive)) ? savedActive : openTabs[0].path;
     }
+    gitCheckTimer = setTimeout(() => void checkLatestGit(false), GIT_CHECK_DELAY_MS);
   });
 
   onDestroy(() => {
     stopFetchMany?.();
+    clearTimeout(gitCheckTimer);
   });
 </script>
 

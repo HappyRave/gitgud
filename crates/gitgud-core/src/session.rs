@@ -11,7 +11,6 @@ use crate::ai::{self, AiProviderStatus};
 use crate::blame::{BlameLine, FileCommit};
 use crate::cli::GitCli;
 use crate::config;
-use crate::diff::is_binary;
 use crate::git;
 use crate::graph::{Graph, Row};
 use crate::history::{Action, HistoryPlan, PlanPrediction, Step};
@@ -28,10 +27,8 @@ use crate::stacks::BranchStack;
 use crate::tags::TagInfo;
 use crate::task::{Cancel, Progress};
 use crate::unity::{self, MetaIssue, UnityInfo};
-use crate::unity_yaml::{
-    self, UnityConflictTable, UnityIntegrityIssue, UnityPropertyPick, UnityRepoSetupStatus,
-    UnityYamlDiff,
-};
+use crate::unity_merge::{self, MergeCheck, MergeOffer, PropertyMerge, RowPick};
+use crate::unity_yaml::{self, UnityIntegrityIssue, UnityRepoSetupStatus, UnityYamlDiff};
 use crate::watch::RepoWatcher;
 use crate::worktree::LineSelect;
 
@@ -1740,58 +1737,66 @@ impl Session {
         unity_yaml::commit_unity_diff(&open.repo, commit, path)
     }
 
-    /// Builds an R4-A 3-way property conflict table for conflicted Unity YAML `path`.
+    /// Whether conflicted `path` can be merged by property, and what that would do (R9).
     ///
     /// # Errors
-    /// [`Error::UnknownRepo`] or [`Error::Refused`] when binary, deleted on one side, or non-Unity YAML.
-    pub fn unity_conflict_table(&self, id: u32, path: &str) -> Result<UnityConflictTable, Error> {
-        if !unity_yaml::is_unity_yaml_path(path) {
-            return Err(Error::Refused(format!("{path} is not a Unity YAML file")));
-        }
-        let open = self.get(id)?;
-        let [base, yours, theirs] = open.repo.stages(path)?;
-        let (Some(yours), Some(theirs)) = (yours, theirs) else {
-            return Err(Error::Refused(format!(
-                "{path} was deleted on one side: pick a side"
-            )));
-        };
-        let base = base.unwrap_or_default();
-        if is_binary(&yours) || is_binary(&theirs) || is_binary(&base) {
-            return Err(Error::Refused(format!("{path} is binary: pick a side")));
-        }
-        let b = String::from_utf8_lossy(&base);
-        let o = String::from_utf8_lossy(&yours);
-        let t = String::from_utf8_lossy(&theirs);
-        let guids = unity_yaml::repo_guid_index(&open.repo);
-        unity_yaml::build_conflict_table(path, &b, &o, &t, &guids)
+    /// [`Error::UnknownRepo`], or a read failure.
+    pub fn property_merge_offer(&self, id: u32, path: &str) -> Result<MergeOffer, Error> {
+        unity_merge::offer(&self.get(id)?.repo, path)
     }
 
-    /// Applies R4-A property picks on conflicted Unity YAML `path`, writes, stages, and records undoable resolve.
+    /// Every change in conflicted Unity YAML `path`, clashes first (R9's table).
     ///
     /// # Errors
-    /// [`Error::UnknownRepo`], [`Error::Refused`], or git write failure.
-    pub fn resolve_unity_conflict(
+    /// [`Error::Refused`] when it can't be merged by property.
+    pub fn property_merge(&self, id: u32, path: &str) -> Result<PropertyMerge, Error> {
+        unity_merge::conflict_merge(&self.get(id)?.repo, path)
+    }
+
+    /// Clashes left and integrity issues of `path` merged with `picks`, nothing written.
+    ///
+    /// # Errors
+    /// [`Error::Refused`] when it can't be merged by property or a pick is stale.
+    pub fn property_merge_check(
         &self,
         id: u32,
         path: &str,
-        picks: &[UnityPropertyPick],
+        picks: &[RowPick],
+    ) -> Result<MergeCheck, Error> {
+        let (merged, _) = unity_merge::conflict_merged(&self.get(id)?.repo, path, picks)?;
+        Ok(MergeCheck {
+            unresolved: merged.unresolved,
+            issues: merged.issues,
+        })
+    }
+
+    /// Writes `path` merged with `picks` and stages it (git's LFS filter stores it); undoable.
+    ///
+    /// # Errors
+    /// [`Error::Refused`] while a clash has no pick, or a write failure.
+    pub fn resolve_property_merge(
+        &self,
+        id: u32,
+        path: &str,
+        picks: &[RowPick],
     ) -> Result<Opened, Error> {
-        let open = self.get(id)?;
-        let [base, yours, theirs] = open.repo.stages(path)?;
-        let (Some(yours), Some(theirs)) = (yours, theirs) else {
+        let (merged, lfs) = unity_merge::conflict_merged(&self.get(id)?.repo, path, picks)?;
+        if merged.unresolved > 0 {
             return Err(Error::Refused(format!(
-                "{path} was deleted on one side: pick a side"
+                "{path}: {} clash{} still need{} a pick",
+                merged.unresolved,
+                if merged.unresolved == 1 { "" } else { "es" },
+                if merged.unresolved == 1 { "s" } else { "" },
             )));
-        };
-        let base = base.unwrap_or_default();
-        if is_binary(&yours) || is_binary(&theirs) || is_binary(&base) {
-            return Err(Error::Refused(format!("{path} is binary: pick a side")));
         }
-        let b = String::from_utf8_lossy(&base);
-        let o = String::from_utf8_lossy(&yours);
-        let t = String::from_utf8_lossy(&theirs);
-        let merged = unity_yaml::apply_unity_conflict_picks(&b, &o, &t, picks)?;
-        self.resolve_with(id, path, &merged, "property table")
+        if !lfs {
+            return self.resolve_with(id, path, &merged.text, "merged by property");
+        }
+        let action = format!("Resolve {path} (merged by property)");
+        let paths = [path.to_owned()];
+        self.write_destructive(id, &action, &paths, |repo, git| {
+            repo.resolve_with_worktree(git, path, &merged.text)
+        })
     }
 
     /// Runs post-merge Unity YAML integrity verification over `paths` in repo `id`.

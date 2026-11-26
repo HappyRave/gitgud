@@ -1,7 +1,7 @@
 use gitgud_core::repo::{self, Error};
 use gitgud_core::session::Session;
 use gitgud_core::testing::TestRepo;
-use gitgud_core::unity_yaml::UnityPropertyPick;
+use gitgud_core::unity_merge::{MergeOffer, PickChoice, RowPick, Source};
 use gitgud_core::unity_yaml::{UnityYamlDiff, commit_unity_diff, worktree_unity_diff};
 use gitgud_core::worktree::Side;
 
@@ -10,21 +10,22 @@ fn unity_yaml_structural_diff_property_merge_and_integrity_round_trip() {
     let repo = TestRepo::init();
     let guid = "deadbeefdeadbeefdeadbeefdeadbeef";
     let base = format!(
-        "%YAML 1.1\n\
---- !u!1 &1\n\
-GameObject:\n\
-  m_Name: Enemy\n\
---- !u!4 &2\n\
-Transform:\n\
-  m_GameObject: {{fileID: 1}}\n\
-  m_Father: {{fileID: 0}}\n\
-  m_LocalPosition: {{x: 0, y: 0, z: 0}}\n\
---- !u!114 &3\n\
-MonoBehaviour:\n\
-  m_GameObject: {{fileID: 1}}\n\
-  m_Script: {{fileID: 11500000, guid: {guid}, type: 3}}\n\
-  hp: 50\n\
-  speed: 4\n"
+        "%YAML 1.1
+--- !u!1 &1
+GameObject:
+  m_Name: Enemy
+--- !u!4 &2
+Transform:
+  m_GameObject: {{fileID: 1}}
+  m_Father: {{fileID: 0}}
+  m_LocalPosition: {{x: 0, y: 0, z: 0}}
+--- !u!114 &3
+MonoBehaviour:
+  m_GameObject: {{fileID: 1}}
+  m_Script: {{fileID: 11500000, guid: {guid}, type: 3}}
+  hp: 50
+  speed: 4
+"
     );
 
     repo.write(
@@ -86,24 +87,31 @@ MonoBehaviour:\n\
     session.merge(id, "feature").unwrap();
 
     let table = session
-        .unity_conflict_table(id, "Assets/Prefabs/Enemy.prefab")
+        .property_merge(id, "Assets/Prefabs/Enemy.prefab")
         .unwrap();
-    assert_eq!(table.conflicts.len(), 1);
-    assert_eq!(table.conflicts[0].property, "hp");
-    assert_eq!(table.auto_merged.len(), 1);
-    assert_eq!(table.auto_merged[0].property, "speed");
-    assert_eq!(table.auto_merged[0].side, "theirs");
+    let props: Vec<(&str, Source)> = table
+        .rows
+        .iter()
+        .map(|r| (r.property.as_str(), r.source))
+        .collect();
+    assert_eq!(props, [("hp", Source::Clash), ("speed", Source::Theirs)]);
+    assert_eq!(table.rows[0].component, "EnemyAI.cs");
 
+    let picks = [RowPick {
+        id: table.rows[0].id.clone(),
+        choice: PickChoice::Custom,
+        value: Some("90".into()),
+    }];
+    let check = session
+        .property_merge_check(id, "Assets/Prefabs/Enemy.prefab", &picks)
+        .unwrap();
+    assert_eq!(check.unresolved, 0);
+    assert!(matches!(
+        session.resolve_property_merge(id, "Assets/Prefabs/Enemy.prefab", &[]),
+        Err(Error::Refused(m)) if m.contains("1 clash still needs a pick")
+    ));
     session
-        .resolve_unity_conflict(
-            id,
-            "Assets/Prefabs/Enemy.prefab",
-            &[UnityPropertyPick {
-                file_id: "3".into(),
-                property: "hp".into(),
-                value: Some("90".into()),
-            }],
-        )
+        .resolve_property_merge(id, "Assets/Prefabs/Enemy.prefab", &picks)
         .unwrap();
 
     let issues = session
@@ -259,33 +267,38 @@ MonoBehaviour:
     session.merge(id, "theirs").unwrap();
 
     let table = session
-        .unity_conflict_table(id, "Assets/Scenes/BossArena.unity")
+        .property_merge(id, "Assets/Scenes/BossArena.unity")
         .unwrap();
-    assert_eq!(table.conflicts.len(), 1);
-    assert_eq!(table.conflicts[0].property, "tint");
+    let clashes: Vec<&str> = table
+        .rows
+        .iter()
+        .filter(|r| r.source == Source::Clash)
+        .map(|r| r.property.as_str())
+        .collect();
+    assert_eq!(clashes, ["tint.r", "tint.g", "tint.b"]);
+    assert!(table.rows.iter().any(|r| r.property == "m_LocalPosition.x"
+        && r.source == Source::Theirs
+        && r.object_path == "ArenaRoot / BossVariant"));
     assert!(
         table
-            .auto_merged
+            .rows
             .iter()
-            .any(|a| a.property == "override:m_LocalPosition.x" && a.side == "theirs")
-    );
-    assert!(
-        table
-            .auto_merged
-            .iter()
-            .any(|a| a.property == "m_Children[0]" && a.side == "yours")
+            .any(|r| r.property == "m_Children" && r.source == Source::Yours)
     );
 
+    let picks: Vec<RowPick> = table
+        .rows
+        .iter()
+        .filter(|r| r.source == Source::Clash)
+        .zip(["0.5", "0.5", "1"])
+        .map(|(r, v)| RowPick {
+            id: r.id.clone(),
+            choice: PickChoice::Custom,
+            value: Some(v.into()),
+        })
+        .collect();
     session
-        .resolve_unity_conflict(
-            id,
-            "Assets/Scenes/BossArena.unity",
-            &[UnityPropertyPick {
-                file_id: "300".into(),
-                property: "tint".into(),
-                value: Some("{r: 0.5, g: 0.5, b: 1, a: 1}".into()),
-            }],
-        )
+        .resolve_property_merge(id, "Assets/Scenes/BossArena.unity", &picks)
         .unwrap();
 
     let issues = session
@@ -391,4 +404,131 @@ fn the_guid_index_is_reused_until_the_repo_refreshes() {
 
     session.refresh(id).unwrap();
     assert_eq!(component(), "New.cs");
+}
+
+const LIGHTHOUSE: &str = "%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!1 &100
+GameObject:
+  m_Component:
+  - component: {fileID: 101}
+  - component: {fileID: 102}
+  m_Name: Lighthouse
+--- !u!4 &101
+Transform:
+  m_GameObject: {fileID: 100}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_Children: []
+  m_Father: {fileID: 0}
+--- !u!108 &102
+Light:
+  m_GameObject: {fileID: 100}
+  m_Intensity: 1.2
+  m_Range: 24
+";
+
+/// A repo whose scenes go through git-lfs's real filter, conflicted on `Level.unity`.
+fn lfs_scene_conflict(ours: &str, theirs: &str) -> (TestRepo, Session, u32) {
+    let repo = TestRepo::init();
+    repo.git(&["lfs", "install", "--local"]);
+    repo.write(
+        ".gitattributes",
+        "*.unity filter=lfs diff=lfs merge=lfs -text\n",
+    )
+    .write("Assets/Level.unity", LIGHTHOUSE)
+    .commit_all("level");
+    repo.git(&["checkout", "-q", "-b", "lighting"]);
+    repo.write("Assets/Level.unity", theirs)
+        .commit_all("relight");
+    repo.git(&["checkout", "-q", "main"]);
+    repo.write("Assets/Level.unity", ours).commit_all("move");
+    let session = Session::default();
+    let id = session.open(repo.path()).unwrap().id;
+    session.merge(id, "lighting").unwrap();
+    (repo, session, id)
+}
+
+#[test]
+fn an_lfs_scene_changed_on_both_sides_merges_by_property() {
+    let ours = LIGHTHOUSE.replace("{x: 0, y: 0, z: 0}", "{x: 0, y: 0.35, z: 0}");
+    let theirs = LIGHTHOUSE.replace("m_Range: 24", "m_Range: 30");
+    let (repo, session, id) = lfs_scene_conflict(&ours, &theirs);
+    let path = "Assets/Level.unity";
+    let conflict = &session.merge_state(id).unwrap().unwrap().conflicts[0];
+    assert_eq!(conflict.kind, gitgud_core::merge::ConflictKind::Binary);
+
+    assert_eq!(
+        session.property_merge_offer(id, path).unwrap(),
+        MergeOffer::Ready {
+            yours: 1,
+            theirs: 1,
+            clashes: 0,
+            objects: 0
+        }
+    );
+    session.resolve_property_merge(id, path, &[]).unwrap();
+
+    let want = ours.replace("m_Range: 24", "m_Range: 30");
+    assert_eq!(
+        std::fs::read_to_string(repo.path().join(path)).unwrap(),
+        want
+    );
+    let staged = repo.git(&["cat-file", "-p", &format!(":{path}")]);
+    assert!(
+        staged.starts_with("version https://git-lfs.github.com/spec/v1"),
+        "{staged}"
+    );
+    assert!(
+        repo.git(&["status", "--porcelain"])
+            .trim()
+            .starts_with("M  Assets/Level.unity")
+    );
+
+    session.undo(id).unwrap();
+    assert!(!session.merge_state(id).unwrap().unwrap().conflicts[0].resolved);
+}
+
+#[test]
+fn a_missing_lfs_version_is_named_for_fetching() {
+    let ours = LIGHTHOUSE.replace("m_Intensity: 1.2", "m_Intensity: 1.6");
+    let theirs = LIGHTHOUSE.replace("m_Range: 24", "m_Range: 30");
+    let (repo, session, id) = lfs_scene_conflict(&ours, &theirs);
+    let theirs_oid = repo.git(&["cat-file", "-p", ":3:Assets/Level.unity"]);
+    let oid = theirs_oid
+        .lines()
+        .find_map(|l| l.strip_prefix("oid sha256:"))
+        .unwrap()
+        .to_owned();
+    let object = repo
+        .path()
+        .join(".git/lfs/objects")
+        .join(&oid[..2])
+        .join(&oid[2..4])
+        .join(&oid);
+    std::fs::remove_file(object).unwrap();
+
+    let MergeOffer::NeedsFetch { missing } = session
+        .property_merge_offer(id, "Assets/Level.unity")
+        .unwrap()
+    else {
+        panic!("expected NeedsFetch");
+    };
+    assert_eq!(missing.len(), 1);
+    assert_eq!(
+        (missing[0].side.as_str(), missing[0].oid.as_str()),
+        ("theirs", oid.as_str())
+    );
+}
+
+#[test]
+fn a_binary_serialized_side_is_not_offered() {
+    let ours = LIGHTHOUSE.replace("m_Range: 24", "m_Range: 30");
+    let (_repo, session, id) = lfs_scene_conflict(&ours, "\u{0}\u{1}binary scene");
+    let offer = session
+        .property_merge_offer(id, "Assets/Level.unity")
+        .unwrap();
+    assert!(
+        matches!(&offer, MergeOffer::Unavailable { reason } if reason.contains("binary")),
+        "{offer:?}"
+    );
 }

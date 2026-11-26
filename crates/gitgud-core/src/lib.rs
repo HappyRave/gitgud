@@ -41,6 +41,7 @@ pub mod task;
 #[cfg(any(test, feature = "test-util"))]
 pub mod testing;
 pub mod unity;
+pub mod unity_merge;
 pub mod unity_yaml;
 pub mod video;
 pub mod watch;

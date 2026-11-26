@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, within } from "@testing-library/svelte";
 import { emit } from "@tauri-apps/api/event";
 import { describe, expect, it, vi } from "vitest";
-import type { Commands, MergeState, ProposalSummary, RebaseState, Row, SequencerState, Status } from "$lib/api";
+import type { Commands, MergeRow, MergeState, ProposalSummary, RebaseState, Row, SequencerState, Status } from "$lib/api";
 import { prefs } from "$lib/prefs.svelte";
 import { mockCommands } from "$lib/test/ipc";
 import Page from "./+page.svelte";
@@ -27,6 +27,25 @@ const ROW: Row = {
 
 type Handlers = Parameters<typeof mockCommands>[0];
 
+function mergeRow(over: Partial<MergeRow> & Pick<MergeRow, "id" | "source">): MergeRow {
+  return {
+    kind: "value",
+    fileId: over.id.split("/")[0],
+    objectPath: "Ship / Engine",
+    component: "Thruster.cs",
+    property: "speed",
+    base: null,
+    yours: null,
+    theirs: null,
+    yoursRaw: null,
+    theirsRaw: null,
+    editable: true,
+    yoursDetail: [],
+    theirsDetail: [],
+    ...over,
+  };
+}
+
 /** A working app: git found, repos open with ids counting up from 1. */
 function app(extra: Handlers = {}) {
   let next = 1;
@@ -44,6 +63,7 @@ function app(extra: Handlers = {}) {
     repo_caches: ({ roots }) => roots.map((root) => ({ root, previewBytes: 0, previewModels: 0, previewTextures: 0, unityBytes: 0, metaFiles: 0 })),
     launch_path: () => null,
     update_check: () => null,
+    git_latest: () => ({ version: "2.55.0.windows.2", systemBehind: false, embeddedBehind: false }),
     open_repo: ({ path }: Commands["open_repo"]["args"]) => ({ id: next++, root: path, rows: 1, graphVersion: 0 }),
     repo_status: () => STATUS,
     merge_state: () => null,
@@ -131,10 +151,12 @@ function app(extra: Handlers = {}) {
     write_commit_graph: () => null,
     worktree_unity_diff: () => ({ path: "", addedObjects: 0, removedObjects: 0, modifiedProperties: 0, objects: [] }),
     commit_unity_diff: () => ({ path: "", addedObjects: 0, removedObjects: 0, modifiedProperties: 0, objects: [] }),
-    unity_conflict_table: () => {
+    property_merge_offer: () => ({ kind: "unavailable", reason: "it isn't a Unity YAML file" }),
+    property_merge: () => {
       throw "not valid multi-document Unity YAML";
     },
-    resolve_unity_conflict: () => ({ id: 1, root: "C:/work/repo", rows: 1, graphVersion: 0 }),
+    property_merge_check: () => ({ unresolved: 0, issues: [] }),
+    resolve_property_merge: () => ({ id: 1, root: "C:/work/repo", rows: 1, graphVersion: 0 }),
     unity_post_merge_check: () => [],
     unity_repo_setup_status: () => ({
       isUnity: false,
@@ -288,6 +310,20 @@ describe("updates", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Skip this version" }));
     expect(screen.queryByRole("heading", { name: "gitgud 0.2.0 is out" })).toBeNull();
     expect(prefs.skippedUpdate).toBe("0.2.0");
+  });
+
+  it("checks Git for Windows only once the app has shown", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const calls = app();
+      render(Page);
+      await vi.waitFor(() => expect(calls.some((c) => c.cmd === "library_load")).toBe(true));
+      expect(calls.some((c) => c.cmd === "git_latest")).toBe(false);
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(calls.some((c) => c.cmd === "git_latest")).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -1966,6 +2002,53 @@ describe("start page: Milestone 1 workflows", () => {
     expect(calls.find((c) => c.cmd === "sequencer_step")?.args).toEqual({ id: 1, step: "continue" });
   });
 
+  it("merges a branch or a commit from the history into the current branch", async () => {
+    const SIDE: Row = {
+      ...ROW,
+      id: "b".repeat(40),
+      shortId: "bbbbbbb",
+      subject: "side commit",
+      labels: [
+        { kind: "branch", name: "other", current: false },
+        { kind: "remote", name: "origin/other" },
+      ],
+    };
+    const calls = repo({
+      open_repo: () => ({ ...OPENED, rows: 3 }),
+      graph_rows: () => [TIP, SIDE, BASE],
+      predict_merge: () => [],
+      merge: () => ({ ...OPENED, rows: 3, graphVersion: 1 }),
+    });
+    render(Page);
+    const commits = await screen.findByRole("listbox", { name: "Commits" });
+    const menuOn = async (subject: string) =>
+      fireEvent.contextMenu(await within(screen.getByRole("listbox", { name: "Commits" })).findByText(subject), {
+        clientX: 5,
+        clientY: 5,
+      });
+
+    await fireEvent.contextMenu(await within(commits).findByText("tip commit"), { clientX: 5, clientY: 5 });
+    expect(screen.getByRole("menuitem", { name: "Merge commit ccccccc into main…" })).toBeDisabled();
+    await fireEvent.keyDown(window, { key: "Escape" });
+
+    await menuOn("side commit");
+    expect(screen.getByRole("menuitem", { name: "Merge origin/other into main…" })).toBeEnabled();
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Merge other into main…" }));
+    const dlg = await screen.findByRole("dialog", { name: "Merge other into main" });
+    await within(dlg).findByText(/No conflicts expected/);
+    await fireEvent.click(within(dlg).getByRole("button", { name: /Merge/ }));
+    await vi.waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Merged other into main"));
+    expect(calls.filter((c) => c.cmd === "merge").map((c) => c.args)).toEqual([{ id: 1, branch: "other" }]);
+
+    await menuOn("base commit");
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Merge commit aaaaaaa into main…" }));
+    const commitDlg = await screen.findByRole("dialog", { name: "Merge commit aaaaaaa into main" });
+    await within(commitDlg).findByText(/No conflicts expected/);
+    await fireEvent.click(within(commitDlg).getByRole("button", { name: /Merge/ }));
+    await vi.waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Merged commit aaaaaaa into main"));
+    expect(calls.filter((c) => c.cmd === "merge").at(-1)?.args).toEqual({ id: 1, branch: BASE.id });
+  });
+
   it("saves a stash, inspects it in StashDetail, and pops/applies/drops it", async () => {
     const STASH = {
       index: 0,
@@ -2704,7 +2787,7 @@ describe("Unity, LFS locks, Smart Merge verify, and open-editor guard", () => {
     });
   });
 
-  it("resolves a Unity YAML conflict via R4-A property table and shows post-merge check", async () => {
+  it("resolves a Unity YAML conflict by property and shows the post-merge check", async () => {
     let resolved = false;
     const calls = app({
       launch_path: () => "C:/work/unity",
@@ -2713,26 +2796,18 @@ describe("Unity, LFS locks, Smart Merge verify, and open-editor guard", () => {
         message: "Merge feature",
         conflicts: [{ path: "Assets/Ship.prefab", kind: "unityYaml", resolved }],
       }),
-      unity_conflict_table: ({ path }) => ({
+      property_merge: ({ path }) => ({
         path,
-        conflicts: [
-          {
-            id: "12::speed",
-            fileId: "12",
-            objectPath: "Ship / Engine",
-            component: "Thruster.cs",
-            property: "speed",
-            base: "10",
-            yours: "15",
-            theirs: "22",
-            baseDisplay: "10",
-            yoursDisplay: "15",
-            theirsDisplay: "22",
-          },
+        yours: 0,
+        theirs: 1,
+        clashes: 1,
+        objects: 0,
+        rows: [
+          mergeRow({ id: "12/speed", source: "clash", base: "10", yours: "15", theirs: "22" }),
+          mergeRow({ id: "11/m_LocalPosition.x", source: "theirs", property: "m_LocalPosition.x", base: "0", yours: "0", theirs: "4" }),
         ],
-        autoMerged: [],
       }),
-      resolve_unity_conflict: () => {
+      resolve_property_merge: () => {
         resolved = true;
         return { id: 1, root: "C:/work/unity", rows: 1, graphVersion: 0 };
       },
@@ -2740,16 +2815,61 @@ describe("Unity, LFS locks, Smart Merge verify, and open-editor guard", () => {
     });
     render(Page);
 
-    expect(await screen.findByText("Ship / Engine")).toBeInTheDocument();
+    expect(await screen.findAllByText("Ship / Engine")).toHaveLength(2);
+    const save = screen.getByRole("button", { name: /Save & mark resolved/ });
+    expect(save).toBeDisabled();
     await fireEvent.keyDown(window, { key: "1" });
-    await fireEvent.click(screen.getByRole("button", { name: /Save & stage/ }));
+    await fireEvent.click(save);
 
-    expect(calls.find((c) => c.cmd === "resolve_unity_conflict")?.args).toEqual({
+    expect(calls.find((c) => c.cmd === "resolve_property_merge")?.args).toEqual({
       id: 1,
       path: "Assets/Ship.prefab",
-      picks: [{ fileId: "12", property: "speed", value: "15" }],
+      picks: [{ id: "12/speed", choice: "yours", value: null }],
     });
     expect(await screen.findByText(/Post-merge check passed/)).toBeInTheDocument();
+  });
+
+  it("offers an LFS scene conflict for merging by property and resolves it", async () => {
+    let resolved = false;
+    const path = "Assets/Level.unity";
+    const calls = app({
+      launch_path: () => "C:/work/unity",
+      merge_state: () => ({
+        theirs: "lighting",
+        message: "Merge lighting",
+        conflicts: [{ path, kind: "binary", resolved }],
+      }),
+      conflict_sides: () => ({
+        yours: { size: 900, lfs: true, oid: "a".repeat(64), hydrated: true },
+        theirs: { size: 910, lfs: true, oid: "b".repeat(64), hydrated: true },
+      }),
+      property_merge_offer: () => ({ kind: "ready", yours: 1, theirs: 1, clashes: 0, objects: 0 }),
+      property_merge: () => ({
+        path,
+        yours: 1,
+        theirs: 1,
+        clashes: 0,
+        objects: 0,
+        rows: [
+          mergeRow({ id: "1/m_LocalPosition.y", source: "yours", objectPath: "Island", component: "Transform", property: "m_LocalPosition.y", base: "0", yours: "0.35", theirs: "0" }),
+          mergeRow({ id: "2/m_Range", source: "theirs", objectPath: "Lighthouse", component: "Light", property: "m_Range", base: "24", yours: "24", theirs: "30" }),
+        ],
+      }),
+      resolve_property_merge: () => {
+        resolved = true;
+        return { id: 1, root: "C:/work/unity", rows: 1, graphVersion: 0 };
+      },
+    });
+    render(Page);
+
+    expect(await screen.findByText(/they can be merged property by property/)).toBeInTheDocument();
+    expect(screen.getByText("1 only main")).toBeInTheDocument();
+    await fireEvent.keyDown(window, { key: "m" });
+
+    expect(await screen.findByText("Lighthouse")).toBeInTheDocument();
+    expect(screen.getByText(/Changed on one side · applied · 2/)).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: /Save & mark resolved/ }));
+    expect(calls.find((c) => c.cmd === "resolve_property_merge")?.args).toEqual({ id: 1, path, picks: [] });
   });
 
   it("reviews an agent proposal from the sidebar inbox: requests changes, edits message, and approves", async () => {

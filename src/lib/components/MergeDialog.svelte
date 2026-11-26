@@ -5,14 +5,17 @@
   let {
     repoId,
     branch,
+    label = branch,
     into,
     dirty = false,
     onmerge,
     oncancel,
   }: {
     repoId: number;
-    /** The branch to merge in. */
+    /** The branch (or commit id) to merge in. */
     branch: string;
+    /** How the title names it, when not by `branch`. */
+    label?: string;
     /** The current branch. */
     into: string;
     /** Uncommitted changes in the working copy. */
@@ -45,7 +48,7 @@
 
 <div class="overlay" role="presentation" onclick={(e) => e.target === e.currentTarget && oncancel()}>
   <div class="dlg" role="dialog" aria-modal="true" aria-labelledby="merge-title">
-    <h2 id="merge-title">Merge <b>{branch}</b> into <b>{into}</b></h2>
+    <h2 id="merge-title">Merge <b>{label}</b> into <b>{into}</b></h2>
     <div class="pred" aria-live="polite">
       {#if error}
         <p role="alert">{error}</p>

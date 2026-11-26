@@ -1,5 +1,15 @@
 <script lang="ts">
-  import { conflictSides, lfsFetchObject, type ConflictSides, type LfsLock, type MergeSide, type SideInfo } from "$lib/api";
+  import {
+    conflictSides,
+    lfsFetchObject,
+    propertyMergeOffer,
+    type ConflictSides,
+    type LfsLock,
+    type MergeOffer,
+    type MergeSide,
+    type SideInfo,
+  } from "$lib/api";
+  import { inTextField } from "$lib/keys";
   import { formatSizeDelta, imageFormatLabel, imageUrl, isImage } from "$lib/images";
   import { sideKey } from "$lib/keys";
   import { formatSize } from "$lib/merge/resolve";
@@ -17,6 +27,7 @@
     busy = false,
     lock = null,
     onpick,
+    onmergebyproperty,
   }: {
     repoId: number;
     path: string;
@@ -26,7 +37,57 @@
     busy?: boolean;
     lock?: LfsLock | null;
     onpick: (side: MergeSide) => void;
+    /** Unity YAML: offered when all three versions can be merged by property (R9). */
+    onmergebyproperty?: () => void;
   } = $props();
+
+  let offer = $state<MergeOffer | null>(null);
+  let offerError = $state<string | null>(null);
+  let fetchingOffer = $state(false);
+
+  function loadOffer() {
+    const key = `${repoId}:${path}:${revision}`;
+    offerError = null;
+    propertyMergeOffer(repoId, path).then(
+      (o) => {
+        if (key === `${repoId}:${path}:${revision}`) {
+          offer = o;
+        }
+      },
+      (err) => {
+        if (key === `${repoId}:${path}:${revision}`) {
+          offerError = String(err);
+        }
+      },
+    );
+  }
+
+  $effect(() => {
+    offer = null;
+    if (onmergebyproperty) {
+      loadOffer();
+    }
+  });
+
+  async function fetchForMerge(missing: { oid: string; size: number }[]) {
+    if (fetchingOffer) {
+      return;
+    }
+    fetchingOffer = true;
+    offerError = null;
+    try {
+      for (const m of missing) {
+        await lfsFetchObject(repoId, m.oid, m.size, path);
+      }
+      loadOffer();
+    } catch (err) {
+      offerError = String(err);
+    } finally {
+      fetchingOffer = false;
+    }
+  }
+
+  const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
   let sides = $state<ConflictSides | null>(null);
   let error = $state<string | null>(null);
@@ -61,6 +122,20 @@
   const theirsDelta = $derived(formatSizeDelta(sides?.yours?.size, sides?.theirs?.size));
 
   function onKeydown(event: KeyboardEvent) {
+    if (
+      (event.key === "m" || event.key === "M") &&
+      offer?.kind === "ready" &&
+      onmergebyproperty &&
+      !busy &&
+      !event.ctrlKey &&
+      !event.altKey &&
+      !event.metaKey &&
+      !inTextField(event.target)
+    ) {
+      event.preventDefault();
+      onmergebyproperty();
+      return;
+    }
     const side = sideKey(event);
     if (side && sides && !busy) {
       event.preventDefault();
@@ -114,6 +189,40 @@
       </span>
     {/if}
   </div>
+  {#if onmergebyproperty}
+    <div class="offer" aria-label="Merge by property">
+      {#if offerError}
+        <span class="ferr" role="alert">{offerError}</span>
+      {:else if !offer}
+        <span class="muted">Reading both versions to see if they can be merged by property…</span>
+      {:else if offer.kind === "ready"}
+        <b>Both versions are Unity text YAML: they can be merged property by property.</b>
+        <span class="counts">
+          <span class="chip yours">{offer.yours} only {yoursLabel}</span>
+          <span class="chip theirs">{offer.theirs} only {theirsLabel}</span>
+          <span class="chip clash">{plural(offer.clashes, "clash", "clashes")}</span>
+          {#if offer.objects > 0}<span class="chip">{plural(offer.objects, "object")} added or deleted</span>{/if}
+        </span>
+        <span class="acts">
+          <button type="button" class="pri" disabled={busy} onclick={onmergebyproperty}>
+            Merge by property… <span class="k">M</span>
+          </button>
+          <span class="muted">Opens the review. Nothing is written until you save.</span>
+        </span>
+      {:else if offer.kind === "needsFetch"}
+        {@const total = offer.missing.reduce((n, m) => n + m.size, 0)}
+        <b>Merge by property needs {offer.missing.map((m) => (m.side === "base" ? "the common version" : m.side === "yours" ? yoursLabel : theirsLabel)).join(" and ")}, not downloaded from LFS yet.</b>
+        <span class="acts">
+          <button type="button" class="pri" disabled={busy || fetchingOffer} onclick={() => offer?.kind === "needsFetch" && fetchForMerge(offer.missing)}>
+            {fetchingOffer ? "Fetching…" : `Fetch ${offer.missing.length === 1 ? "it" : "them"} (${formatSize(total)})`}
+          </button>
+          <span class="muted">Then gitgud counts the changes.</span>
+        </span>
+      {:else}
+        <span class="muted">Can't merge by property: {offer.reason}.</span>
+      {/if}
+    </div>
+  {/if}
   {#if error}
     <p role="alert" class="pad">{error}</p>
   {:else if sides}
@@ -198,6 +307,46 @@
 </section>
 
 <style>
+  .offer {
+    display: grid;
+    gap: 6px;
+    margin: 10px 10px 0;
+    padding: 10px 12px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--panel);
+    font-size: 12px;
+    flex: none;
+  }
+  .offer .counts,
+  .offer .acts {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+  }
+  .offer .muted {
+    color: var(--muted);
+  }
+  .chip {
+    font: 600 10px var(--mono);
+    padding: 1px 7px;
+    border-radius: 9px;
+    background: var(--hover);
+    color: var(--muted);
+  }
+  .chip.yours {
+    background: var(--yours-bg);
+    color: var(--yours);
+  }
+  .chip.theirs {
+    background: var(--theirs-bg);
+    color: var(--theirs);
+  }
+  .chip.clash {
+    background: var(--bad);
+    color: var(--bad-ink);
+  }
   .pick {
     display: flex;
     flex-direction: column;

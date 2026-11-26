@@ -1,0 +1,415 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gitgud Lab · R9 merge by property</title>
+<style>
+:root {
+  --bg: #f4f5f8; --panel: #ffffff; --line: #dde1e8; --fg: #18202c; --muted: #5a6577;
+  --accent: #e0561f; --pick: #efe6ff; --pick-ink: #5b2fa6; --open: #fff1d6; --open-ink: #8a5a00;
+  /* the app's dark tokens (src/app.css) */
+  --a-bg: #14181f; --a-panel: #1a1f28; --a-line: #2a313c; --a-fg: #dde2ea; --a-muted: #8b95a5; --a-hover: #20262f;
+  --a-sel: #22324b; --a-warn: #3a2b12; --a-warn-ink: #f2c46a; --a-bad: #3d1f1a; --a-bad-ink: #ff9d80;
+  --a-add: #173326; --a-add-ink: #7fd9a6; --a-del: #3a1f1c;
+  --yours: #56b4e9; --theirs: #ff8c42;
+  --yours-bg: color-mix(in srgb, #56b4e9 14%, #1a1f28); --theirs-bg: color-mix(in srgb, #ff8c42 14%, #1a1f28);
+  --body: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --mono: "Cascadia Mono", Consolas, "Courier New", monospace;
+}
+@media (prefers-color-scheme: dark) { :root {
+  --bg: #10141b; --panel: #171d26; --line: #29313d; --fg: #e4e8ef; --muted: #96a0b0;
+  --accent: #ff7a45; --pick: #2c2141; --pick-ink: #cdb4ff; --open: #3a2d12; --open-ink: #f5c86a; color-scheme: dark; } }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.55 var(--body); }
+.wrap { max-width: 1240px; margin: 0 auto; padding: 28px 16px 72px; }
+h1 { font-size: 34px; line-height: 1.1; margin: 4px 0 10px; }
+h2 { font-size: 22px; margin: 0; } h3 { font-size: 15px; margin: 0; } h4 { margin: 0 0 4px; font-size: 13px; }
+p { margin: 0; max-width: 84ch; }
+code { font: 13px var(--mono); }
+.eyebrow { font: 600 11.5px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.tag { display: inline-block; font: 600 11px var(--mono); padding: 2px 7px; border-radius: 4px; white-space: nowrap; vertical-align: 1px; }
+.t-pick { background: var(--pick); color: var(--pick-ink); }
+.t-prop { background: var(--open); color: var(--open-ink); }
+.t-dec { background: #ddf3e6; color: #1d6b3f; }
+@media (prefers-color-scheme: dark) { .t-dec { background: #173326; color: #7fd9a6; } }
+.brief { display: grid; gap: 6px; font-size: 14px; padding: 12px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; margin: 14px 0; }
+.sec { padding-top: 40px; display: grid; gap: 14px; }
+.sec > .fh { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; border-bottom: 2px solid var(--line); padding-bottom: 8px; }
+.lab { font: 700 14px var(--mono); color: var(--accent); }
+.idea { color: var(--muted); font-size: 14px; }
+.cols { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; font-size: 14px; }
+.cols ul, ul.notes { margin: 0; padding-left: 20px; display: grid; gap: 3px; font-size: 14px; }
+.pickline { font-size: 14px; padding: 10px 12px; border-left: 3px solid var(--pick-ink); background: var(--panel); border-radius: 0 6px 6px 0; }
+ol.q { margin: 0; padding-left: 22px; display: grid; gap: 10px; font-size: 14.5px; }
+.states { display: grid; gap: 22px; }
+.state { display: grid; gap: 8px; }
+.state > p { font-size: 14px; color: var(--muted); }
+
+/* ---------- the app, dark, at real size ---------- */
+.app { background: var(--a-bg); color: var(--a-fg); border: 1px solid var(--a-line); border-radius: 8px; overflow: hidden;
+  font: 12.5px/1.4 var(--body); display: grid; grid-template-rows: auto 1fr; }
+.app .mono, .app .m { font-family: var(--mono); font-size: 11.5px; }
+.app button { all: unset; box-sizing: border-box; cursor: pointer; font: 12px var(--body); padding: 3px 9px; border-radius: 4px;
+  border: 1px solid var(--a-line); background: var(--a-panel); color: var(--a-fg); white-space: nowrap; }
+.app button.pri { background: #2f6fd6; border-color: #2f6fd6; color: #fff; font-weight: 600; }
+.app button.dis { opacity: .45; cursor: default; }
+.app button.sm { padding: 1px 7px; font-size: 11.5px; }
+.app .k { font: 600 9.5px var(--mono); border: 1px solid var(--a-line); border-radius: 3px; padding: 0 3px; color: var(--a-muted); margin-left: 3px; }
+.banner { display: flex; align-items: center; gap: 10px; padding: 6px 12px; background: var(--a-warn); color: var(--a-warn-ink); border-bottom: 1px solid var(--a-line); }
+.banner b { color: var(--a-fg); } .banner .sp { flex: 1; }
+.body { display: grid; grid-template-columns: 210px minmax(0, 1fr); min-height: 0; }
+.clist { border-right: 1px solid var(--a-line); background: var(--a-panel); padding: 8px 0; }
+.clist .g { font: 600 10px var(--mono); letter-spacing: .05em; color: var(--a-muted); padding: 6px 12px 3px; text-transform: uppercase; }
+.clist .f { display: flex; gap: 6px; align-items: center; padding: 3px 12px; }
+.clist .f.on { background: var(--a-sel); }
+.clist .f .st { margin-left: auto; font: 10px var(--mono); color: var(--a-warn-ink); }
+.clist .f .st.ok { color: var(--a-add-ink); }
+.main { min-width: 0; display: grid; grid-template-rows: auto 1fr; }
+.ph { display: flex; align-items: center; gap: 8px; padding: 7px 12px; border-bottom: 1px solid var(--a-line); background: var(--a-panel); flex-wrap: wrap; }
+.ph .name { font-weight: 600; } .ph .ct { color: var(--a-muted); } .ph .r { margin-left: auto; display: flex; gap: 6px; }
+.badge { font: 600 9.5px var(--mono); padding: 1px 5px; border-radius: 3px; background: var(--a-hover); color: var(--a-muted); }
+.pad { padding: 12px; }
+.y { color: var(--yours); } .t { color: var(--theirs); } .mu { color: var(--a-muted); } .bad { color: var(--a-bad-ink); } .ok { color: var(--a-add-ink); }
+.chip { display: inline-flex; align-items: center; gap: 4px; font: 600 10px var(--mono); padding: 1px 6px; border-radius: 9px; white-space: nowrap; }
+.chip.y { background: var(--yours-bg); } .chip.t { background: var(--theirs-bg); } .chip.c { background: var(--a-bad); color: var(--a-bad-ink); }
+.chip.n { background: var(--a-hover); color: var(--a-muted); }
+.pills { display: flex; gap: 5px; padding: 6px 12px; border-bottom: 1px solid var(--a-line); align-items: center; }
+.pills .p { white-space: nowrap; font: 11.5px var(--body); padding: 2px 9px; border-radius: 10px; border: 1px solid var(--a-line); color: var(--a-muted); }
+.pills .p.on { background: var(--a-sel); color: var(--a-fg); border-color: #3b5275; }
+
+/* table (R4-A, extended) */
+table.tbl { width: 100%; border-collapse: collapse; }
+.tbl th { text-align: left; font: 600 10.5px var(--body); color: var(--a-muted); padding: 5px 8px; border-bottom: 1px solid var(--a-line); white-space: nowrap; }
+.tbl td { padding: 4px 8px; border-bottom: 1px solid var(--a-line); vertical-align: middle; }
+.tbl tr.grp td { background: var(--a-bg); font: 600 10px var(--mono); color: var(--a-muted); letter-spacing: .05em; text-transform: uppercase; padding: 5px 8px; }
+.tbl tr.clash td:first-child { box-shadow: inset 3px 0 var(--a-bad-ink); }
+.tbl tr.act td { background: var(--a-hover); }
+.prop .o { font-size: 12px; } .prop .o .c { color: var(--a-muted); } .prop .pn { font: 11px var(--mono); color: var(--a-muted); }
+.v { white-space: nowrap; font: 11.5px var(--mono); padding: 1px 6px; border-radius: 3px; display: inline-block; border: 1px solid transparent; }
+.v.base { color: var(--a-muted); }
+.v.yo { color: var(--yours); } .v.th { color: var(--theirs); }
+.v.chosen.yo { background: var(--yours-bg); border-color: color-mix(in srgb, var(--yours) 55%, transparent); }
+.v.chosen.th { background: var(--theirs-bg); border-color: color-mix(in srgb, var(--theirs) 55%, transparent); }
+.v.same { color: var(--a-muted); opacity: .55; }
+.v.res { color: var(--a-fg); }
+.v.need { color: var(--a-bad-ink); border: 1px dashed var(--a-bad-ink); }
+.sw { display: inline-block; width: 9px; height: 9px; border-radius: 2px; vertical-align: -1px; margin-right: 4px; border: 1px solid #0006; }
+.more td { color: var(--a-muted); font-size: 11.5px; }
+
+/* split with result preview */
+.split { display: grid; grid-template-columns: minmax(0, 1fr) 330px; min-height: 0; }
+.prev { border-left: 1px solid var(--a-line); display: grid; grid-template-rows: auto 1fr auto; background: var(--a-panel); }
+.prev .ph { background: transparent; }
+.legend { display: flex; gap: 10px; padding: 6px 10px; border-top: 1px solid var(--a-line); font-size: 11px; color: var(--a-muted); flex-wrap: wrap; }
+.legend i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; }
+svg.scene { display: block; width: 100%; height: 100%; }
+
+/* M1 three lists */
+.ledgers { display: grid; grid-template-columns: 1fr 1fr 1.25fr; min-height: 0; }
+.ledger { border-right: 1px solid var(--a-line); min-width: 0; }
+.ledger:last-child { border-right: 0; }
+.ledger h5 { margin: 0; padding: 7px 10px; font: 600 12px var(--body); border-bottom: 1px solid var(--a-line); display: flex; gap: 6px; align-items: center; }
+.ledger h5 .sp { flex: 1; }
+.li { padding: 5px 10px; border-bottom: 1px solid var(--a-line); display: grid; gap: 1px; }
+.li .row { display: flex; gap: 6px; align-items: center; }
+.li .row .sp { flex: 1; }
+.li .ch { font: 11px var(--mono); color: var(--a-muted); }
+.li .ch b { font-weight: 400; color: var(--a-fg); }
+.li.off { opacity: .45; } .li.off .ch b { text-decoration: line-through; }
+.tog { font: 10.5px var(--body); color: var(--a-muted); border: 1px solid var(--a-line); border-radius: 3px; padding: 0 5px; }
+.picks { display: flex; gap: 5px; margin-top: 3px; }
+.picks span { font: 11px var(--mono); padding: 1px 7px; border-radius: 3px; border: 1px solid var(--a-line); }
+.picks .yo { color: var(--yours); } .picks .th { color: var(--theirs); }
+.picks .on.yo { background: var(--yours-bg); border-color: var(--yours); } .picks .on.th { background: var(--theirs-bg); border-color: var(--theirs); }
+
+/* M3 tree */
+.treev { display: grid; grid-template-columns: 250px minmax(0, 1fr) 300px; min-height: 0; }
+.tree { border-right: 1px solid var(--a-line); padding: 6px 0; background: var(--a-panel); }
+.tn { display: flex; align-items: center; gap: 6px; padding: 2px 10px; white-space: nowrap; }
+.tn.on { background: var(--a-sel); }
+.tn .mk { margin-left: auto; display: flex; gap: 3px; }
+.dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+.dot.y { background: var(--yours); } .dot.t { background: var(--theirs); } .dot.c { background: var(--a-bad-ink); border-radius: 1px; transform: rotate(45deg); }
+.insp { min-width: 0; }
+.comp { border-bottom: 1px solid var(--a-line); }
+.comp h6 { margin: 0; padding: 5px 10px; font: 600 11.5px var(--body); background: var(--a-bg); display: flex; gap: 6px; }
+.kv { display: grid; grid-template-columns: 120px 1fr; gap: 3px 10px; padding: 5px 10px; align-items: center; font-size: 12px; }
+.kv .k2 { color: var(--a-muted); }
+
+/* cards for entry / states */
+.card { margin: 14px; padding: 12px 14px; border: 1px solid var(--a-line); border-radius: 6px; background: var(--a-panel); display: grid; gap: 8px; max-width: 640px; }
+.card .counts { display: flex; gap: 6px; flex-wrap: wrap; }
+.card .acts { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.card .hint { color: var(--a-muted); font-size: 11.5px; }
+.sides { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 0 14px 14px; max-width: 668px; }
+.sides .cd { border: 1px solid var(--a-line); border-radius: 6px; padding: 8px 10px; display: grid; gap: 2px; font-size: 11.5px; }
+.sides .cd.yours { border-top: 2px solid var(--yours); } .sides .cd.theirs { border-top: 2px solid var(--theirs); }
+.chk { display: grid; gap: 3px; font-size: 12px; }
+</style>
+<body>
+<div class="wrap">
+  <div class="eyebrow">Round 9 · 2026-11-26 · decided: M2, every pick</div>
+  <h1>R9 · Merge by property</h1>
+  <div class="brief">
+    <div><b>Brief</b> (Max, 2026-11-26): "if I push one field change in a scriptable object, and Miguel push another change
+      of another property in the same file, I'm gonna get a merge conflict because it's considered binary data, instead of a
+      clean merge because the 2 properties were independant" … "a big .unity file is on LFS, but it's basically a yaml with
+      properties we can edit?" … "the merge shouldn't be automatic. You get a conflict as "normal", and an option to merge
+      inteligently (with clear feedback of the changes and merged result)".</div>
+    <div><span class="tag t-dec">decided 2026-11-26</span> Not automatic: the file stops as a normal conflict, and merging by
+      property is something you choose to do, with what changed and the merged result shown.</div>
+    <div class="idea">Example: BoatAttack's <code>level_Island.unity</code>, stored in LFS, merging <span style="color:#3d8fd0">miguel/lighting</span> into
+      <span style="color:#3d8fd0">main</span>. You moved things and tuned spawns; Miguel relit the scene. 14 of the changes are only yours, 9 only his, and 4
+      clash. People, branches and values are invented.</div>
+  </div>
+
+  <section class="sec">
+    <div class="fh"><h2>What every variant shares</h2><span class="tag t-prop">proposal</span></div>
+    <ul class="notes">
+      <li><b>Where it's offered:</b> on a conflicted file stored in LFS whose base, yours and theirs are all Unity text YAML (scenes,
+        prefabs, ScriptableObjects, materials, controllers). Today these open in the pick-a-side view; that view gets the offer (E).</li>
+      <li><b>Matching:</b> objects by fileID, properties by path. Lists of references (children, components) merge by ID; lists of
+        values merge by position only when one side changed them, else it's a clash. Prefab overrides (<code>m_Modifications</code>)
+        by target + property path.</li>
+      <li><b>A clash</b> is: both sides changed the same property to different values; an object one side deleted and the other
+        edited; or both sides inserted children under the same parent (the sibling order isn't knowable).</li>
+      <li><b>Every change is shown and reversible.</b> One-sided changes come in applied; each can be flipped back. Clashes block
+        "Save and mark resolved" until picked, like R4-A's flags.</li>
+      <li><b>Saving</b> writes the merged YAML; git's LFS filter stores it as a new object when it's staged. The post-merge check
+        (no broken references, no duplicate fileIDs) runs on the result. Every pick and the save are undoable (Ctrl+Z).</li>
+      <li>Also in rebase and cherry-pick stops, same view.</li>
+    </ul>
+  </section>
+
+  <section class="sec" id="e">
+    <div class="fh"><span class="lab">E</span><h2>The offer, in the conflict</h2><span class="tag t-prop">proposal</span></div>
+    <p class="idea">The file opens as it does today: an LFS conflict, pick a side. Above the two side cards, gitgud says what a
+      property merge would do, counted when the conflict opens (both versions are parsed in the background). Nothing changes
+      until you click.</p>
+    <div class="app" id="mock-e"></div>
+  </section>
+
+  <section class="sec" id="m1">
+    <div class="fh"><span class="lab">M1</span><h2>Three lists</h2><span class="tag t-prop">proposal</span></div>
+    <p class="idea">Your words drawn literally: "From you", "From miguel/lighting" and "Clashes" side by side. Each change is a
+      line (object › component › property, old → new) with a switch to leave it out. Clashes get the two values to pick from.
+      The result preview opens from the header (Structure or 3D).</p>
+    <div class="app" id="mock-m1"></div>
+    <div class="cols">
+      <div><h4>Good at</h4><ul><li>Answers "what did each of us change?" at a glance; the counts are the column heads.</li><li>Reading Miguel's work alone is easy: one column.</li></ul></div>
+      <div><h4>Costs</h4><ul><li>A new layout next to R4-A's table: two ways to resolve Unity files.</li><li>The same object's changes are split across columns (Crane: position in yours, mass in his).</li><li>Narrow columns cut long property paths.</li></ul></div>
+    </div>
+  </section>
+
+  <section class="sec" id="m2">
+    <div class="fh"><span class="lab">M2</span><h2>R4-A table, every change</h2><span class="tag t-pick">Claude's pick</span></div>
+    <p class="idea">The property table you already chose for Unity conflicts, extended to every change instead of only clashes.
+      Clashes sit on top, unpicked; below, one row per change from either side, already set to the side that changed it (the
+      unchanged side greyed). Filters by source; 1 / 2 / E flip any row. The merged scene sits on the right in 3D, tinted by where
+      each change came from; selecting a row frames its object.</p>
+    <div class="app" id="mock-m2"></div>
+    <div class="cols">
+      <div><h4>Good at</h4><ul><li>One resolver for Unity files, the one you already know: same columns, same keys.</li><li>Base / yours / theirs / result on every row: the full story of each property.</li><li>The 3D result answers "does it still look right?" without opening Unity.</li></ul></div>
+      <div><h4>Costs</h4><ul><li>Long table for big merges; leans on the filters.</li><li>Added / deleted objects are rows too, so they're less visual than a tree (M3).</li></ul></div>
+    </div>
+    <div class="pickline"><b>Claude's pick:</b> it's R4-A, which you decided, plus the one-sided changes it currently hides, so
+      there's only one way to resolve a Unity file. Each row shows all three values, which is the "clear feedback" in your brief.
+      The 3D pane reuses R6's Changes tint, so the merged result can be checked by eye.</div>
+  </section>
+
+  <section class="sec" id="m3">
+    <div class="fh"><span class="lab">M3</span><h2>Scene tree</h2><span class="tag t-prop">proposal</span></div>
+    <p class="idea">Unity's own shape: the merged scene's hierarchy on the left with a mark per object (yours, theirs, clash,
+      added, deleted), an inspector in the middle for the selected object (each changed field with its source and a pick), the 3D
+      result on the right.</p>
+    <div class="app" id="mock-m3"></div>
+    <div class="cols">
+      <div><h4>Good at</h4><ul><li>Reads like Unity: added, moved and deleted objects are obvious.</li><li>All of one object's changes together.</li></ul></div>
+      <div><h4>Costs</h4><ul><li>Two clicks per change (object, then field); no list of everything.</li><li>Close to R4-C, which you didn't choose for conflicts.</li><li>Less useful for a ScriptableObject (one object, no hierarchy).</li></ul></div>
+    </div>
+  </section>
+
+  <section class="sec" id="states">
+    <div class="fh"><span class="lab">M2</span><h2>States, drawn on the pick</h2><span class="tag t-prop">proposal</span></div>
+    <div class="states">
+      <div class="state"><h3>1 · Deleted on one side, edited on the other</h3><div class="app" id="mock-s1"></div>
+        <p>You deleted OldPier; Miguel changed its light. That's a clash at the object level: keep it deleted (his edits are
+          dropped, and listed) or restore it with his changes.</p></div>
+      <div class="state"><h3>2 · Both added children under one parent</h3><div class="app" id="mock-s2"></div>
+        <p>Both objects are kept; only the order among Buoys' children is the question. In Unity the order shows in the hierarchy
+          and in anything that reads children by index.</p></div>
+      <div class="state"><h3>3 · Can't merge by property yet</h3><div class="app" id="mock-s3"></div>
+        <p>Miguel's version isn't downloaded from LFS yet, so it can't be read: fetch it, then the counts appear. If a version
+          is binary-serialized (Asset Serialization not set to Force Text when it was saved), the offer is replaced by a reason
+          and pick-a-side stays.</p></div>
+      <div class="state"><h3>4 · Every clash picked</h3><div class="app" id="mock-s4"></div>
+        <p>The summary says where every change in the result came from, and what the check found. Save writes the file and
+          stages it (stored in LFS again); the merge banner's Commit merge unlocks when no files are left.</p></div>
+    </div>
+  </section>
+
+  <section class="sec">
+    <div class="fh"><h2>Open questions</h2></div>
+    <ol class="q">
+      <li>Which layout: M1 Three lists, M2 R4-A table with every change, or M3 Scene tree?
+        <span class="tag t-pick">Claude's pick: M2</span> one resolver for every Unity file, with all three values on each row.</li>
+      <li>One-sided changes: come in applied (flip any back), or each must be ticked before saving?
+        <span class="tag t-pick">Claude's pick: applied</span> they're what a text merge would take without asking; only clashes
+        block. Ticking 23 rows to approve them adds clicks without adding safety.</li>
+      <li>Both sides added children under one parent: ask for the order (state 2), or yours first without asking?
+        <span class="tag t-pick">Claude's pick: ask</span> it's rare, and order can matter to scripts.</li>
+      <li>Count the changes when the conflict opens (E), or only after clicking "Merge by property"?
+        <span class="tag t-pick">Claude's pick: when it opens</span> in the background; "4 clash" vs "0 clash" is what tells you
+        whether it's worth it. A 50 MB scene takes a second or two.</li>
+      <li>Offer it also for Unity YAML that isn't in LFS, when Smart Merge isn't set up or gives up?
+        <span class="tag t-pick">Claude's pick: yes</span> same engine, and it removes the dependency on Unity's merge tool for
+        anyone without the Hub.</li>
+    </ol>
+  </section>
+</div>
+
+<script>
+const Y = "main", T = "miguel/lighting";
+const k = (s) => `<span class="k">${s}</span>`;
+const banner = (left = 1) => `<div class="banner">⚠ <span>Merging <b>${T}</b> into <b>${Y}</b> · ${left ? `${left} file in conflict` : "all files resolved"}</span><span class="sp"></span>
+  <button>Abort</button><button class="pri${left ? " dis" : ""}">Commit merge</button></div>`;
+const clist = (st = "conflict") => `<div class="clist">
+  <div class="g">Unity YAML · LFS</div>
+  <div class="f on"><span>level_Island.unity</span><span class="st${st === "resolved" ? " ok" : ""}">${st}</span></div>
+  <div class="g">Merged cleanly</div>
+  <div class="f mu"><span>SunController.cs</span></div><div class="f mu"><span>Island_Lighting.asset</span></div></div>`;
+const frame = (main, left = 1, st) => `${banner(left)}<div class="body">${clist(st)}<div class="main">${main}</div></div>`;
+const ph = (ct, right = "") => `<div class="ph"><span class="name">Assets/scenes/_levels/level_Island.unity</span><span class="badge">LFS</span><span class="ct">${ct}</span><span class="r">${right}</span></div>`;
+
+const sideCards = `<div class="sides">
+  <div class="cd yours"><b>Yours · ${Y}</b><span class="mu">48.2 MB · LFS · Hydrated</span><span class="mono mu">OID 9c1e44a07b2f</span><span><button class="sm">Keep yours ${k(1)}</button></span></div>
+  <div class="cd theirs"><b>Theirs · ${T}</b><span class="mu">48.3 MB · LFS · Hydrated</span><span class="mono mu">OID 3f80d1c9e6aa</span><span><button class="sm">Take theirs ${k(2)}</button></span></div></div>`;
+
+document.getElementById("mock-e").innerHTML = frame(`${ph("· both changed · pick a side, or merge by property")}<div>
+  <div class="card"><b>Both versions are Unity text YAML: they can be merged property by property.</b>
+    <div class="counts"><span class="chip y">14 only yours</span><span class="chip t">9 only ${T}</span><span class="chip c">4 clash</span><span class="chip n">across 11 objects</span></div>
+    <div class="acts"><button class="pri">Merge by property… ${k("M")}</button><span class="hint">Opens the review. Nothing is written until you save.</span></div></div>
+  ${sideCards}</div>`);
+
+// ---- data ----
+const clashes = [
+  { o: "Lighthouse", c: "Light", p: "Intensity", b: "1.2", y: "1.6", t: "2.4" },
+  { o: "BoatSpawner", c: "SpawnController", p: "Max Boats", b: "6", y: "8", t: "5" },
+  { o: "OldPier", c: "GameObject", p: "(object)", b: "exists", y: "deleted", t: "Light › Range 12 → 18" },
+  { o: "Buoys", c: "Transform", p: "Children order", b: "3 children", y: "+ Buoy (4)", t: "+ Buoy_Red" },
+];
+const mine = [
+  { o: "Island", c: "Transform", p: "Position.y", b: "0", v: "0.35" },
+  { o: "BoatSpawner", c: "SpawnController", p: "Spawn Interval", b: "4", v: "3.5" },
+  { o: "Buoys › Buoy (4)", c: "GameObject", p: "added", b: "—", v: "3 components" },
+  { o: "Dock_A", c: "MeshRenderer", p: "Materials[0]", b: "Wood_Old", v: "Wood_Wet" },
+  { o: "Crane_01", c: "Transform", p: "Rotation.y", b: "0", v: "35" },
+];
+const theirs = [
+  { o: "Sun", c: "Light", p: "Color", b: "#FFF4E0", v: "#FFD9A8", sw: true },
+  { o: "Sun", c: "Light", p: "Intensity", b: "1.0", v: "1.35" },
+  { o: "RenderSettings", c: "", p: "Fog Density", b: "0.010", v: "0.018" },
+  { o: "Lighthouse_Beam", c: "Light", p: "Range", b: "40", v: "55" },
+  { o: "Crane_01", c: "Rigidbody", p: "Mass", b: "800", v: "1200" },
+];
+const val = (s, cls) => { const sw = /^#[0-9A-F]{6}$/i.test(s) ? `<span class="sw" style="background:${s}"></span>` : ""; return `<span class="v ${cls}">${sw}${s}</span>`; };
+const prop = (r) => `<td class="prop"><div class="o">${r.o}${r.c ? ` <span class="c">› ${r.c}</span>` : ""}</div><div class="pn">${r.p}</div></td>`;
+
+// ---- 3D preview ----
+const scene3d = (focus) => `<svg class="scene" viewBox="0 0 330 250" preserveAspectRatio="xMidYMid meet" style="background:#2a3447" aria-hidden="true">
+  <defs><linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2a3447"/><stop offset="1" stop-color="#3b4658"/></linearGradient></defs>
+  <rect width="330" height="250" fill="url(#sky)"/>
+  <path d="M0 150 L330 132 L330 250 L0 250 Z" fill="#203241"/>
+  <path d="M0 150 L330 132" stroke="#36506a"/>
+  <path d="M70 158 C95 118 175 104 230 122 C262 132 270 152 248 160 C200 172 110 175 70 158 Z" fill="#7f8a76" stroke="#56b4e9" stroke-width="2"/>
+  <rect x="190" y="70" width="12" height="56" fill="#c9c3b8" stroke="#ff4f3a" stroke-width="2" stroke-dasharray="${focus ? 0 : "3 2"}"/>
+  <path d="M184 70 L208 70 L196 58 Z" fill="#b74a3a"/>
+  <path d="M202 74 L300 60 L300 92 Z" fill="#ffd9a8" opacity=".35" stroke="#ff8c42" stroke-width="1.5"/>
+  <g stroke="#ff8c42" stroke-width="1.5"><path d="M110 118 L110 74 L146 74" fill="none" stroke-width="3"/><path d="M146 74 L146 96"/></g>
+  <rect x="100" y="112" width="22" height="10" fill="#8b6b4a" stroke="#56b4e9" stroke-width="1.5"/>
+  <circle cx="40" cy="190" r="5" fill="#d8d8d8"/><circle cx="70" cy="205" r="5" fill="#d8d8d8"/><circle cx="100" cy="196" r="5" fill="#d8d8d8"/>
+  <circle cx="130" cy="210" r="5" fill="#d8d8d8" stroke="#56b4e9" stroke-width="2"/><circle cx="160" cy="200" r="5" fill="#e0574a" stroke="#ff8c42" stroke-width="2"/>
+  <path d="M250 175 L285 175 L278 186 L256 186 Z" fill="none" stroke="#ff9d80" stroke-width="1.5" stroke-dasharray="3 2"/>
+  <circle cx="290" cy="34" r="12" fill="#ffd9a8" stroke="#ff8c42" stroke-width="1.5"/>
+  ${focus ? `<rect x="178" y="52" width="36" height="80" fill="none" stroke="#fff" stroke-dasharray="2 3"/><text x="216" y="50" fill="#dde2ea" font-size="10" font-family="Segoe UI">Lighthouse</text>` : ""}
+  <text x="252" y="198" fill="#ff9d80" font-size="9" font-family="Segoe UI">OldPier (clash)</text>
+</svg>`;
+const preview = (focus) => `<div class="prev"><div class="ph"><span class="name">Result</span><span class="r"><button class="sm">Structure</button><button class="sm" style="background:var(--a-sel)">3D</button></span></div>
+  ${scene3d(focus)}<div class="legend"><span><i style="background:var(--yours)"></i>from you</span><span><i style="background:var(--theirs)"></i>from ${T}</span><span><i style="background:var(--a-bad-ink)"></i>clash</span><span>grey: unchanged</span></div></div>`;
+
+// ---- M2 ----
+const m2rows = (picked = {}) => {
+  let h = `<tr class="grp"><td colspan="5">Clashes · ${4 - Object.keys(picked).length} to pick</td></tr>`;
+  clashes.forEach((r, i) => {
+    const p = picked[i];
+    const res = p ? val(p === "y" ? r.y : r.t, "res") : `<span class="v need">pick 1 · 2${i < 2 ? " · E" : ""}</span>`;
+    h += `<tr class="clash${i === 0 && !Object.keys(picked).length ? " act" : ""}">${prop(r)}<td>${val(r.b, "base")}</td><td>${val(r.y, "yo" + (p === "y" ? " chosen" : ""))}</td><td>${val(r.t, "th" + (p === "t" ? " chosen" : ""))}</td><td>${res}</td></tr>`;
+  });
+  h += `<tr class="grp"><td colspan="5">Changed on one side · applied · 23</td></tr>`;
+  const one = [mine[0], theirs[0], mine[1], theirs[1], theirs[2], mine[2], mine[4], theirs[4]];
+  one.forEach((r) => {
+    const isY = mine.includes(r);
+    h += `<tr>${prop(r)}<td>${val(r.b, "base")}</td><td>${isY ? val(r.v, "yo chosen") : val(r.b, "same")}</td><td>${isY ? val(r.b, "same") : val(r.v, "th chosen")}</td><td>${val(r.v, "res")} <span class="chip ${isY ? "y" : "t"}">${isY ? "yours" : "theirs"}</span></td></tr>`;
+  });
+  h += `<tr class="more"><td colspan="5">15 more · sorted by object</td></tr>`;
+  return h;
+};
+const m2table = (picked) => `<table class="tbl"><thead><tr><th>Object › Component › Property</th><th>Base</th><th style="color:var(--yours)">${Y} ${k(1)}</th><th style="color:var(--theirs)">${T} ${k(2)}</th><th>Result ${k("E")}</th></tr></thead><tbody>${m2rows(picked)}</tbody></table>`;
+const pills = `<div class="pills"><span class="p on">All 27</span><span class="p">Clashes 4</span><span class="p">Yours 14</span><span class="p">Theirs 9</span><span class="p">Objects added / deleted 3</span></div>`;
+document.getElementById("mock-m2").innerHTML = frame(`${ph("· merge by property · 0/4 clashes picked", `<button class="sm">Back to pick a side</button><button class="sm">Raw YAML</button><button class="sm pri dis">Save &amp; mark resolved</button>`)}
+  <div class="split"><div>${pills}${m2table({})}</div>${preview(true)}</div>`);
+
+// ---- M1 ----
+const li = (r, off) => `<div class="li${off ? " off" : ""}"><div class="row"><span>${r.o}${r.c ? ` <span class="mu">› ${r.c}</span>` : ""}</span><span class="sp"></span><span class="tog">${off ? "left out" : "✓ in"}</span></div><span class="ch">${r.p}: ${r.b} → <b>${r.v}</b></span></div>`;
+document.getElementById("mock-m1").innerHTML = frame(`${ph("· merge by property", `<button class="sm">Result: Structure | 3D</button><button class="sm">Back to pick a side</button><button class="sm pri dis">Save &amp; mark resolved</button>`)}
+  <div class="ledgers">
+    <div class="ledger"><h5><span class="y">●</span> From you<span class="sp"></span><span class="chip y">14</span></h5>${mine.map((r, i) => li(r, i === 3)).join("")}<div class="li mu">9 more</div></div>
+    <div class="ledger"><h5><span class="t">●</span> From ${T}<span class="sp"></span><span class="chip t">9</span></h5>${theirs.map((r) => li(r)).join("")}<div class="li mu">4 more</div></div>
+    <div class="ledger"><h5><span class="bad">◆</span> Clashes<span class="sp"></span><span class="chip c">1 / 4 picked</span></h5>${clashes.map((r, i) => `<div class="li"><div class="row"><span>${r.o} <span class="mu">› ${r.c}</span></span><span class="sp"></span><span class="mono mu">${r.p}</span></div>
+      <span class="ch">base ${r.b}</span><div class="picks"><span class="yo${i === 0 ? " on" : ""}">1 · ${r.y}</span><span class="th">2 · ${r.t}</span></div></div>`).join("")}</div>
+  </div>`);
+
+// ---- M3 ----
+const tn = (d, name, marks, on) => `<div class="tn${on ? " on" : ""}" style="padding-left:${10 + d * 14}px"><span>${name}</span><span class="mk">${marks}</span></div>`;
+const D = (c) => `<span class="dot ${c}"></span>`;
+document.getElementById("mock-m3").innerHTML = frame(`${ph("· merge by property · 0/4 clashes picked", `<button class="sm">Back to pick a side</button><button class="sm pri dis">Save &amp; mark resolved</button>`)}
+  <div class="treev"><div class="tree">
+    ${tn(0, "RenderSettings", D("t"))}${tn(0, "Sun", D("t"))}${tn(0, "Island", D("y"))}
+    ${tn(1, "Lighthouse", D("c"), true)}${tn(2, "Lighthouse_Beam", D("t"))}${tn(1, "Dock_A", D("y"))}${tn(1, "Crane_01", D("y") + D("t"))}
+    ${tn(0, '<span class="bad">OldPier</span>', D("c"))}${tn(0, "BoatSpawner", D("y") + D("c"))}${tn(0, "Buoys", D("c"))}
+    ${tn(1, "Buoy (1)", "")}${tn(1, "Buoy (2)", "")}${tn(1, "Buoy (3)", "")}${tn(1, '<span class="y">+ Buoy (4)</span>', D("y"))}${tn(1, '<span class="t">+ Buoy_Red</span>', D("t"))}
+  </div><div class="insp">
+    <div class="ph" style="background:transparent"><span class="name">Lighthouse</span><span class="ct">· 1 clash · 0 one-sided</span></div>
+    <div class="comp"><h6>Light <span class="chip c">clash</span></h6><div class="kv">
+      <span class="k2">Intensity</span><span>${val("1.2", "base")} <span class="v yo">1 · 1.6</span> <span class="v th">2 · 2.4</span></span>
+      <span class="k2">Range</span><span class="mu">24 · unchanged</span><span class="k2">Color</span><span class="mu"><span class="sw" style="background:#fff2cc"></span>#FFF2CC · unchanged</span></div></div>
+    <div class="comp"><h6>Transform</h6><div class="kv"><span class="k2">Position</span><span class="mu">12, 4.5, -30 · unchanged</span></div></div>
+    <div class="comp"><h6>LighthouseBlink <span class="mu">(script)</span></h6><div class="kv"><span class="k2">Period</span><span class="mu">2.5 · unchanged</span></div></div>
+  </div>${preview(true).replace('class="prev"', 'class="prev" style="border-left:1px solid var(--a-line)"')}</div>`);
+
+// ---- states ----
+const oneRow = (r, ycell, tcell, res, cls = "clash act") => `<table class="tbl"><thead><tr><th>Object › Component › Property</th><th>Base</th><th style="color:var(--yours)">${Y} ${k(1)}</th><th style="color:var(--theirs)">${T} ${k(2)}</th><th>Result ${k("E")}</th></tr></thead><tbody><tr class="${cls}">${prop(r)}<td>${val(r.b, "base")}</td><td>${ycell}</td><td>${tcell}</td><td>${res}</td></tr></tbody></table>`;
+document.getElementById("mock-s1").innerHTML = frame(`${ph("· merge by property · 2/4 clashes picked")}<div>
+  ${oneRow(clashes[2], `<span class="v yo">deleted</span>`, `<span class="v th">kept, 1 change</span>`, `<span class="v need">pick 1 · 2</span>`)}
+  <div class="card" style="max-width:none"><b>OldPier: you deleted it; ${T} changed it.</b>
+    <div class="chk"><span class="mu">${T}'s changes to it:</span><span class="mono">OldPier › Light › Range: 12 → 18</span></div>
+    <div class="acts"><button>Keep it deleted ${k(1)}</button><button>Restore it with ${T}'s change ${k(2)}</button><span class="hint">Deleting it also removes its 4 children; nothing else references it.</span></div></div></div>`);
+document.getElementById("mock-s2").innerHTML = frame(`${ph("· merge by property · 3/4 clashes picked")}<div>
+  ${oneRow(clashes[3], `<span class="v yo">+ Buoy (4)</span>`, `<span class="v th">+ Buoy_Red</span>`, `<span class="v need">pick an order</span>`)}
+  <div class="card" style="max-width:none"><b>Both of you added a child to Buoys. Both are kept; which comes first?</b>
+    <div class="sides" style="padding:0;max-width:none">
+      <div class="cd yours"><b>Yours first ${k(1)}</b><span class="mono mu">Buoy (1) · Buoy (2) · Buoy (3)</span><span class="mono"><span class="y">Buoy (4)</span> · <span class="t">Buoy_Red</span></span></div>
+      <div class="cd theirs"><b>Theirs first ${k(2)}</b><span class="mono mu">Buoy (1) · Buoy (2) · Buoy (3)</span><span class="mono"><span class="t">Buoy_Red</span> · <span class="y">Buoy (4)</span></span></div></div></div></div>`);
+document.getElementById("mock-s3").innerHTML = frame(`${ph("· both changed · pick a side")}<div>
+  <div class="card"><b>Merge by property needs ${T}'s version, which isn't downloaded from LFS yet.</b>
+    <div class="acts"><button class="pri">Fetch it (48.3 MB)</button><span class="hint">Then gitgud counts the changes.</span></div></div>
+  <div class="card"><b class="mu">Can't merge by property: ${T}'s version is binary-serialized.</b>
+    <div class="hint">Unity saved it with Asset Serialization other than Force Text. Pick a side; Settings › Unity can check the project setting.</div></div></div>`);
+document.getElementById("mock-s4").innerHTML = frame(`${ph("· merge by property · 4/4 clashes picked", `<button class="sm">Back to pick a side</button><button class="sm">Raw YAML</button><button class="sm pri">Save &amp; mark resolved</button>`)}<div>
+  <div class="card" style="max-width:none"><b>The merged scene keeps 26 of 27 changes</b>
+    <div class="counts"><span class="chip y">13 from you</span><span class="chip t">9 from ${T}</span><span class="chip c" style="background:var(--a-hover);color:var(--a-fg)">4 clashes: 2 yours, 2 theirs</span><span class="chip n">1 of yours left out: Dock_A material</span></div>
+    <div class="chk"><span class="ok">✓ No broken references</span><span class="ok">✓ No duplicate fileIDs</span><span class="ok">✓ Every prefab instance resolves</span></div>
+    <div class="hint">Saving writes the file and stages it; git stores it in LFS again. Ctrl+Z undoes the save and every pick.</div></div></div>`);
+</script>
+</body>
+</html>

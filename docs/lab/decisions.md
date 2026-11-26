@@ -3,6 +3,32 @@
 Verdicts from the lab rounds (`docs/lab/index.html`), newest first. Each entry: date, Max's words in
 quotes, what came with it, and what isn't applied yet. Feeds the decision log in `docs/spec.md`.
 
+## R9 · Merge by property (2026-11-26)
+
+Brief (Max, 2026-11-26): "if I push one field change in a scriptable object, and Miguel push another
+change of another property in the same file, I'm gonna get a merge conflict because it's considered
+binary data, instead of a clean merge because the 2 properties were independant" … "a big .unity file
+is on LFS, but it's basically a yaml with properties we can edit?" … "the merge shouldn't be
+automatic. You get a conflict as "normal", and an option to merge inteligently (with clear feedback
+of the changes and merged result)". Round: `docs/lab/merge.html`.
+
+- **Decided (2026-11-26):** M2 and every Claude's pick. Max: "go with your picks". That is:
+  1. **M2:** R4-A's property table extended to every change: clashes on top (unpicked), one-sided
+     changes below, filters All / Clashes / Yours / Theirs / Objects added-deleted, 1 / 2 / E per
+     row, merged result in 3D on the right with the Changes tint by source.
+  2. **One-sided changes come in applied**, each can be flipped; only clashes block saving.
+  3. **Both sides added children under one parent: ask** for the order (a clash row).
+  4. **Counts are computed when the conflict opens**, in the background (the E offer).
+  5. **Also offered for Unity YAML not in LFS** (when Smart Merge isn't set up or gives up).
+- **Came with it, not discussed separately:** never automatic, the file stops as a normal conflict
+  and the offer sits in the pick-a-side view; objects matched by fileID, reference lists by ID, value
+  lists by position only when one side changed them; deleted-vs-edited is an object-level clash; save
+  writes the YAML and stages it (LFS clean filter), then the post-merge check; every pick and the save
+  undoable; same view in rebase and cherry-pick stops; a missing LFS side offers Fetch; a
+  binary-serialized side gets a reason instead of the offer.
+- **Built (2026-11-26):** all of it except the 3D result pane (open: a draft version for the viewer).
+  The R4-A table's "Pick all" buttons stay, for clashes only.
+
 ## R8 · App stats in the strip (2026-11-26)
 
 Brief (Max, 2026-11-25): "I'm not sure the little git version and path in the bottom right corner is

@@ -33,9 +33,8 @@ use gitgud_core::stash::StashEntry;
 use gitgud_core::tags::TagInfo;
 use gitgud_core::task::{Cancel, Progress};
 use gitgud_core::unity::{MetaIssue, UnityInfo};
-use gitgud_core::unity_yaml::{
-    UnityConflictTable, UnityIntegrityIssue, UnityPropertyPick, UnityRepoSetupStatus, UnityYamlDiff,
-};
+use gitgud_core::unity_merge::{MergeCheck, MergeOffer, PropertyMerge, RowPick};
+use gitgud_core::unity_yaml::{UnityIntegrityIssue, UnityRepoSetupStatus, UnityYamlDiff};
 use gitgud_core::worktree::{HunkHeader, LineSelect, Side};
 use tauri::{AppHandle, Builder, Emitter, Manager, Runtime, State};
 
@@ -1570,22 +1569,41 @@ fn open_in_default_app(file: &std::path::Path) -> Result<(), Error> {
 }
 
 #[tauri::command]
-async fn unity_conflict_table(
+async fn property_merge_offer(
     session: State<'_, Session>,
     id: u32,
     path: String,
-) -> Result<UnityConflictTable, Error> {
-    session.unity_conflict_table(id, &path)
+) -> Result<MergeOffer, Error> {
+    session.property_merge_offer(id, &path)
 }
 
 #[tauri::command]
-async fn resolve_unity_conflict(
+async fn property_merge(
     session: State<'_, Session>,
     id: u32,
     path: String,
-    picks: Vec<UnityPropertyPick>,
+) -> Result<PropertyMerge, Error> {
+    session.property_merge(id, &path)
+}
+
+#[tauri::command]
+async fn property_merge_check(
+    session: State<'_, Session>,
+    id: u32,
+    path: String,
+    picks: Vec<RowPick>,
+) -> Result<MergeCheck, Error> {
+    session.property_merge_check(id, &path, &picks)
+}
+
+#[tauri::command]
+async fn resolve_property_merge(
+    session: State<'_, Session>,
+    id: u32,
+    path: String,
+    picks: Vec<RowPick>,
 ) -> Result<Opened, Error> {
-    session.resolve_unity_conflict(id, &path, &picks)
+    session.resolve_property_merge(id, &path, &picks)
 }
 
 #[tauri::command]
@@ -1966,8 +1984,10 @@ fn app_with_library<R: Runtime>(builder: Builder<R>, library: Option<LibraryStor
             sprite_sheet,
             clip_curves,
             clip_users,
-            unity_conflict_table,
-            resolve_unity_conflict,
+            property_merge_offer,
+            property_merge,
+            property_merge_check,
+            resolve_property_merge,
             unity_post_merge_check,
             unity_repo_setup_status,
             unity_apply_repo_setup,
@@ -1997,7 +2017,12 @@ fn app_with_library<R: Runtime>(builder: Builder<R>, library: Option<LibraryStor
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    app_with_library(Builder::default(), None)
+    let mut builder = Builder::default();
+    // e2e runs (isolated by GITGUD_LIBRARY) keep the default window size.
+    if std::env::var_os("GITGUD_LIBRARY").is_none() {
+        builder = builder.plugin(tauri_plugin_window_state::Builder::default().build());
+    }
+    app_with_library(builder, None)
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
@@ -3690,7 +3715,7 @@ mod tests {
     }
 
     #[test]
-    fn unity_yaml_structural_diff_conflict_table_and_integrity_through_ipc() {
+    fn unity_yaml_structural_diff_property_merge_and_integrity_through_ipc() {
         let ipc = Ipc::new();
         let repo = TestRepo::init();
         let script_guid = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -3789,24 +3814,44 @@ mod tests {
         ipc.call("merge", json!({ "id": id, "branch": "theirs" }))
             .unwrap();
 
-        let table = ipc
+        let offer = ipc
             .call(
-                "unity_conflict_table",
+                "property_merge_offer",
                 json!({ "id": id, "path": "Assets/Player.prefab" }),
             )
             .unwrap();
-        assert_eq!(table["conflicts"].as_array().unwrap().len(), 1);
-        assert_eq!(table["conflicts"][0]["property"], "speed");
+        assert_eq!(
+            offer,
+            json!({ "kind": "ready", "yours": 0, "theirs": 0, "clashes": 1, "objects": 0 })
+        );
+
+        let table = ipc
+            .call(
+                "property_merge",
+                json!({ "id": id, "path": "Assets/Player.prefab" }),
+            )
+            .unwrap();
+        assert_eq!(table["rows"].as_array().unwrap().len(), 1);
+        assert_eq!(table["rows"][0]["property"], "speed");
+        assert_eq!(table["rows"][0]["source"], "clash");
+        let row_id = table["rows"][0]["id"].clone();
+        let picks = json!([{ "id": row_id, "choice": "custom", "value": "30" }]);
+
+        let check = ipc
+            .call(
+                "property_merge_check",
+                json!({ "id": id, "path": "Assets/Player.prefab", "picks": picks }),
+            )
+            .unwrap();
+        assert_eq!(check, json!({ "unresolved": 0, "issues": [] }));
 
         ipc.call(
-            "resolve_unity_conflict",
-            json!({
-                "id": id,
-                "path": "Assets/Player.prefab",
-                "picks": [{ "fileId": "12", "property": "speed", "value": "30" }]
-            }),
+            "resolve_property_merge",
+            json!({ "id": id, "path": "Assets/Player.prefab", "picks": picks }),
         )
         .unwrap();
+        let disk = std::fs::read_to_string(repo.path().join("Assets/Player.prefab")).unwrap();
+        assert!(disk.contains("speed: 30"), "{disk}");
 
         let issues = ipc
             .call(

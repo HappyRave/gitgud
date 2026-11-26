@@ -6,10 +6,12 @@ import type {
   GitInventory,
   HistoryPlan,
   LibrarySnapshot,
+  MergeRow,
   MergeState,
   Opened,
   OpEntry,
   PlanCommit,
+  PropertyMerge,
   ProposalSummary,
   RebaseState,
   RepoCache,
@@ -193,6 +195,7 @@ export function installMock(scenario: string) {
           message: "Merge branch 'conflict/theirs' into conflict/ours",
           conflicts: [
             { path: "Assets/Prefabs/ReplayCameras.prefab", kind: "unityYaml", resolved: false },
+            { path: "Assets/scenes/_levels/level_Island.unity", kind: "binary", resolved: false },
             { path: "Assets/Scripts/Boat/Engine.cs", kind: "code", resolved: false },
             { path: "Assets/Art/Trees/Maps/TreeBillBoards_albedo.png", kind: "binary", resolved: false },
           ],
@@ -713,36 +716,16 @@ export function installMock(scenario: string) {
         },
       ],
     }),
-    unity_conflict_table: ({ path }) => ({
+    property_merge_offer: ({ path }) =>
+      path.endsWith("level_Island.unity")
+        ? { kind: "ready", yours: 4, theirs: 4, clashes: 3, objects: 2 }
+        : { kind: "unavailable", reason: "it isn't a Unity YAML file" },
+    property_merge: ({ path }) => ({
       path,
-      conflicts: [
-        {
-          id: "1140002::maxSpeed",
-          fileId: "1140002",
-          objectPath: "Boat / Engine",
-          component: "BoatController.cs",
-          property: "maxSpeed",
-          base: "12",
-          yours: "18",
-          theirs: "22",
-          baseDisplay: "12",
-          yoursDisplay: "18",
-          theirsDisplay: "22",
-        },
-      ],
-      autoMerged: [
-        {
-          fileId: "400001",
-          objectPath: "Boat / Hull",
-          component: "Transform",
-          property: "m_LocalRotation.y",
-          side: "theirs",
-          value: "0.707",
-          display: "0.707",
-        },
-      ],
+      ...MOCK_PROPERTY_MERGE,
     }),
-    resolve_unity_conflict: () => opened(),
+    property_merge_check: () => ({ unresolved: 0, issues: [] }),
+    resolve_property_merge: ({ path }) => resolve(path),
     unity_post_merge_check: () => [],
     unity_repo_setup_status: () => ({
       isUnity: true,
@@ -1044,3 +1027,49 @@ export function installMock(scenario: string) {
     { shouldMockEvents: true },
   );
 }
+
+function mergeRow(over: Partial<MergeRow> & Pick<MergeRow, "id" | "source" | "objectPath" | "component" | "property">): MergeRow {
+  return {
+    kind: "value",
+    fileId: over.id.split("/")[0],
+    base: null,
+    yours: null,
+    theirs: null,
+    yoursRaw: null,
+    theirsRaw: null,
+    editable: false,
+    yoursDetail: [],
+    theirsDetail: [],
+    ...over,
+  };
+}
+
+const value = (base: string, yours: string, theirs: string) => ({
+  base,
+  yours,
+  theirs,
+  yoursRaw: ` ${yours}`,
+  theirsRaw: ` ${theirs}`,
+  editable: true,
+});
+
+/** R9's lab example: level_Island.unity, main vs miguel/lighting. */
+const MOCK_PROPERTY_MERGE: Omit<PropertyMerge, "path"> = {
+  yours: 4,
+  theirs: 4,
+  clashes: 3,
+  objects: 2,
+  rows: [
+    mergeRow({ id: "1/m_Intensity", source: "clash", objectPath: "Island / Lighthouse", component: "Light", property: "m_Intensity", ...value("1.2", "1.6", "2.4") }),
+    mergeRow({ id: "obj:yours:7", kind: "object", source: "clash", objectPath: "OldPier", component: "GameObject", property: "(object)", base: "1 object, 2 components", yours: "deleted", theirs: "kept, 1 change", theirsDetail: ["Light › m_Range: 12 → 18"] }),
+    mergeRow({ id: "4/m_Children#order", kind: "order", source: "clash", objectPath: "Buoys", component: "Transform", property: "m_Children (order)", yours: "yours first", theirs: "theirs first", yoursDetail: ["Buoys / Buoy (1)", "Buoys / Buoy (4)", "Buoys / Buoy_Red"], theirsDetail: ["Buoys / Buoy (1)", "Buoys / Buoy_Red", "Buoys / Buoy (4)"] }),
+    mergeRow({ id: "2/m_LocalPosition.y", source: "yours", objectPath: "Island", component: "Transform", property: "m_LocalPosition.y", ...value("0", "0.35", "0") }),
+    mergeRow({ id: "3/m_Color.r", source: "theirs", objectPath: "Sun", component: "Light", property: "m_Color.r", ...value("1", "1", "0.85") }),
+    mergeRow({ id: "3/m_Intensity", source: "theirs", objectPath: "Sun", component: "Light", property: "m_Intensity", ...value("1", "1", "1.35") }),
+    mergeRow({ id: "5/spawnInterval", source: "yours", objectPath: "BoatSpawner", component: "SpawnController.cs", property: "spawnInterval", ...value("4", "3.5", "4") }),
+    mergeRow({ id: "obj:yours:8", kind: "object", source: "yours", objectPath: "Buoys / Buoy (4)", component: "GameObject", property: "(object)", yours: "added: 1 object, 3 components" }),
+    mergeRow({ id: "obj:theirs:9", kind: "object", source: "theirs", objectPath: "Buoys / Buoy_Red", component: "GameObject", property: "(object)", theirs: "added: 1 object, 3 components" }),
+    mergeRow({ id: "6/m_Range", source: "theirs", objectPath: "Island / Lighthouse / Beam", component: "Light", property: "m_Range", ...value("40", "40", "55") }),
+    mergeRow({ id: "10/m_Mass", source: "yours", objectPath: "Crane_01", component: "Rigidbody", property: "m_Mass", ...value("800", "1200", "800") }),
+  ],
+};

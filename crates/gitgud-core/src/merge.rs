@@ -465,6 +465,27 @@ impl Repo {
         })
     }
 
+    /// Resolves `path` with `content` already in work-tree form (an LFS file's own bytes),
+    /// written as is and staged, so only git's clean filter runs.
+    ///
+    /// # Errors
+    /// [`Error::Read`] / [`Error::Command`] when writing or staging fails.
+    pub fn resolve_with_worktree(
+        &self,
+        git: &GitCli,
+        path: &str,
+        content: &str,
+    ) -> Result<(), Error> {
+        self.stages(path)?;
+        fs::write(self.root().join(path), content).map_err(read_err)?;
+        git.run(
+            self.root(),
+            &["--literal-pathspecs", "add", "--", path],
+            None,
+        )
+        .map(drop)
+    }
+
     /// Resolves `path` with `content` (git form, `\n` line ends): written through
     /// the work-tree filters (autocrlf...) and staged.
     ///

@@ -93,6 +93,7 @@
     type ReflogEntry,
     type ResetMode,
     type Row,
+    type RowPick,
     type SequencerState,
     type SequencerStep,
     type Side,
@@ -100,7 +101,6 @@
     type TagInfo,
     type TaskOp,
     type UnityInfo,
-    type UnityPropertyPick,
     type WorktreeInfo,
   } from "$lib/api";
   import {
@@ -119,7 +119,7 @@
     proposalsList,
     proposeFromWorktree,
     pushTag,
-    resolveUnityConflict,
+    resolvePropertyMerge,
     restack,
     staleOriginCommits,
     tags,
@@ -257,7 +257,8 @@
   let messageEdit = $state<string | null>(null);
   const mergeDraft = $derived(merging ? (messageEdit ?? mergeMessage(merging.message, merging.conflicts, resolvedHow)) : "");
   const mergeLeft = $derived(merging?.conflicts.filter((c) => !c.resolved).length ?? 0);
-  let mergeAsk = $state<string | null>(null);
+  /** What to merge: a branch name or a commit id, and how the dialog names it. */
+  let mergeAsk = $state<{ rev: string; label: string } | null>(null);
   let rebasing = $state<RebaseState | null>(null);
   let rebaseAsk = $state<string | null>(null);
   let sequencer = $state<SequencerState | null>(null);
@@ -770,7 +771,7 @@
             atLabel: selectedCommit ? selectedCommit.slice(0, 7) : null,
           }),
         oncheckout: (b) => guardedCheckout(b),
-        onmerge: (b) => (mergeAsk = b),
+        onmerge: (b) => (mergeAsk = { rev: b, label: b }),
         onrebase: (b) => (rebaseAsk = b),
         ondeletebranch: (b) => onDeleteBranch(b),
         onfind: () => {
@@ -974,14 +975,40 @@
     }, "Restoring…");
   }
 
-  async function startMerge(branch: string) {
+  async function startMerge(rev: string, label: string) {
     mergeAsk = null;
     const into = branchName;
-    guardAssets(`Merge ${branch} into ${into}`, `HEAD...${branch}`, async () => {
-      if ((await write((id) => merge(id, branch), undefined, `Merging ${branch} into ${into}…`)) && !merging) {
-        notice = `Merged ${branch} into ${into}`;
+    guardAssets(`Merge ${label} into ${into}`, `HEAD...${rev}`, async () => {
+      if ((await write((id) => merge(id, rev), undefined, `Merging ${label} into ${into}…`)) && !merging) {
+        notice = `Merged ${label} into ${into}`;
       }
     });
+  }
+
+  /** Merging a commit from the history into the checked-out branch: by its branches, else by id. */
+  function mergeItems(row: Row): MenuItem[] {
+    if (row.wip || row.stash != null || status?.head.kind !== "branch") {
+      return [];
+    }
+    const disabled = busy || !!conflicted || !!merging || row.labels.some((l) => l.kind === "head" || (l.kind === "branch" && l.current));
+    const into = branchName;
+    const names = row.labels.flatMap((l) =>
+      (l.kind === "branch" && !l.current) || l.kind === "remote" ? [l.name] : [],
+    );
+    if (names.length === 0) {
+      return [
+        {
+          label: `Merge commit ${row.shortId} into ${into}…`,
+          disabled,
+          run: () => (mergeAsk = { rev: row.id, label: `commit ${row.shortId}` }),
+        },
+      ];
+    }
+    return names.map((name) => ({
+      label: `Merge ${name} into ${into}…`,
+      disabled,
+      run: () => (mergeAsk = { rev: name, label: name }),
+    }));
   }
 
   async function resolveFile(filePath: string, how: string, run: (id: number) => Promise<Opened>) {
@@ -1004,8 +1031,8 @@
   const resolvePick = (filePath: string, side: MergeSide) =>
     resolveFile(filePath, side === "yours" ? "keep yours" : "take theirs", (id) => resolveSide(id, filePath, side));
 
-  const resolveUnity = (filePath: string, picks: UnityPropertyPick[]) =>
-    resolveFile(filePath, "property table", (id) => resolveUnityConflict(id, filePath, picks));
+  const resolveUnity = (filePath: string, picks: RowPick[]) =>
+    resolveFile(filePath, "merged by property", (id) => resolvePropertyMerge(id, filePath, picks));
 
   function commitMerge() {
     const unconfirmed =
@@ -1158,6 +1185,7 @@
       disabled: busy,
       run: () => (tagAsk = { target: row.id, targetLabel: `${row.shortId} "${row.subject}"` }),
     },
+    ...mergeItems(row),
     {
       label: "Cherry-pick…",
       disabled: busy || !!conflicted,
@@ -1809,7 +1837,7 @@
           ondeleteremotetag={onDeleteRemoteTag}
           onselecttag={inspectCommit}
           oncheckout={guardedCheckout}
-          onmerge={(branch) => (mergeAsk = branch)}
+          onmerge={(branch) => (mergeAsk = { rev: branch, label: branch })}
           onrebase={(branch) => (rebaseAsk = branch)}
           oncreatebranch={(at) => (branchAsk = { mode: "create", at: at ?? null, atLabel: at ?? null })}
           onrenamebranch={(branch) => (branchAsk = { mode: "rename", currentName: branch })}
@@ -2116,10 +2144,11 @@
     {#if mergeAsk}
       <MergeDialog
         repoId={opened.id}
-        branch={mergeAsk}
+        branch={mergeAsk.rev}
+        label={mergeAsk.label}
         into={branchName}
         dirty={status.entries.length > 0}
-        onmerge={() => mergeAsk && startMerge(mergeAsk)}
+        onmerge={() => mergeAsk && startMerge(mergeAsk.rev, mergeAsk.label)}
         oncancel={() => (mergeAsk = null)}
       />
     {/if}

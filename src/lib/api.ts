@@ -485,8 +485,11 @@ export interface UnityYamlDiff {
   objects: UnityObjectChange[];
 }
 
-export interface UnityConflictRow {
+/** R9: one change in a merge by property. */
+export interface MergeRow {
   id: string;
+  kind: "value" | "object" | "order";
+  source: "yours" | "theirs" | "clash";
   fileId: string;
   objectPath: string;
   component: string;
@@ -494,31 +497,40 @@ export interface UnityConflictRow {
   base: string | null;
   yours: string | null;
   theirs: string | null;
-  baseDisplay: string | null;
-  yoursDisplay: string | null;
-  theirsDisplay: string | null;
+  /** As written in the file, for editing (E). */
+  yoursRaw: string | null;
+  theirsRaw: string | null;
+  editable: boolean;
+  /** Object rows: what each side did to it. Order rows: the list read each way. */
+  yoursDetail: string[];
+  theirsDetail: string[];
 }
 
-export interface UnityAutoRow {
-  fileId: string;
-  objectPath: string;
-  component: string;
-  property: string;
-  side: string;
-  value: string | null;
-  display: string | null;
-}
-
-export interface UnityConflictTable {
+export interface PropertyMerge {
   path: string;
-  conflicts: UnityConflictRow[];
-  autoMerged: UnityAutoRow[];
+  /** Clashes first, then every one-sided change in file order. */
+  rows: MergeRow[];
+  yours: number;
+  theirs: number;
+  clashes: number;
+  objects: number;
 }
 
-export interface UnityPropertyPick {
-  fileId: string;
-  property: string;
+export type MergeOffer =
+  | { kind: "ready"; yours: number; theirs: number; clashes: number; objects: number }
+  | { kind: "needsFetch"; missing: { side: "base" | "yours" | "theirs"; oid: string; size: number }[] }
+  | { kind: "unavailable"; reason: string };
+
+/** A row's choice; rows without one keep the side that changed them. */
+export interface RowPick {
+  id: string;
+  choice: "yours" | "theirs" | "custom";
   value: string | null;
+}
+
+export interface MergeCheck {
+  unresolved: number;
+  issues: UnityIntegrityIssue[];
 }
 
 export interface UnityIntegrityIssue {
@@ -1263,8 +1275,10 @@ export interface Commands {
   material_view: { args: { id: number; path: string; version: FileVersion }; result: MaterialView };
   material_users: { args: { id: number; path: string; version: FileVersion }; result: string[] };
   font_info: { args: { id: number; path: string; version: FileVersion; face?: number }; result: FontInfo };
-  unity_conflict_table: { args: { id: number; path: string }; result: UnityConflictTable };
-  resolve_unity_conflict: { args: { id: number; path: string; picks: UnityPropertyPick[] }; result: Opened };
+  property_merge_offer: { args: { id: number; path: string }; result: MergeOffer };
+  property_merge: { args: { id: number; path: string }; result: PropertyMerge };
+  property_merge_check: { args: { id: number; path: string; picks: RowPick[] }; result: MergeCheck };
+  resolve_property_merge: { args: { id: number; path: string; picks: RowPick[] }; result: Opened };
   unity_post_merge_check: { args: { id: number; paths: string[] }; result: UnityIntegrityIssue[] };
   unity_repo_setup_status: { args: { id: number }; result: UnityRepoSetupStatus };
   unity_apply_repo_setup: {
@@ -1618,9 +1632,12 @@ export const audioInfo =(id: number, path: string, version: FileVersion) => call
 export const materialView =(id: number, path: string, version: FileVersion) => call("material_view", { id, path, version });
 export const materialUsers = (id: number, path: string, version: FileVersion) => call("material_users", { id, path, version });
 export const fontInfo =(id: number, path: string, version: FileVersion) => call("font_info", { id, path, version });
-export const unityConflictTable = (id: number, path: string) => call("unity_conflict_table", { id, path });
-export const resolveUnityConflict = (id: number, path: string, picks: UnityPropertyPick[]) =>
-  call("resolve_unity_conflict", { id, path, picks });
+export const propertyMergeOffer = (id: number, path: string) => call("property_merge_offer", { id, path });
+export const propertyMerge = (id: number, path: string) => call("property_merge", { id, path });
+export const propertyMergeCheck = (id: number, path: string, picks: RowPick[]) =>
+  call("property_merge_check", { id, path, picks });
+export const resolvePropertyMerge = (id: number, path: string, picks: RowPick[]) =>
+  call("resolve_property_merge", { id, path, picks });
 export const unityPostMergeCheck = (id: number, paths: string[]) => call("unity_post_merge_check", { id, paths });
 export const unityRepoSetupStatus = (id: number) => call("unity_repo_setup_status", { id });
 export const unityApplyRepoSetup = (id: number, writeGitignore: boolean, writeGitattributes: boolean) =>

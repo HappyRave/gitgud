@@ -2,11 +2,23 @@
   import { untrack } from "svelte";
   import { SvelteMap } from "svelte/reactivity";
   import {
-    unityConflictTable,
-    type UnityConflictRow,
-    type UnityConflictTable,
-    type UnityPropertyPick,
+    propertyMerge,
+    propertyMergeCheck,
+    type MergeCheck,
+    type MergeRow,
+    type PropertyMerge,
+    type RowPick,
   } from "$lib/api";
+  import { inTextField } from "$lib/keys";
+  import {
+    type Choice,
+    type Filter,
+    choiceOf,
+    matches,
+    openClashes,
+    resultText,
+    toPicks,
+  } from "$lib/merge/property";
 
   let {
     repoId,
@@ -17,6 +29,7 @@
     busy = false,
     onresolve,
     onrawyaml,
+    onback,
     onfallbacktext,
   }: {
     repoId: number;
@@ -25,51 +38,73 @@
     yoursLabel: string;
     theirsLabel: string;
     busy?: boolean;
-    onresolve: (picks: UnityPropertyPick[]) => void;
-    onrawyaml: () => void;
-    onfallbacktext: () => void;
+    onresolve: (picks: RowPick[]) => void;
+    /** Text Unity YAML: switch to the raw three-column text merge. */
+    onrawyaml?: () => void;
+    /** LFS files: back to picking a side. */
+    onback?: () => void;
+    /** The file can't be merged by property: fall back to another resolver. */
+    onfallbacktext: (reason: string) => void;
   } = $props();
 
-  let table = $state<UnityConflictTable | null>(null);
-  let error = $state<string | null>(null);
-  const picks = new SvelteMap<string, { choice: "yours" | "theirs" | "custom"; value: string | null }>();
-  let current = $state(0);
-  let editing = $state<{ id: string; value: string } | null>(null);
+  /** One-sided rows shown before "Show all". */
+  const SHOWN = 400;
 
-  const conflicts = $derived(table?.conflicts ?? []);
-  const pickedCount = $derived(conflicts.filter((r) => picks.has(r.id)).length);
-  const allPicked = $derived(table !== null && pickedCount === conflicts.length);
+  let merge = $state<PropertyMerge | null>(null);
+  const picks = new SvelteMap<string, Choice>();
+  let filter = $state<Filter>("all");
+  let currentId = $state<string | null>(null);
+  let editing = $state<{ id: string; value: string } | null>(null);
+  let showAll = $state(false);
+  let check = $state<MergeCheck | null>(null);
+  let checkError = $state<string | null>(null);
+
+  const rows = $derived(merge?.rows ?? []);
+  const visible = $derived(rows.filter((r) => matches(r, filter)));
+  const clashes = $derived(visible.filter((r) => r.source === "clash"));
+  const oneSidedAll = $derived(visible.filter((r) => r.source !== "clash"));
+  const oneSided = $derived(showAll ? oneSidedAll : oneSidedAll.slice(0, SHOWN));
+  const navigable = $derived([...clashes, ...oneSided]);
+  const left = $derived(openClashes(rows, picks));
+  const totalClashes = $derived(rows.filter((r) => r.source === "clash").length);
+  const current = $derived(navigable.find((r) => r.id === currentId) ?? null);
+  const kept = $derived(
+    rows.reduce(
+      (acc, r) => {
+        const c = choiceOf(r, picks);
+        if (c === "yours") {
+          acc.yours += 1;
+        } else if (c === "theirs") {
+          acc.theirs += 1;
+        } else if (c) {
+          acc.edited += 1;
+        }
+        return acc;
+      },
+      { yours: 0, theirs: 0, edited: 0 },
+    ),
+  );
 
   $effect(() => {
     const key = `${repoId}:${path}:${revision}`;
     let stale = false;
     untrack(() => {
-      error = null;
       editing = null;
     });
-    unityConflictTable(repoId, path).then(
-      (t) => {
+    propertyMerge(repoId, path).then(
+      (m) => {
         if (stale || key !== `${repoId}:${path}:${revision}`) {
           return;
         }
-        table = t;
+        merge = m;
         picks.clear();
-        current = 0;
+        filter = "all";
+        showAll = false;
+        currentId = m.rows[0]?.id ?? null;
       },
       (err) => {
-        if (stale) {
-          return;
-        }
-        const msg = String(err);
-        if (
-          msg.includes("not valid multi-document Unity YAML") ||
-          msg.includes("pick a side") ||
-          msg.includes("binary") ||
-          msg.includes("not a Unity YAML")
-        ) {
-          onfallbacktext();
-        } else {
-          error = msg;
+        if (!stale) {
+          onfallbacktext(String(err));
         }
       },
     );
@@ -78,112 +113,279 @@
     };
   });
 
-  function chooseSide(row: UnityConflictRow, choice: "yours" | "theirs", idx: number) {
-    current = idx;
-    picks.set(row.id, { choice, value: choice === "yours" ? row.yours : row.theirs });
-    const nextOpen = conflicts.findIndex((r, i) => i > idx && !picks.has(r.id));
-    if (nextOpen >= 0) {
-      current = nextOpen;
-    }
-  }
-
-  function pickAll(choice: "yours" | "theirs") {
-    for (const row of conflicts) {
-      picks.set(row.id, { choice, value: choice === "yours" ? row.yours : row.theirs });
-    }
-  }
-
-  function startEdit(row: UnityConflictRow, idx: number) {
-    current = idx;
-    const existing = picks.get(row.id);
-    editing = { id: row.id, value: existing?.value ?? row.yours ?? row.theirs ?? row.base ?? "" };
-  }
-
-  function commitEdit(row: UnityConflictRow) {
-    if (!editing || editing.id !== row.id) {
+  // The integrity check runs on the result once every clash has a pick.
+  $effect(() => {
+    if (!merge || left > 0) {
+      check = null;
       return;
     }
-    const val = editing.value;
-    picks.set(row.id, { choice: "custom", value: val });
+    const sent = toPicks(rows, picks);
+    let stale = false;
+    const timer = setTimeout(() => {
+      propertyMergeCheck(repoId, path, sent).then(
+        (c) => {
+          if (!stale) {
+            check = c;
+            checkError = null;
+          }
+        },
+        (err) => {
+          if (!stale) {
+            checkError = String(err);
+          }
+        },
+      );
+    }, 250);
+    return () => {
+      stale = true;
+      clearTimeout(timer);
+    };
+  });
+
+  function choose(row: MergeRow, choice: Choice) {
+    currentId = row.id;
+    picks.set(row.id, choice);
+    if (row.source === "clash") {
+      const at = navigable.indexOf(row);
+      const next = navigable.find((r, i) => i > at && r.source === "clash" && !picks.has(r.id));
+      if (next) {
+        currentId = next.id;
+      }
+    }
+  }
+
+  /** Every clash to one side; one-sided changes keep their own. */
+  function pickAll(side: "yours" | "theirs") {
+    for (const row of rows) {
+      if (row.source === "clash") {
+        picks.set(row.id, side);
+      }
+    }
+  }
+
+  function startEdit(row: MergeRow) {
+    if (!row.editable) {
+      return;
+    }
+    currentId = row.id;
+    const c = choiceOf(row, picks);
+    const value =
+      typeof c === "object" && c !== null ? c.custom : ((c === "theirs" ? row.theirsRaw : row.yoursRaw) ?? "").trim();
+    editing = { id: row.id, value };
+  }
+
+  function commitEdit(row: MergeRow) {
+    if (editing?.id !== row.id) {
+      return;
+    }
+    picks.set(row.id, { custom: editing.value });
     editing = null;
   }
 
   function save() {
-    if (!table || !allPicked || busy) {
+    if (!merge || left > 0 || busy) {
       return;
     }
-    const out: UnityPropertyPick[] = table.conflicts.map((row) => ({
-      fileId: row.fileId,
-      property: row.property,
-      value: picks.get(row.id)?.value ?? row.yours,
-    }));
-    onresolve(out);
+    onresolve(toPicks(rows, picks));
+  }
+
+  function move(step: number) {
+    if (navigable.length === 0) {
+      return;
+    }
+    const at = current ? navigable.indexOf(current) : -1;
+    const next = navigable[Math.max(0, Math.min(navigable.length - 1, at + step))];
+    currentId = next.id;
+    document.getElementById(`pm-${next.id}`)?.scrollIntoView({ block: "nearest" });
   }
 
   function onKeydown(event: KeyboardEvent) {
-    if (event.ctrlKey && !event.altKey && !event.metaKey && event.key === "Enter" && !editing) {
-      if (allPicked && !busy) {
+    if (editing || event.altKey || event.metaKey || inTextField(event.target)) {
+      return;
+    }
+    if (event.ctrlKey) {
+      if (event.key === "Enter") {
         event.preventDefault();
         save();
       }
       return;
     }
-    if (conflicts.length === 0 || editing) {
-      return;
-    }
-    const el = event.target as HTMLElement | null;
-    if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) {
-      return;
-    }
-    const row = conflicts[current];
-    if (!row) {
-      return;
-    }
-    if (event.key === "1") {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
-      chooseSide(row, "yours", current);
-    } else if (event.key === "2") {
+      move(event.key === "ArrowDown" ? 1 : -1);
+      return;
+    }
+    if (!current) {
+      return;
+    }
+    if (event.key === "1" || event.key === "2") {
       event.preventDefault();
-      chooseSide(row, "theirs", current);
+      choose(current, event.key === "1" ? "yours" : "theirs");
     } else if (event.key === "e" || event.key === "E") {
-      event.preventDefault();
-      startEdit(row, current);
-    } else if (event.key === "ArrowDown") {
-      event.preventDefault();
-      current = Math.min(conflicts.length - 1, current + 1);
-    } else if (event.key === "ArrowUp") {
-      event.preventDefault();
-      current = Math.max(0, current - 1);
+      if (current.editable) {
+        event.preventDefault();
+        startEdit(current);
+      }
     }
   }
+
+  const FILTERS: { id: Filter; label: string; count: (m: PropertyMerge) => number }[] = [
+    { id: "all", label: "All", count: (m) => m.rows.length },
+    { id: "clashes", label: "Clashes", count: (m) => m.clashes },
+    { id: "yours", label: "Yours", count: (m) => m.yours },
+    { id: "theirs", label: "Theirs", count: (m) => m.theirs },
+    { id: "objects", label: "Objects added / deleted", count: (m) => m.objects },
+  ];
+
+  const sideName = (side: "yours" | "theirs") => (side === "yours" ? yoursLabel : theirsLabel);
 </script>
 
 <svelte:window onkeydown={onKeydown} />
 
-<section class="umt" aria-label="Unity property merge for {path}">
-  <div class="ph">
-    <span class="name mono" title={path}>{path}</span>
-    <span class="ct">· {pickedCount}/{conflicts.length} properties picked</span>
-    <span class="r actions">
-      {#if conflicts.length > 0}
-        <button type="button" class="sm" disabled={busy} onclick={() => pickAll("yours")}>Pick all {yoursLabel}</button>
-        <button type="button" class="sm" disabled={busy} onclick={() => pickAll("theirs")}>Pick all {theirsLabel}</button>
+{#snippet valueCell(row: MergeRow, side: "yours" | "theirs")}
+  {@const text = side === "yours" ? row.yours : row.theirs}
+  {@const chosen = choiceOf(row, picks) === side}
+  {@const unchanged = row.source !== "clash" && row.source !== side}
+  <button
+    type="button"
+    class="v {side}"
+    class:chosen
+    class:same={unchanged && !chosen}
+    title={text ?? "absent"}
+    aria-label="{sideName(side)}: {text ?? 'absent'}"
+    onclick={(e) => {
+      e.stopPropagation();
+      choose(row, side);
+    }}>{text ?? "—"}</button
+  >
+{/snippet}
+
+{#snippet tableRow(row: MergeRow)}
+  {@const choice = choiceOf(row, picks)}
+  {@const result = resultText(row, choice)}
+  <tr
+    id="pm-{row.id}"
+    class:clash={row.source === "clash"}
+    class:active={row.id === currentId}
+    onclick={() => (currentId = row.id)}
+  >
+    <td class="prop">
+      <div class="obj">{row.objectPath}{#if row.component}<span class="comp"> › {row.component}</span>{/if}</div>
+      <div class="pname mono">{row.property}</div>
+    </td>
+    <td><span class="v base" title={row.base ?? "absent"}>{row.base ?? "—"}</span></td>
+    <td>{@render valueCell(row, "yours")}</td>
+    <td>{@render valueCell(row, "theirs")}</td>
+    <td class="res">
+      {#if editing?.id === row.id}
+        <span class="editrow">
+          <input
+            type="text"
+            aria-label="Edit {row.property}"
+            bind:value={editing.value}
+            onkeydown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                commitEdit(row);
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                editing = null;
+              }
+            }}
+          />
+          <button type="button" class="sm" onclick={() => commitEdit(row)}>Set</button>
+        </span>
+      {:else if result === null}
+        <span class="v need">pick 1 · 2{row.editable ? " · E" : ""}</span>
+      {:else}
+        <span class="v out" title={result}>{result}</span>
+        {#if typeof choice === "object"}
+          <span class="chip edited">edited</span>
+        {:else if choice}
+          <span class="chip {choice}">{choice}</span>
+        {/if}
+        {#if row.editable}
+          <button
+            type="button"
+            class="edit"
+            aria-label="Edit {row.property}"
+            title="Edit (E)"
+            onclick={(e) => {
+              e.stopPropagation();
+              startEdit(row);
+            }}>E</button
+          >
+        {/if}
       {/if}
-      <button type="button" class="sm" onclick={onrawyaml}>Raw YAML</button>
-      <button type="button" class="pri sm" disabled={!allPicked || busy} onclick={save}>Save &amp; stage</button>
+    </td>
+  </tr>
+  {#if row.id === currentId && (row.kind === "order" || row.yoursDetail.length > 0 || row.theirsDetail.length > 0)}
+    <tr class="detail">
+      <td colspan="5">
+        {#if row.kind === "order"}
+          <p class="dh">Both of you added items here. Both are kept; which comes first?</p>
+        {/if}
+        <div class="sides">
+          {#each ["yours", "theirs"] as const as side (side)}
+            {@const lines = side === "yours" ? row.yoursDetail : row.theirsDetail}
+            {#if lines.length > 0}
+              <button type="button" class="card {side}" class:chosen={choiceOf(row, picks) === side} onclick={() => choose(row, side)}>
+                <b>
+                  {#if row.kind === "order"}
+                    {side === "yours" ? "Yours" : "Theirs"} first
+                  {:else}
+                    {sideName(side)}'s changes to it
+                  {/if}
+                  <span class="k">{side === "yours" ? 1 : 2}</span>
+                </b>
+                {#each lines as line, i (i)}
+                  <span class="mono">{line}</span>
+                {/each}
+              </button>
+            {/if}
+          {/each}
+        </div>
+      </td>
+    </tr>
+  {/if}
+{/snippet}
+
+<section class="umt" aria-label="Merge by property for {path}">
+  <div class="ph">
+    <span class="name" title={path}>{path}</span>
+    <span class="ct">· merge by property{merge ? ` · ${totalClashes - left}/${totalClashes} clashes picked` : ""}</span>
+    <span class="r actions">
+      {#if totalClashes > 0}
+        <button type="button" class="sm" onclick={() => pickAll("yours")}>Pick all {yoursLabel}</button>
+        <button type="button" class="sm" onclick={() => pickAll("theirs")}>Pick all {theirsLabel}</button>
+      {/if}
+      {#if onback}
+        <button type="button" class="sm" onclick={onback}>Back to pick a side</button>
+      {/if}
+      {#if onrawyaml}
+        <button type="button" class="sm" onclick={onrawyaml}>Raw YAML</button>
+      {/if}
+      <button type="button" class="pri sm" disabled={!merge || left > 0 || busy} onclick={save}>
+        Save &amp; mark resolved
+      </button>
     </span>
   </div>
 
-  {#if error}
-    <p class="err" role="alert">{error}</p>
-  {:else if !table}
-    <p class="note">Parsing Unity YAML properties…</p>
+  {#if !merge}
+    <p class="note">Reading the three versions…</p>
   {:else}
+    <div class="pills" role="group" aria-label="Show">
+      {#each FILTERS as f (f.id)}
+        <button type="button" class="pill" class:on={filter === f.id} aria-pressed={filter === f.id} onclick={() => (filter = f.id)}>
+          {f.label} <span class="n">{f.count(merge)}</span>
+        </button>
+      {/each}
+    </div>
     <div class="scroll">
-      {#if conflicts.length === 0}
-        <p class="note">No conflicting properties remain; save to apply auto-merged changes and stage.</p>
+      {#if rows.length === 0}
+        <p class="note">Both sides made the same changes: save to take them.</p>
       {:else}
-        <table class="tbl" aria-label="Property conflicts">
+        <table class="tbl" aria-label="Changes">
           <thead>
             <tr>
               <th>Object › Component › Property</th>
@@ -194,93 +396,49 @@
             </tr>
           </thead>
           <tbody>
-            {#each conflicts as row, idx (row.id)}
-              {@const picked = picks.get(row.id)}
-              <tr class:active={idx === current} onclick={() => (current = idx)}>
-                <td class="prop">
-                  <div class="obj">{row.objectPath} <span class="comp">› {row.component}</span></div>
-                  <div class="pname mono">{row.property}</div>
-                </td>
-                <td class="base mono" title={row.base ?? "∅"}>{row.baseDisplay ?? row.base ?? "∅"}</td>
-                <td class="side">
-                  <button
-                    type="button"
-                    class="pick yours"
-                    class:chosen={picked?.choice === "yours"}
-                    title={row.yours ?? "∅"}
-                    onclick={(e) => {
-                      e.stopPropagation();
-                      chooseSide(row, "yours", idx);
-                    }}
-                  >
-                    <span class="mono">{row.yoursDisplay ?? row.yours ?? "∅"}</span>
-                  </button>
-                </td>
-                <td class="side">
-                  <button
-                    type="button"
-                    class="pick theirs"
-                    class:chosen={picked?.choice === "theirs"}
-                    title={row.theirs ?? "∅"}
-                    onclick={(e) => {
-                      e.stopPropagation();
-                      chooseSide(row, "theirs", idx);
-                    }}
-                  >
-                    <span class="mono">{row.theirsDisplay ?? row.theirs ?? "∅"}</span>
-                  </button>
-                </td>
-                <td class="rescol">
-                  {#if editing?.id === row.id}
-                    <div class="editrow">
-                      <input
-                        type="text"
-                        aria-label="Edit {row.property}"
-                        bind:value={editing.value}
-                        onkeydown={(e) => {
-                          if (e.key === "Enter") {
-                            e.preventDefault();
-                            commitEdit(row);
-                          } else if (e.key === "Escape") {
-                            e.preventDefault();
-                            editing = null;
-                          }
-                        }}
-                      />
-                      <button type="button" class="sm" onclick={() => commitEdit(row)}>Set</button>
-                    </div>
-                  {:else}
-                    <div class="resval">
-                      <span class="mono">{picked ? (picked.value ?? "∅") : "—"}</span>
-                      <button
-                        type="button"
-                        class="sm"
-                        onclick={(e) => {
-                          e.stopPropagation();
-                          startEdit(row, idx);
-                        }}>Edit</button
-                      >
-                    </div>
-                  {/if}
-                </td>
-              </tr>
-            {/each}
+            {#if clashes.length > 0}
+              <tr class="grp-row"><td colspan="5">Clashes · {left} to pick</td></tr>
+              {#each clashes as row (row.id)}
+                {@render tableRow(row)}
+              {/each}
+            {/if}
+            {#if oneSidedAll.length > 0}
+              <tr class="grp-row"><td colspan="5">Changed on one side · applied · {oneSidedAll.length}</td></tr>
+              {#each oneSided as row (row.id)}
+                {@render tableRow(row)}
+              {/each}
+              {#if oneSided.length < oneSidedAll.length}
+                <tr class="more">
+                  <td colspan="5">
+                    {oneSidedAll.length - oneSided.length} more
+                    <button type="button" class="sm" onclick={() => (showAll = true)}>Show all</button>
+                  </td>
+                </tr>
+              {/if}
+            {/if}
           </tbody>
         </table>
       {/if}
 
-      {#if table.autoMerged.length > 0}
-        <details class="auto">
-          <summary>Auto-merged cleanly ({table.autoMerged.length} properties)</summary>
-          <ul>
-            {#each table.autoMerged as item (`${item.fileId}-${item.property}`)}
-              <li>
-                <b>{item.objectPath}</b> › {item.component} · <code class="mono">{item.property}</code> ({item.side}):
-                <code class="mono">{item.display ?? item.value ?? "∅"}</code>
-              </li>
-            {/each}
-          </ul>
-        </details>
+      {#if left === 0}
+        <section class="summary" aria-label="Merge summary">
+          <b>The result keeps {kept.yours} change{kept.yours === 1 ? "" : "s"} from {yoursLabel}, {kept.theirs} from {theirsLabel}{kept.edited ? `, ${kept.edited} edited` : ""}.</b>
+          {#if checkError}
+            <span class="bad">{checkError}</span>
+          {:else if !check}
+            <span class="muted">Checking the result…</span>
+          {:else if check.issues.length === 0}
+            <span class="ok">✓ No broken references or duplicate fileIDs</span>
+          {:else}
+            <span class="bad">⚠ {check.issues.length} issue{check.issues.length === 1 ? "" : "s"} in the result:</span>
+            <ul>
+              {#each check.issues as issue, i (i)}
+                <li>{issue.detail}</li>
+              {/each}
+            </ul>
+          {/if}
+          <span class="muted">Saving writes the file and stages it{onback ? "; git stores it in LFS again" : ""}. Ctrl+Z undoes it.</span>
+        </section>
       {/if}
     </div>
   {/if}
@@ -311,10 +469,32 @@
     padding: 0 8px;
     font-size: 11px;
   }
+  .pills {
+    display: flex;
+    gap: 5px;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--line);
+    flex-wrap: wrap;
+  }
+  .pill {
+    height: 22px;
+    padding: 0 9px;
+    border-radius: 11px;
+    font-size: 11.5px;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .pill.on {
+    color: var(--fg);
+  }
+  .pill .n {
+    font: 10.5px var(--mono);
+    margin-left: 3px;
+  }
   .scroll {
     flex: 1;
     overflow: auto;
-    padding: 8px 10px;
+    padding: 0 0 10px;
   }
   .tbl {
     width: 100%;
@@ -322,6 +502,10 @@
     font-size: 11.5px;
   }
   .tbl th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--panel);
     text-align: left;
     padding: 5px 8px;
     font-weight: 600;
@@ -330,27 +514,22 @@
     white-space: nowrap;
   }
   .tbl td {
-    padding: 6px 8px;
+    padding: 4px 8px;
     border-bottom: 1px solid var(--line);
-    vertical-align: top;
+    vertical-align: middle;
   }
   .tbl tr.active td {
     background: var(--hover);
   }
-  .obj {
-    font-weight: 600;
+  .tbl tr.clash td:first-child {
+    box-shadow: inset 3px 0 var(--bad-ink);
   }
-  .comp {
-    font-weight: 400;
+  .grp-row td {
+    background: var(--bg);
+    font: 600 10px var(--mono);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
     color: var(--muted);
-  }
-  .pname {
-    color: var(--l0);
-    font-size: 11px;
-  }
-  .base {
-    color: var(--muted);
-    word-break: break-word;
   }
   .tbl th.col-yours {
     color: var(--yours);
@@ -358,68 +537,166 @@
   .tbl th.col-theirs {
     color: var(--theirs);
   }
-  .pick {
-    width: 100%;
-    height: auto;
-    min-height: 24px;
+  .obj {
+    font-weight: 600;
+    overflow-wrap: anywhere;
+  }
+  .comp {
+    font-weight: 400;
+    color: var(--muted);
+  }
+  .pname {
+    color: var(--muted);
+    font-size: 11px;
+  }
+  .v {
+    display: inline-block;
+    max-width: 260px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: middle;
+    font: 11.5px var(--mono);
+    padding: 1px 6px;
+    border-radius: 3px;
+    border: 1px solid transparent;
+    background: none;
     text-align: left;
-    padding: 4px 7px;
-    border: 1px solid var(--line);
-    border-radius: 4px;
-    background: var(--panel);
-    white-space: normal;
-    line-height: 1.35;
-    word-break: break-word;
   }
-  .pick:hover {
-    border-color: var(--l0);
+  .v.base,
+  .v.same {
+    color: var(--muted);
   }
-  .pick.yours.chosen {
+  .v.same {
+    opacity: 0.6;
+  }
+  button.v {
+    cursor: pointer;
+    height: auto;
+  }
+  button.v:hover {
+    border-color: var(--line);
+  }
+  .v.yours {
+    color: var(--yours);
+  }
+  .v.theirs {
+    color: var(--theirs);
+  }
+  .v.yours.chosen {
     background: var(--yours-bg);
     border-color: var(--yours);
-    color: var(--fg);
   }
-  .pick.theirs.chosen {
+  .v.theirs.chosen {
     background: var(--theirs-bg);
     border-color: var(--theirs);
+  }
+  .v.need {
+    color: var(--bad-ink);
+    border: 1px dashed var(--bad-ink);
+  }
+  .res {
+    white-space: nowrap;
+  }
+  .chip {
+    font: 600 9.5px var(--mono);
+    padding: 0 5px;
+    border-radius: 8px;
+    margin-left: 4px;
+    vertical-align: middle;
+  }
+  .chip.yours {
+    background: var(--yours-bg);
+    color: var(--yours);
+  }
+  .chip.theirs {
+    background: var(--theirs-bg);
+    color: var(--theirs);
+  }
+  .chip.edited {
+    background: var(--hover);
     color: var(--fg);
   }
-  .resval,
+  .edit {
+    height: 18px;
+    padding: 0 5px;
+    margin-left: 4px;
+    font: 10px var(--mono);
+    color: var(--muted);
+  }
   .editrow {
-    display: flex;
+    display: inline-flex;
     align-items: center;
     gap: 6px;
-    justify-content: space-between;
   }
   .editrow input {
     min-width: 90px;
     height: 22px;
-    font-size: 11px;
+    font: 11px var(--mono);
   }
-  .auto {
-    margin-top: 12px;
+  .detail td {
+    background: var(--hover);
+  }
+  .dh {
+    margin: 2px 0 6px;
+    font-weight: 600;
+  }
+  .sides {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .card {
+    display: grid;
+    gap: 2px;
+    text-align: left;
+    padding: 6px 9px;
     border: 1px solid var(--line);
     border-radius: 5px;
-    padding: 6px 8px;
-    font-size: 11.5px;
+    background: var(--panel);
+    height: auto;
+    cursor: pointer;
   }
-  .auto summary {
-    cursor: default;
-    font-weight: 600;
+  .card.yours {
+    border-top: 2px solid var(--yours);
+  }
+  .card.theirs {
+    border-top: 2px solid var(--theirs);
+  }
+  .card.chosen.yours {
+    background: var(--yours-bg);
+  }
+  .card.chosen.theirs {
+    background: var(--theirs-bg);
+  }
+  .more td {
     color: var(--muted);
   }
-  .auto ul {
-    margin: 6px 0 0;
-    padding-left: 18px;
+  .summary {
     display: grid;
-    gap: 3px;
+    gap: 4px;
+    margin: 12px 10px 0;
+    padding: 10px 12px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--panel);
+    font-size: 12px;
+  }
+  .summary ul {
+    margin: 0;
+    padding-left: 18px;
+  }
+  .ok {
+    color: var(--add-ink);
+  }
+  .bad {
+    color: var(--bad-ink);
+  }
+  .muted {
+    color: var(--muted);
   }
   .mono {
     font-family: var(--mono);
-  }
-  .err {
-    margin: 10px;
-    color: var(--bad-ink);
   }
   .note {
     margin: 10px;
