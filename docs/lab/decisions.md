@@ -26,8 +26,11 @@ of the changes and merged result)". Round: `docs/lab/merge.html`.
   writes the YAML and stages it (LFS clean filter), then the post-merge check; every pick and the save
   undoable; same view in rebase and cherry-pick stops; a missing LFS side offers Fetch; a
   binary-serialized side gets a reason instead of the offer.
-- **Built (2026-11-26):** all of it except the 3D result pane (open: a draft version for the viewer).
+- **Built (2026-11-26):** all of it except the 3D result pane.
   The R4-A table's "Pick all" buttons stay, for clashes only.
+- **Decided (2026-11-26):** the 3D result pane is **A, on demand**. Max: "Go A". Built from the
+  current picks when the pane opens or on Rebuild (R); later picks mark it out of date ("Out of date ·
+  N picks since"), never rebuild by themselves. Not chosen: B Live, C No result pane.
 
 ## R8 · App stats in the strip (2026-11-26)
 

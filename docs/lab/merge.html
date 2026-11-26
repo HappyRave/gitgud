@@ -229,6 +229,43 @@ svg.scene { display: block; width: 100%; height: 100%; }
     </div>
   </section>
 
+  <section class="sec" id="r3d">
+    <div class="fh"><h2>The 3D result: when it's built</h2><span class="tag t-dec">decided 2026-11-26 · "Go A"</span></div>
+    <p class="idea">Built so far: everything above except the 3D pane on the right of M2. The 3D viewers can't show a result
+      that isn't saved yet, so gitgud needs a "draft" version of the file that skips the 3D caches. A big scene (40&ndash;50 MB)
+      takes a few seconds to rebuild in 3D, so the question is when that happens. Same table in all three; only the right side
+      changes. Picks shown: 2 of 4 clashes picked.</p>
+
+    <div class="fh"><span class="lab">A</span><h3>On demand</h3><span class="tag t-pick">Claude's pick</span></div>
+    <p class="idea">The pane builds the result from your picks when you open it or press Rebuild. Picks made after that mark it
+      out of date (amber) instead of rebuilding by themselves. You decide when to pay the few seconds.</p>
+    <div class="app" id="mock-3d-a"></div>
+    <div class="cols">
+      <div><h4>Good at</h4><ul><li>Picking stays instant, even on a 50 MB scene.</li><li>"Out of date · 2 picks since" says exactly what the picture doesn't show yet.</li></ul></div>
+      <div><h4>Costs</h4><ul><li>One click (or R) to see the latest picks.</li></ul></div>
+    </div>
+
+    <div class="fh"><span class="lab">B</span><h3>Live</h3><span class="tag t-prop">proposal</span></div>
+    <p class="idea">Every pick rebuilds the result after a short pause. The old picture stays, dimmed, under a progress line
+      until the new one is in.</p>
+    <div class="app" id="mock-3d-b"></div>
+    <div class="cols">
+      <div><h4>Good at</h4><ul><li>Always shows the current result, nothing to press.</li><li>Feels great on small prefabs.</li></ul></div>
+      <div><h4>Costs</h4><ul><li>On big scenes the picture lags each pick by seconds, and keyboard picking (1, 2, 1, 2&hellip;) keeps it rebuilding.</li><li>The most CPU and GPU of the three.</li></ul></div>
+    </div>
+
+    <div class="fh"><span class="lab">C</span><h3>No result pane</h3><span class="tag t-prop">proposal</span></div>
+    <p class="idea">The table takes the full width. 3D stays where it already is: the side picker's yours / theirs comparison, one
+      button away. The merged result is only seen in 3D after saving, in the working copy.</p>
+    <div class="app" id="mock-3d-c"></div>
+    <div class="cols">
+      <div><h4>Good at</h4><ul><li>Nothing to build: no draft version, no new cache rules.</li><li>Widest table: long property paths fit.</li></ul></div>
+      <div><h4>Costs</h4><ul><li>No look at the merged result before saving; "does it still look right?" waits until after.</li></ul></div>
+    </div>
+    <div class="pickline"><b>Claude's pick: A.</b> The 3D is a check you do once or twice per merge, not after every pick. A keeps
+      picking instant on the big LFS scenes this feature is for, and still shows the real merged result before you save.</div>
+  </section>
+
   <section class="sec" id="states">
     <div class="fh"><span class="lab">M2</span><h2>States, drawn on the pick</h2><span class="tag t-prop">proposal</span></div>
     <div class="states">
@@ -410,6 +447,20 @@ document.getElementById("mock-s4").innerHTML = frame(`${ph("· merge by property
     <div class="counts"><span class="chip y">13 from you</span><span class="chip t">9 from ${T}</span><span class="chip c" style="background:var(--a-hover);color:var(--a-fg)">4 clashes: 2 yours, 2 theirs</span><span class="chip n">1 of yours left out: Dock_A material</span></div>
     <div class="chk"><span class="ok">✓ No broken references</span><span class="ok">✓ No duplicate fileIDs</span><span class="ok">✓ Every prefab instance resolves</span></div>
     <div class="hint">Saving writes the file and stages it; git stores it in LFS again. Ctrl+Z undoes the save and every pick.</div></div></div>`);
+
+// ---- 3D result variants ----
+const picked2 = { 0: "t", 1: "y" };
+const headBtns = `<button class="sm">Back to pick a side</button><button class="sm">Raw YAML</button><button class="sm pri dis">Save &amp; mark resolved</button>`;
+const pane = (title, right, body, foot) => `<div class="prev"><div class="ph"><span class="name">${title}</span><span class="r">${right}</span></div>${body}${foot}</div>`;
+const legend = `<div class="legend"><span><i style="background:var(--yours)"></i>from you</span><span><i style="background:var(--theirs)"></i>from ${T}</span><span><i style="background:var(--a-bad-ink)"></i>clash</span><span>grey: unchanged</span></div>`;
+const stale = `<div style="padding:5px 10px;background:var(--a-warn);color:var(--a-warn-ink);font-size:11.5px;display:flex;gap:8px;align-items:center">Out of date · 2 picks since<span style="flex:1"></span><button class="sm">Rebuild ${k("R")}</button></div>`;
+document.getElementById("mock-3d-a").innerHTML = frame(`${ph("· merge by property · 2/4 clashes picked", headBtns)}
+  <div class="split"><div>${pills}${m2table(picked2)}</div>${pane("Result · built 14:02", `<button class="sm">Structure</button><button class="sm" style="background:var(--a-sel)">3D</button>`, scene3d(true), stale + legend)}</div>`);
+const busy = `<div style="position:relative">${scene3d(true).replace('class="scene"', 'class="scene" style="opacity:.45"')}<div style="position:absolute;left:10px;right:10px;top:10px;font-size:11.5px;color:var(--a-fg);display:grid;gap:4px">Rebuilding the result… 1.8 s<div style="height:3px;background:var(--a-line);border-radius:2px"><div style="width:55%;height:100%;background:var(--yours)"></div></div></div></div>`;
+document.getElementById("mock-3d-b").innerHTML = frame(`${ph("· merge by property · 2/4 clashes picked", headBtns)}
+  <div class="split"><div>${pills}${m2table(picked2)}</div>${pane("Result · live", `<button class="sm">Structure</button><button class="sm" style="background:var(--a-sel)">3D</button>`, busy, legend)}</div>`);
+document.getElementById("mock-3d-c").innerHTML = frame(`${ph("· merge by property · 2/4 clashes picked", `<button class="sm">Compare yours and theirs in 3D</button>` + headBtns)}
+  <div>${pills}${m2table(picked2)}</div>`);
 </script>
 </body>
 </html>
