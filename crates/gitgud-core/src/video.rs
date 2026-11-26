@@ -109,7 +109,7 @@ fn track(body: &[u8]) -> Track {
                                         b"stts" => {
                                             let n = be32(s, 4).unwrap_or(0) as usize;
                                             t.samples = (0..n)
-                                                .filter_map(|i| be32(s, 8 + i * 8))
+                                                .map_while(|i| be32(s, 8 + i * 8))
                                                 .map(u64::from)
                                                 .sum();
                                         }

@@ -1,12 +1,10 @@
+use std::collections::HashMap;
 use std::hash::Hasher;
 use std::io::Read;
 
 use serde::Serialize;
 use ttf_parser::{Face, OutlineBuilder, name_id};
 use xxhash_rust::xxh64::Xxh64;
-
-use crate::image::Version;
-use crate::repo::{Error, Repo};
 
 /// What the font viewer compares between two versions of a font file.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -44,17 +42,6 @@ pub struct FontAxis {
     pub min: f32,
     pub default: f32,
     pub max: f32,
-}
-
-impl Repo {
-    /// Font `path` at `version`, face `face` of a collection.
-    ///
-    /// # Errors
-    /// [`Error::Refused`] when it isn't in that version or can't be read as a font.
-    pub fn font_info(&self, path: &str, version: &Version, face: u32) -> Result<FontInfo, Error> {
-        let bytes = self.file_bytes(None, path, version, 0)?;
-        read_font(&bytes, face).map_err(|e| Error::Refused(format!("{path}: {e}")))
-    }
 }
 
 /// Reads a TTF / OTF / TTC / WOFF / WOFF2 file.
@@ -95,14 +82,17 @@ pub fn read_font(bytes: &[u8], face: u32) -> Result<FontInfo, String> {
     points.dedup();
     let mut codepoints = Vec::with_capacity(points.len());
     let mut outlines = Vec::with_capacity(points.len());
+    // Many code points can share a glyph (a cmap group may map whole planes to one).
+    let mut hashes: HashMap<u16, u32> = HashMap::new();
     for c in points {
         let Some(gid) = char::from_u32(c).and_then(|ch| f.glyph_index(ch)) else {
             continue;
         };
-        let mut hash = OutlineHash(Xxh64::new(0));
-        let hashed = f
-            .outline_glyph(gid, &mut hash)
-            .map_or(0, |_| (hash.0.finish() as u32).max(1));
+        let hashed = *hashes.entry(gid.0).or_insert_with(|| {
+            let mut hash = OutlineHash(Xxh64::new(0));
+            f.outline_glyph(gid, &mut hash)
+                .map_or(0, |_| (hash.0.finish() as u32).max(1))
+        });
         codepoints.push(c);
         outlines.push(hashed);
     }
@@ -159,13 +149,22 @@ fn be32(b: &[u8], at: usize) -> Option<u32> {
     Some(u32::from_be_bytes(b.get(at..at + 4)?.try_into().ok()?))
 }
 
+/// More tables than any font has: past it the header is damaged.
+const MAX_TABLES: usize = 1024;
+/// The most a WOFF file may unpack to, so a tiny file can't claim gigabytes.
+const MAX_SFNT_BYTES: usize = 64 << 20;
+
 /// Rebuilds the sfnt a WOFF 1.0 file wraps: each table is stored zlib-compressed
 /// unless compressing didn't shrink it.
 fn woff1_to_sfnt(b: &[u8]) -> Result<Vec<u8>, String> {
     let bad = || "this WOFF file is damaged".to_owned();
     let flavor = be32(b, 4).ok_or_else(bad)?;
     let num = usize::from(be16(b, 12).ok_or_else(bad)?);
+    if num > MAX_TABLES {
+        return Err(bad());
+    }
     let mut tables = Vec::with_capacity(num);
+    let mut total = 0usize;
     for i in 0..num {
         let e = 44 + i * 20;
         let tag = be32(b, e).ok_or_else(bad)?;
@@ -173,12 +172,25 @@ fn woff1_to_sfnt(b: &[u8]) -> Result<Vec<u8>, String> {
         let comp = be32(b, e + 8).ok_or_else(bad)? as usize;
         let orig = be32(b, e + 12).ok_or_else(bad)? as usize;
         let checksum = be32(b, e + 16).ok_or_else(bad)?;
-        let raw = b.get(offset..offset + comp).ok_or_else(bad)?;
+        total += orig;
+        if total > MAX_SFNT_BYTES {
+            return Err(format!(
+                "this WOFF file unpacks to over {} MiB",
+                MAX_SFNT_BYTES >> 20
+            ));
+        }
+        let raw = b
+            .get(offset..offset.checked_add(comp).ok_or_else(bad)?)
+            .ok_or_else(bad)?;
         let data = if comp < orig {
             let mut out = Vec::with_capacity(orig);
             flate2::read::ZlibDecoder::new(raw)
+                .take(orig as u64 + 1)
                 .read_to_end(&mut out)
                 .map_err(|_| bad())?;
+            if out.len() != orig {
+                return Err(bad());
+            }
             out
         } else {
             raw.to_vec()
@@ -419,5 +431,32 @@ mod tests {
         assert_eq!(woff.outlines, read_font(&sfnt, 0).unwrap().outlines);
         assert!(read_font(b"not a font at all", 0).is_err());
         assert!(read_font(b"wOF2 broken", 0).is_err());
+    }
+
+    #[test]
+    fn refuses_a_woff_that_claims_gigabytes() {
+        use std::io::Write;
+        let mut z = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::best());
+        z.write_all(&vec![0u8; 1 << 20]).unwrap();
+        let packed = z.finish().unwrap();
+        let mut woff = b"wOFF\0\x01\0\0".to_vec();
+        woff.resize(12, 0);
+        woff.extend_from_slice(&1u16.to_be_bytes());
+        woff.resize(44, 0);
+        for v in [
+            u32::from_be_bytes(*b"glyf"),
+            64,
+            packed.len() as u32,
+            u32::MAX,
+            0,
+        ] {
+            woff.extend_from_slice(&v.to_be_bytes());
+        }
+        woff.extend_from_slice(&packed);
+        let err = read_font(&woff, 0).unwrap_err();
+        assert!(err.contains("over 64 MiB"), "{err}");
+        // The same table, claiming less than it unpacks to.
+        woff[56..60].copy_from_slice(&1000u32.to_be_bytes());
+        assert!(read_font(&woff, 0).is_err());
     }
 }

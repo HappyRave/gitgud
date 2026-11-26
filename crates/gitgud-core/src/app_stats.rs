@@ -85,7 +85,12 @@ pub fn summarize(procs: &[Proc], root: u32, cores: f32) -> AppStats {
     let mut stats = AppStats::default();
     let mut cpu = 0.0;
     let mut todo: Vec<&Proc> = procs.iter().filter(|p| p.pid == root).collect();
+    // A reused pid can name a dead parent's slot and close a loop.
+    let mut seen = std::collections::HashSet::new();
     while let Some(p) = todo.pop() {
+        if !seen.insert(p.pid) {
+            continue;
+        }
         cpu += p.cpu;
         if p.pid == root {
             stats.app_bytes += p.bytes;
@@ -130,6 +135,16 @@ mod tests {
         let s = summarize(&procs, 10, 4.0);
         assert!((s.cpu - 20.0).abs() < 1e-4, "{}", s.cpu);
         assert_eq!((s.app_bytes, s.view_bytes, s.git_bytes), (100, 250, 37));
+    }
+
+    #[test]
+    fn survives_a_reused_pid_that_closes_a_loop() {
+        let procs = [
+            p(5, Some(9), "gitgud.exe", 1.0, 10),
+            p(9, Some(5), "git.exe", 1.0, 20),
+        ];
+        let stats = summarize(&procs, 5, 1.0);
+        assert_eq!((stats.app_bytes, stats.git_bytes), (10, 20));
     }
 
     #[test]

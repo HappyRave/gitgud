@@ -77,6 +77,19 @@ pub fn model_kind(path: &str) -> Option<ModelKind> {
     })
 }
 
+/// Model `path`'s bytes (its LFS object in place) as served: a Unity Mesh `.asset`
+/// converted to GLB, other files as they are.
+///
+/// # Errors
+/// [`Error::Read`] when a Mesh `.asset` can't be converted.
+pub fn served_model(path: &str, bytes: Vec<u8>) -> Result<Vec<u8>, Error> {
+    if model_kind(path) != Some(ModelKind::UnityMesh) {
+        return Ok(bytes);
+    }
+    mesh_asset::mesh_asset_to_glb(&String::from_utf8_lossy(&bytes))
+        .map_err(|e| Error::Read(format!("{path}: {e}")))
+}
+
 /// The MIME type a model file is served with.
 #[must_use]
 pub fn model_mime(kind: ModelKind) -> &'static str {
@@ -164,16 +177,12 @@ impl Repo {
         version: &Version,
         auto_fetch_max_bytes: u64,
     ) -> Result<Vec<u8>, Error> {
-        let Some(kind) = model_kind(path) else {
+        if model_kind(path).is_none() {
             return Err(Error::Refused(format!("{path} is not a 3D model")));
-        };
+        }
         let bytes = self.file_at(path, version)?;
         let bytes = self.lfs_resolve_with_fetch(git, path, bytes, auto_fetch_max_bytes)?;
-        if kind == ModelKind::UnityMesh {
-            return mesh_asset::mesh_asset_to_glb(&String::from_utf8_lossy(&bytes))
-                .map_err(|e| Error::Read(format!("{path}: {e}")));
-        }
-        Ok(bytes)
+        served_model(path, bytes)
     }
 
     /// The Mesh document `id` stored inside the scene or prefab `path` at `version`,

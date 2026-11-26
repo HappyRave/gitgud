@@ -1641,26 +1641,24 @@ impl Session {
         self.get(id)?.repo.stored_image(path, version)
     }
 
-    /// Image `path` at `version` for 3D previews ([`Repo::preview_texture`]), `stored`
-    /// being what [`Session::stored_image`] read; on a miss the image is read as
-    /// [`Session::image_bytes`] does with `auto_fetch`.
+    /// Image `path` for 3D previews ([`Repo::preview_texture`]), `stored` being what
+    /// [`Session::stored_image`] read; on a miss it is decoded as [`Session::image_bytes`]
+    /// does.
     ///
     /// # Errors
     /// [`Error::UnknownRepo`], or as [`Session::image_bytes`] on a miss.
-    #[allow(clippy::too_many_arguments)]
     pub fn preview_texture(
         &self,
         id: u32,
         path: &str,
-        version: &crate::image::Version,
         stored: &[u8],
         max: u32,
         bc: bool,
-        auto_fetch: bool,
     ) -> Result<crate::image::PreviewTexture, Error> {
         let repo = self.get(id)?.repo.clone();
         repo.preview_texture(stored, max, bc, || {
-            self.image_bytes(id, path, version, auto_fetch)
+            let bytes = self.resolve_stored(id, &repo, path, stored.to_vec())?;
+            crate::image::decode_image(path, bytes)
         })
     }
 
@@ -1677,13 +1675,7 @@ impl Session {
         max: u32,
     ) -> Result<Vec<u8>, Error> {
         let repo = self.get(id)?.repo.clone();
-        if let Some((oid, size)) = lfs::parse_lfs_pointer(&repo.file_at(path, version)?)
-            && size <= lfs::AUTO_FETCH_MAX_BYTES
-            && !lfs::lfs_is_hydrated(&repo, &oid)
-            && repo.primary_remote_url().is_some()
-        {
-            self.lfs_fetch_object(id, &oid, size, Some(path))?;
-        }
+        self.fetch_pointed(id, &repo, path, &repo.file_at(path, version)?)?;
         repo.terrain_glb(path, version, max)
     }
 
@@ -2010,8 +2002,41 @@ impl Session {
         lfs::lfs_fetch_object(git, &open.repo, &normalized, size, path)
     }
 
-    /// Reads and decodes image `path` at `version` for repo `id`. When `auto_fetch` is `true`,
-    /// unhydrated LFS pointers up to 25 MiB are downloaded automatically on first preview.
+    /// Downloads the LFS object `stored` (file `path` as git stores it) points to, when it
+    /// is a pointer to an object up to the auto-fetch limit that isn't here yet.
+    ///
+    /// # Errors
+    /// As [`Session::lfs_fetch_object`].
+    fn fetch_pointed(&self, id: u32, repo: &Repo, path: &str, stored: &[u8]) -> Result<(), Error> {
+        if let Some((oid, size)) = lfs::parse_lfs_pointer(stored)
+            && size <= lfs::AUTO_FETCH_MAX_BYTES
+            && !lfs::lfs_is_hydrated(repo, &oid)
+            && repo.primary_remote_url().is_some()
+        {
+            self.lfs_fetch_object(id, &oid, size, Some(path))?;
+        }
+        Ok(())
+    }
+
+    /// `stored` (file `path` as git stores it) with its LFS object in place, downloaded
+    /// first when it is up to the auto-fetch limit.
+    ///
+    /// # Errors
+    /// As [`Session::lfs_fetch_object`]; [`Error::Refused`] when the object is bigger and
+    /// not downloaded.
+    fn resolve_stored(
+        &self,
+        id: u32,
+        repo: &Repo,
+        path: &str,
+        stored: Vec<u8>,
+    ) -> Result<Vec<u8>, Error> {
+        self.fetch_pointed(id, repo, path, &stored)?;
+        repo.lfs_resolve_with_fetch(None, path, stored, lfs::AUTO_FETCH_MAX_BYTES)
+    }
+
+    /// Reads and decodes image `path` at `version` for repo `id`; LFS objects up to the
+    /// auto-fetch limit are fetched first.
     ///
     /// # Errors
     /// [`Error::UnknownRepo`], [`Error::Refused`], [`Error::Read`], or [`Error::Command`].
@@ -2020,20 +2045,10 @@ impl Session {
         id: u32,
         path: &str,
         version: &crate::image::Version,
-        auto_fetch: bool,
     ) -> Result<Vec<u8>, Error> {
         let repo = self.get(id)?.repo.clone();
-        if !auto_fetch {
-            return repo.image_bytes(path, version);
-        }
-        if let Some((oid, size)) = repo.image_lfs_pointer(path, version)?
-            && size <= lfs::AUTO_FETCH_MAX_BYTES
-            && !lfs::lfs_is_hydrated(&repo, &oid)
-            && repo.primary_remote_url().is_some()
-        {
-            self.lfs_fetch_object(id, &oid, size, Some(path))?;
-        }
-        repo.image_bytes_with_fetch(None, path, version, lfs::AUTO_FETCH_MAX_BYTES)
+        let stored = repo.stored_image(path, version)?;
+        crate::image::decode_image(path, self.resolve_stored(id, &repo, path, stored)?)
     }
 
     /// Model `path` at `version`, LFS objects up to the auto-fetch limit fetched first.
@@ -2046,16 +2061,12 @@ impl Session {
         path: &str,
         version: &crate::image::Version,
     ) -> Result<Vec<u8>, Error> {
-        let repo = self.get(id)?.repo.clone();
-        if crate::model::model_kind(path).is_some()
-            && let Some((oid, size)) = lfs::parse_lfs_pointer(&repo.file_at(path, version)?)
-            && size <= lfs::AUTO_FETCH_MAX_BYTES
-            && !lfs::lfs_is_hydrated(&repo, &oid)
-            && repo.primary_remote_url().is_some()
-        {
-            self.lfs_fetch_object(id, &oid, size, Some(path))?;
+        if crate::model::model_kind(path).is_none() {
+            return Err(Error::Refused(format!("{path} is not a 3D model")));
         }
-        repo.model_bytes(None, path, version, lfs::AUTO_FETCH_MAX_BYTES)
+        let repo = self.get(id)?.repo.clone();
+        let stored = repo.file_at(path, version)?;
+        crate::model::served_model(path, self.resolve_stored(id, &repo, path, stored)?)
     }
 
     /// `path` at `version` as stored, LFS objects up to the auto-fetch limit fetched first.
@@ -2069,17 +2080,11 @@ impl Session {
         version: &crate::image::Version,
     ) -> Result<Vec<u8>, Error> {
         let repo = self.get(id)?.repo.clone();
-        if let Some((oid, size)) = repo.lfs_pointer_at(path, version)?
-            && size <= lfs::AUTO_FETCH_MAX_BYTES
-            && !lfs::lfs_is_hydrated(&repo, &oid)
-            && repo.primary_remote_url().is_some()
-        {
-            self.lfs_fetch_object(id, &oid, size, Some(path))?;
-        }
-        repo.file_bytes(None, path, version, lfs::AUTO_FETCH_MAX_BYTES)
+        let stored = repo.file_at(path, version)?;
+        self.resolve_stored(id, &repo, path, stored)
     }
 
-    /// See [`Repo::font_info`]; LFS objects up to the auto-fetch limit are fetched first.
+    /// See [`crate::font::read_font`]; LFS objects up to the auto-fetch limit are fetched first.
     ///
     /// # Errors
     /// As [`Session::file_bytes`], or when the file can't be read as a font.
@@ -2125,7 +2130,7 @@ impl Session {
 
     /// The file model `near` refers to as `reference` at `version`, found by
     /// [`Repo::model_reference`]: images decoded as [`Session::image_bytes`]
-    /// does, anything else (a glTF `.bin`) as stored.
+    /// does, anything else (a glTF `.bin`) as [`Session::file_bytes`] reads it.
     ///
     /// # Errors
     /// [`Error::Refused`] when no such file is in that version; as [`Session::image_bytes`] otherwise.
@@ -2141,10 +2146,9 @@ impl Session {
             .model_reference(near, reference, version)?
             .ok_or_else(|| Error::Refused(format!("{reference} is not in that version")))?;
         if crate::image::image_type(&path).is_some() {
-            return self.image_bytes(id, &path, version, true);
+            return self.image_bytes(id, &path, version);
         }
-        let bytes = repo.file_at(&path, version)?;
-        repo.lfs_resolve_with_fetch(None, &path, bytes, 0)
+        self.file_bytes(id, &path, version)
     }
 
     /// See [`Repo::model_info`].

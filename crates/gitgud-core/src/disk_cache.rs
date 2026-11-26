@@ -201,7 +201,9 @@ fn read(file: &Path) -> Option<Vec<u8>> {
 
 /// Writes through a temporary file, so a concurrent reader never sees half a file.
 fn write(file: &Path, bytes: &[u8]) {
-    let tmp = file.with_extension(format!("{}.tmp", std::process::id()));
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = file.with_extension(format!("{}-{n}.tmp", std::process::id()));
     let done = file
         .parent()
         .map_or(Ok(()), fs::create_dir_all)

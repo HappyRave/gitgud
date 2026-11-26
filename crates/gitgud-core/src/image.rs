@@ -46,13 +46,13 @@ pub fn image_type(path: &str) -> Option<&'static str> {
     })
 }
 
-/// Bytes held, and each prepared texture (or `None`: left as is) by content hash, size
-/// limit and kind. An entry is there while it is being prepared, so concurrent requests
-/// for the same texture (both sides of a compare, a warm-up) wait for one result.
-type ShrunkCache = (
-    usize,
-    std::collections::HashMap<u64, std::sync::Arc<std::sync::OnceLock<Option<Vec<u8>>>>>,
-);
+/// A prepared texture's place in the memory cache: empty until prepared, then the texture
+/// (or `None`: left as is). Locked while it is prepared, so concurrent requests for the
+/// same texture (both sides of a compare, a warm-up) wait for one result.
+type Slot = std::sync::Arc<std::sync::Mutex<Option<Option<Vec<u8>>>>>;
+
+/// Bytes held, and each texture's slot by content hash, size limit and kind.
+type ShrunkCache = (usize, std::collections::HashMap<u64, Slot>);
 
 /// How many times each texture was actually prepared (not found in a cache), for tests.
 #[cfg(test)]
@@ -69,7 +69,7 @@ const SHRUNK_BUDGET: usize = 256 * 1024 * 1024;
 /// `None` when it is already small enough or can't be decoded, so the original is used.
 #[must_use]
 pub fn shrink_image(bytes: &[u8], max: u32) -> Option<Vec<u8>> {
-    prepare_through(bytes, bytes, max, Prepared::Png, None)
+    prepare(bytes, max, Prepared::Png, None, &mut || Ok(bytes)).unwrap_or(None)
 }
 
 /// A texture for 3D previews.
@@ -96,22 +96,18 @@ fn texture_key(source: &[u8], max: u32, kind: Prepared) -> u64 {
     xxhash_rust::xxh64::xxh64(source, u64::from(max) | ((kind as u64) << 32))
 }
 
-type Slot = std::sync::Arc<std::sync::OnceLock<Option<Vec<u8>>>>;
-
-/// The memory cache's slot for `key`, and whether it was just made.
-fn slot(key: u64) -> (Slot, bool) {
-    let mut cache = SHRUNK.lock().expect("shrunk lock poisoned");
-    match cache.1.get(&key) {
-        Some(slot) => (slot.clone(), false),
-        None => {
-            let slot = Slot::default();
-            cache.1.insert(key, slot.clone());
-            (slot, true)
-        }
-    }
+/// The memory cache's slot for `key`, made when there is none.
+fn slot(key: u64) -> Slot {
+    SHRUNK
+        .lock()
+        .expect("shrunk lock poisoned")
+        .1
+        .entry(key)
+        .or_default()
+        .clone()
 }
 
-/// Counts a new slot's result against the memory budget.
+/// Counts a just-filled slot's texture against the memory budget.
 fn account(out: Option<&Vec<u8>>) {
     let mut cache = SHRUNK.lock().expect("shrunk lock poisoned");
     cache.0 += out.map_or(0, Vec::len);
@@ -120,59 +116,43 @@ fn account(out: Option<&Vec<u8>>) {
     }
 }
 
-/// The texture kept for `source` as `kind`, in memory or on `disk`, without preparing it.
-fn kept(
+/// The texture `source` (what identifies the image) gives as `kind`: from the memory
+/// cache, else `disk`, else prepared from `bytes()`, which only runs then and whose
+/// error is returned without keeping anything.
+fn prepare<'b>(
     source: &[u8],
-    max: u32,
-    kind: Prepared,
-    disk: &crate::disk_cache::DiskCache,
-) -> Option<Option<Vec<u8>>> {
-    let key = texture_key(source, max, kind);
-    let (slot, first) = slot(key);
-    if let Some(out) = slot.get() {
-        return Some(out.clone());
-    }
-    let hit = disk.texture(key)?;
-    if slot.set(hit.clone()).is_ok() && first {
-        account(hit.as_ref());
-    }
-    Some(hit)
-}
-
-/// Prepares `bytes` as `kind`, kept under `source` (what identifies them) in the memory
-/// cache, then `disk`, kept up to date.
-fn prepare_through(
-    source: &[u8],
-    bytes: &[u8],
     max: u32,
     kind: Prepared,
     disk: Option<&crate::disk_cache::DiskCache>,
-) -> Option<Vec<u8>> {
+    bytes: &mut dyn FnMut() -> Result<&'b [u8], Error>,
+) -> Result<Option<Vec<u8>>, Error> {
     let key = texture_key(source, max, kind);
-    let (slot, first) = slot(key);
-    let out = slot
-        .get_or_init(|| match disk.and_then(|d| d.texture(key)) {
-            Some(hit) => hit,
-            None => {
-                #[cfg(test)]
-                {
-                    *PREPARED.lock().unwrap().entry(key).or_default() += 1;
-                }
-                let out = match kind {
-                    Prepared::Png => shrink_uncached(bytes, max),
-                    Prepared::Bc => crate::gpu_texture::bc_dds(bytes, max),
-                };
-                if let Some(d) = disk {
-                    d.put_texture(key, out.as_deref());
-                }
-                out
-            }
-        })
-        .clone();
-    if first {
-        account(out.as_ref());
+    let slot = slot(key);
+    let mut held = slot.lock().expect("texture slot poisoned");
+    if let Some(out) = held.as_ref() {
+        return Ok(out.clone());
     }
-    out
+    let out = match disk.and_then(|d| d.texture(key)) {
+        Some(hit) => hit,
+        None => {
+            let bytes = bytes()?;
+            #[cfg(test)]
+            {
+                *PREPARED.lock().unwrap().entry(key).or_default() += 1;
+            }
+            let out = match kind {
+                Prepared::Png => shrink_uncached(bytes, max),
+                Prepared::Bc => crate::gpu_texture::bc_dds(bytes, max),
+            };
+            if let Some(d) = disk {
+                d.put_texture(key, out.as_deref());
+            }
+            out
+        }
+    };
+    account(out.as_ref());
+    *held = Some(out.clone());
+    Ok(out)
 }
 
 /// Drops the shrunk textures kept in memory.
@@ -213,14 +193,14 @@ impl Repo {
     #[must_use]
     pub fn shrink_texture(&self, bytes: &[u8], max: u32) -> Option<Vec<u8>> {
         let disk = crate::disk_cache::DiskCache::new(self);
-        prepare_through(bytes, bytes, max, Prepared::Png, Some(&disk))
+        prepare(bytes, max, Prepared::Png, Some(&disk), &mut || Ok(bytes)).unwrap_or(None)
     }
 
     /// [`crate::gpu_texture::bc_dds`], kept in memory and in the repo's disk cache.
     #[must_use]
     pub fn compressed_texture(&self, bytes: &[u8], max: u32) -> Option<Vec<u8>> {
         let disk = crate::disk_cache::DiskCache::new(self);
-        prepare_through(bytes, bytes, max, Prepared::Bc, Some(&disk))
+        prepare(bytes, max, Prepared::Bc, Some(&disk), &mut || Ok(bytes)).unwrap_or(None)
     }
 
     /// The image `decode` gives, for 3D previews: GPU-compressed when `bc` and it can be,
@@ -247,20 +227,25 @@ impl Repo {
             Prepared::Bc => PreviewTexture::Dds(out),
             Prepared::Png => PreviewTexture::Png(out),
         };
-        for &kind in kinds {
-            match kept(stored, max, kind, &disk) {
-                Some(Some(out)) => return Ok(wrap(kind, out)),
-                Some(None) => {}
-                None => break,
+        // Decoded at most once, and only when a kind isn't kept yet.
+        let decoded = std::cell::OnceCell::new();
+        let mut decode = Some(decode);
+        let mut bytes = || -> Result<&[u8], Error> {
+            if decoded.get().is_none() {
+                let run = decode.take().expect("decoded once");
+                let _ = decoded.set(run()?);
             }
-        }
-        let bytes = decode()?;
+            Ok(decoded.get().expect("just decoded").as_slice())
+        };
         for &kind in kinds {
-            if let Some(out) = prepare_through(stored, &bytes, max, kind, Some(&disk)) {
+            if let Some(out) = prepare(stored, max, kind, Some(&disk), &mut bytes)? {
                 return Ok(wrap(kind, out));
             }
         }
-        Ok(PreviewTexture::Original(bytes))
+        bytes()?;
+        Ok(PreviewTexture::Original(
+            decoded.into_inner().expect("just decoded"),
+        ))
     }
 
     /// The bytes of image `path` at `version`; an LFS pointer is swapped for its
@@ -270,56 +255,9 @@ impl Repo {
     /// [`Error::Refused`] when `path` isn't an image, doesn't exist in that
     /// version, or its LFS object isn't downloaded; [`Error::Read`] otherwise.
     pub fn image_bytes(&self, path: &str, version: &Version) -> Result<Vec<u8>, Error> {
-        self.image_bytes_with_fetch(None, path, version, 0)
-    }
-
-    /// Reads image `path` at `version`, optionally fetching unhydrated LFS objects
-    /// up to `auto_fetch_max_bytes` via `git` before decoding.
-    ///
-    /// # Errors
-    /// [`Error::Refused`] when `path` isn't an image, doesn't exist in that version,
-    /// or its LFS object requires manual fetch; [`Error::Read`] / [`Error::Command`] otherwise.
-    pub fn image_bytes_with_fetch(
-        &self,
-        git: Option<&GitCli>,
-        path: &str,
-        version: &Version,
-        auto_fetch_max_bytes: u64,
-    ) -> Result<Vec<u8>, Error> {
-        let bytes = self.read_version_bytes(path, version)?;
-        let resolved = self.lfs_resolve_with_fetch(git, path, bytes, auto_fetch_max_bytes)?;
-        let ext = Path::new(path)
-            .extension()
-            .and_then(|e| e.to_str())
-            .map(str::to_ascii_lowercase);
-        match ext.as_deref() {
-            Some("tga") => decode_tga_to_png(&resolved)
-                .map_err(|e| Error::Read(format!("{path}: invalid TGA ({e})"))),
-            Some("psd") => decode_psd_to_png(&resolved)
-                .map_err(|e| Error::Read(format!("{path}: invalid PSD ({e})"))),
-            Some("dds") => decode_dds_to_png(&resolved)
-                .map_err(|e| Error::Read(format!("{path}: invalid DDS ({e})"))),
-            Some("exr") => decode_hdr_format_to_png(&resolved, ImageFormat::OpenExr)
-                .map_err(|e| Error::Read(format!("{path}: invalid EXR ({e})"))),
-            Some("hdr") => decode_hdr_format_to_png(&resolved, ImageFormat::Hdr)
-                .map_err(|e| Error::Read(format!("{path}: invalid HDR ({e})"))),
-            Some("tif" | "tiff") => decode_tiff_to_png(&resolved)
-                .map_err(|e| Error::Read(format!("{path}: invalid TIFF ({e})"))),
-            _ => Ok(resolved),
-        }
-    }
-
-    /// Returns `(oid, size)` when `path` at `version` is a Git LFS pointer.
-    ///
-    /// # Errors
-    /// [`Error::Refused`] when `path` isn't an image or missing, [`Error::Read`] otherwise.
-    pub(crate) fn image_lfs_pointer(
-        &self,
-        path: &str,
-        version: &Version,
-    ) -> Result<Option<(String, u64)>, Error> {
-        let bytes = self.read_version_bytes(path, version)?;
-        Ok(parse_lfs_pointer(&bytes))
+        let stored = self.stored_image(path, version)?;
+        let resolved = self.lfs_resolve_with_fetch(None, path, stored, 0)?;
+        decode_image(path, resolved)
     }
 
     /// Image `path` at `version` as git stores it: its content, or its LFS pointer.
@@ -327,10 +265,6 @@ impl Repo {
     /// # Errors
     /// As [`Repo::image_bytes`], short of reading the LFS object.
     pub fn stored_image(&self, path: &str, version: &Version) -> Result<Vec<u8>, Error> {
-        self.read_version_bytes(path, version)
-    }
-
-    fn read_version_bytes(&self, path: &str, version: &Version) -> Result<Vec<u8>, Error> {
         if image_type(path).is_none() {
             return Err(Error::Refused(format!("{path} is not an image")));
         }
@@ -341,12 +275,16 @@ impl Repo {
     /// A gitignored file has no versions, so every version reads its disk copy.
     ///
     /// # Errors
-    /// [`Error::Refused`] when `path` escapes the repo or isn't in that version,
-    /// [`Error::Read`] otherwise.
+    /// [`Error::Refused`] when `path` escapes the repo, is inside `.git`, or isn't in
+    /// that version; [`Error::Read`] otherwise.
     pub fn file_at(&self, path: &str, version: &Version) -> Result<Vec<u8>, Error> {
-        let inside = Path::new(path)
-            .components()
-            .all(|c| matches!(c, std::path::Component::Normal(_)));
+        let mut parts = Path::new(path).components();
+        let inside = parts
+            .clone()
+            .all(|c| matches!(c, std::path::Component::Normal(_)))
+            && !parts
+                .next()
+                .is_some_and(|c| c.as_os_str().eq_ignore_ascii_case(".git"));
         if !inside {
             return Err(Error::Refused(format!(
                 "{path} is not a path inside the repo"
@@ -493,6 +431,31 @@ impl Repo {
     }
 }
 
+/// Image `path`'s bytes (its LFS object in place) as the webview can show them: TGA,
+/// PSD, DDS, EXR, HDR and TIFF decoded to PNG, the rest as they are.
+///
+/// # Errors
+/// [`Error::Read`] when a format decoded here doesn't decode.
+pub fn decode_image(path: &str, bytes: Vec<u8>) -> Result<Vec<u8>, Error> {
+    let ext = Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase);
+    let (decoded, kind) = match ext.as_deref() {
+        Some("tga") => (decode_tga_to_png(&bytes), "TGA"),
+        Some("psd") => (decode_psd_to_png(&bytes), "PSD"),
+        Some("dds") => (decode_dds_to_png(&bytes), "DDS"),
+        Some("exr") => (
+            decode_hdr_format_to_png(&bytes, ImageFormat::OpenExr),
+            "EXR",
+        ),
+        Some("hdr") => (decode_hdr_format_to_png(&bytes, ImageFormat::Hdr), "HDR"),
+        Some("tif" | "tiff") => (decode_tiff_to_png(&bytes), "TIFF"),
+        _ => return Ok(bytes),
+    };
+    decoded.map_err(|e| Error::Read(format!("{path}: invalid {kind} ({e})")))
+}
+
 fn format_bytes(bytes: u64) -> String {
     if bytes < 1024 {
         return format!("{bytes} B");
@@ -628,7 +591,7 @@ fn decode_tga_to_png(data: &[u8]) -> Result<Vec<u8>, String> {
         }
     }
 
-    Ok(encode_rgba_png(width, height, &rgba))
+    encode_rgba_png(width, height, &rgba)
 }
 
 fn decode_psd_to_png(data: &[u8]) -> Result<Vec<u8>, String> {
@@ -757,7 +720,7 @@ fn decode_psd_to_png(data: &[u8]) -> Result<Vec<u8>, String> {
             };
         }
     }
-    Ok(encode_rgba_png(width, height, &rgba))
+    encode_rgba_png(width, height, &rgba)
 }
 
 fn decode_dds_to_png(data: &[u8]) -> Result<Vec<u8>, String> {
@@ -775,14 +738,14 @@ fn decode_dds_to_png(data: &[u8]) -> Result<Vec<u8>, String> {
             .into_image()
             .map_err(|e| e.to_string())?;
         let rgba = tonemap_rgba32f_to_rgba8(img.as_raw());
-        Ok(encode_rgba_png(img.width(), img.height(), &rgba))
+        encode_rgba_png(img.width(), img.height(), &rgba)
     } else {
         let img = surface
             .decode_layers_mipmaps_rgba8(0..1, 0..1)
             .map_err(|e| e.to_string())?
             .into_image()
             .map_err(|e| e.to_string())?;
-        Ok(encode_rgba_png(img.width(), img.height(), img.as_raw()))
+        encode_rgba_png(img.width(), img.height(), img.as_raw())
     }
 }
 
@@ -816,7 +779,7 @@ fn decode_hdr_format_to_png(data: &[u8], format: ImageFormat) -> Result<Vec<u8>,
     let dyn_img = image::load_from_memory_with_format(data, format).map_err(|e| e.to_string())?;
     let rgba32f = dyn_img.into_rgba32f();
     let rgba = tonemap_rgba32f_to_rgba8(rgba32f.as_raw());
-    Ok(encode_rgba_png(rgba32f.width(), rgba32f.height(), &rgba))
+    encode_rgba_png(rgba32f.width(), rgba32f.height(), &rgba)
 }
 
 fn decode_tiff_to_png(data: &[u8]) -> Result<Vec<u8>, String> {
@@ -824,7 +787,7 @@ fn decode_tiff_to_png(data: &[u8]) -> Result<Vec<u8>, String> {
     let dyn_img =
         image::load_from_memory_with_format(data, ImageFormat::Tiff).map_err(|e| e.to_string())?;
     let rgba = dyn_img.into_rgba8();
-    Ok(encode_rgba_png(rgba.width(), rgba.height(), rgba.as_raw()))
+    encode_rgba_png(rgba.width(), rgba.height(), rgba.as_raw())
 }
 
 fn tonemap_rgba32f_to_rgba8(raw: &[f32]) -> Vec<u8> {
@@ -877,92 +840,17 @@ fn unpack_bits(src: &[u8], dst: &mut [u8]) -> Result<(), String> {
     Ok(())
 }
 
-fn encode_rgba_png(width: u32, height: u32, rgba: &[u8]) -> Vec<u8> {
-    let row_bytes = (width as usize) * 4 + 1;
-    let mut raw = Vec::with_capacity(row_bytes * (height as usize));
-    for y in 0..height as usize {
-        raw.push(0); // filter 0 (None)
-        let start = y * (width as usize) * 4;
-        raw.extend_from_slice(&rgba[start..start + (width as usize) * 4]);
-    }
-
-    // Stored zlib stream (no external deflate dependency needed).
-    let mut zlib = Vec::with_capacity(raw.len() + 64);
-    zlib.extend_from_slice(&[0x78, 0x01]);
-    let mut off = 0usize;
-    while off < raw.len() {
-        let len = (raw.len() - off).min(65_535);
-        let is_last = off + len == raw.len();
-        zlib.push(u8::from(is_last));
-        let len_u16 = u16::try_from(len).expect("chunk <= 65535");
-        zlib.extend_from_slice(&len_u16.to_le_bytes());
-        zlib.extend_from_slice(&(!len_u16).to_le_bytes());
-        zlib.extend_from_slice(&raw[off..off + len]);
-        off += len;
-    }
-    zlib.extend_from_slice(&adler32(&raw).to_be_bytes());
-
-    let mut png = Vec::with_capacity(zlib.len() + 64);
-    png.extend_from_slice(b"\x89PNG\r\n\x1a\n");
-    let mut ihdr = Vec::with_capacity(13);
-    ihdr.extend_from_slice(&width.to_be_bytes());
-    ihdr.extend_from_slice(&height.to_be_bytes());
-    ihdr.extend_from_slice(&[8, 6, 0, 0, 0]); // 8-bit RGBA
-    write_png_chunk(&mut png, *b"IHDR", &ihdr);
-    write_png_chunk(&mut png, *b"IDAT", &zlib);
-    write_png_chunk(&mut png, *b"IEND", &[]);
-    png
-}
-
-fn write_png_chunk(out: &mut Vec<u8>, kind: [u8; 4], data: &[u8]) {
-    let len = u32::try_from(data.len()).expect("PNG chunk fits u32");
-    out.extend_from_slice(&len.to_be_bytes());
-    out.extend_from_slice(&kind);
-    out.extend_from_slice(data);
-    let crc = !crc32_update(crc32_update(0xFFFF_FFFF, &kind), data);
-    out.extend_from_slice(&crc.to_be_bytes());
-}
-
-fn adler32(data: &[u8]) -> u32 {
-    const MOD: u32 = 65_521;
-    const NMAX: usize = 5552;
-    let (mut s1, mut s2) = (1u32, 0u32);
-    for chunk in data.chunks(NMAX) {
-        for &b in chunk {
-            s1 += u32::from(b);
-            s2 += s1;
-        }
-        s1 %= MOD;
-        s2 %= MOD;
-    }
-    (s2 << 16) | s1
-}
-
-const CRC32_TABLE: [u32; 256] = {
-    let mut table = [0u32; 256];
-    let mut i = 0usize;
-    while i < 256 {
-        let mut c = i as u32;
-        let mut k = 0;
-        while k < 8 {
-            c = if c & 1 != 0 {
-                0xEDB8_8320 ^ (c >> 1)
-            } else {
-                c >> 1
-            };
-            k += 1;
-        }
-        table[i] = c;
-        i += 1;
-    }
-    table
-};
-
-fn crc32_update(mut crc: u32, data: &[u8]) -> u32 {
-    for &b in data {
-        crc = CRC32_TABLE[((crc ^ u32::from(b)) & 0xFF) as usize] ^ (crc >> 8);
-    }
-    crc
+/// `rgba` as fast-compressed PNG.
+fn encode_rgba_png(width: u32, height: u32, rgba: &[u8]) -> Result<Vec<u8>, String> {
+    let mut png = Vec::new();
+    image::codecs::png::PngEncoder::new_with_quality(
+        &mut png,
+        image::codecs::png::CompressionType::Fast,
+        image::codecs::png::FilterType::Adaptive,
+    )
+    .write_image(rgba, width, height, image::ExtendedColorType::Rgba8)
+    .map_err(|e| e.to_string())?;
+    Ok(png)
 }
 
 #[cfg(test)]

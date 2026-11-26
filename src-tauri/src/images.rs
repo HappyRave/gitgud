@@ -3,6 +3,7 @@ use gitgud_core::model::{model_kind, model_mime};
 use gitgud_core::preview::file_mime;
 use gitgud_core::repo::Error;
 use gitgud_core::session::Session;
+use std::sync::{Condvar, Mutex};
 use std::time::{Duration, Instant};
 use tauri::Url;
 use tauri::http::{Response, StatusCode, header};
@@ -30,6 +31,7 @@ pub fn respond_timed(
     body: &[u8],
     arrived: Instant,
 ) -> Response<Vec<u8>> {
+    let _turn = Turn::take();
     let started = Instant::now();
     let mut steps = Steps::default();
     let answer = read(session, method, uri, body, &mut steps);
@@ -45,6 +47,9 @@ pub fn respond_timed(
             .header(header::CONTENT_TYPE, mime)
             .header(header::CONTENT_LENGTH, bytes.len())
             .header(header::CACHE_CONTROL, "no-store")
+            // Repo files are data: never sniffed, and an SVG or HTML one can't run script.
+            .header(header::X_CONTENT_TYPE_OPTIONS, "nosniff")
+            .header(header::CONTENT_SECURITY_POLICY, "sandbox")
             .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
             .header(
                 header::ACCESS_CONTROL_EXPOSE_HEADERS,
@@ -64,6 +69,34 @@ pub fn respond_timed(
 #[cfg(test)]
 pub fn respond(session: &Session, uri: &str) -> Response<Vec<u8>> {
     respond_timed(session, "GET", uri, &[], Instant::now())
+}
+
+/// Requests answered at once: a scene asks for hundreds of textures together, and each
+/// can decode a full image, so the rest wait their turn.
+static RUNNING: (Mutex<usize>, Condvar) = (Mutex::new(0), Condvar::new());
+
+/// One request's turn to run, given back when dropped.
+struct Turn;
+
+impl Turn {
+    fn take() -> Self {
+        let most = std::thread::available_parallelism().map_or(4, |n| n.get().max(4));
+        let (count, freed) = &RUNNING;
+        let mut running = count.lock().expect("request count poisoned");
+        while *running >= most {
+            running = freed.wait(running).expect("request count poisoned");
+        }
+        *running += 1;
+        Turn
+    }
+}
+
+impl Drop for Turn {
+    fn drop(&mut self) {
+        let (count, freed) = &RUNNING;
+        *count.lock().expect("request count poisoned") -= 1;
+        freed.notify_one();
+    }
 }
 
 #[derive(Default)]
@@ -186,10 +219,9 @@ fn read(
         }
         _ => {
             let mime = image_type(&path).ok_or_else(|| bad("not an image"))?;
-            let auto_fetch = param("autofetch").as_deref() != Some("0");
             let Some(max) = max else {
                 let bytes = timed(&mut steps.read, || {
-                    session.image_bytes(repo, &path, &version, auto_fetch)
+                    session.image_bytes(repo, &path, &version)
                 })
                 .map_err(fail)?;
                 return Ok((bytes, mime));
@@ -200,7 +232,7 @@ fn read(
             })
             .map_err(fail)?;
             let texture = timed(&mut steps.shrink, || {
-                session.preview_texture(repo, &path, &version, &stored, max, bc, auto_fetch)
+                session.preview_texture(repo, &path, &stored, max, bc)
             })
             .map_err(fail)?;
             Ok(match texture {

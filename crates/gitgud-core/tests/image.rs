@@ -108,15 +108,11 @@ fn large_unhydrated_lfs_pointer_refuses_auto_fetch_and_prompts_fetch() {
     );
     repo.write("big.png", &pointer).commit_all("large lfs");
     repo.git(&["remote", "add", "origin", "https://example.invalid/r.git"]);
-    let r = repo::open(repo.path()).unwrap();
+    let session = Session::default();
+    let id = session.open(repo.path()).unwrap().id;
 
-    let err = r
-        .image_bytes_with_fetch(
-            None,
-            "big.png",
-            &Version::Head,
-            gitgud_core::lfs::AUTO_FETCH_MAX_BYTES,
-        )
+    let err = session
+        .image_bytes(id, "big.png", &Version::Head)
         .unwrap_err();
     assert!(
         matches!(err, Error::Refused(m) if m.contains("click Fetch")),

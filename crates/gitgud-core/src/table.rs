@@ -306,13 +306,20 @@ pub fn diff_tables(before: Option<&[Table]>, after: &[Table]) -> Vec<TableDiff> 
 
 fn diff_table(before: Option<&Table>, after: &Table) -> TableDiff {
     let truncated = after.rows.len() > MAX_ROWS || before.is_some_and(|b| b.rows.len() > MAX_ROWS);
-    let cut = |t: &Table| Table {
-        name: t.name.clone(),
-        columns: t.columns.clone(),
-        rows: t.rows.iter().take(MAX_ROWS).cloned().collect(),
-    };
+    fn cut(t: &Table) -> std::borrow::Cow<'_, Table> {
+        if t.rows.len() <= MAX_ROWS {
+            return std::borrow::Cow::Borrowed(t);
+        }
+        std::borrow::Cow::Owned(Table {
+            name: t.name.clone(),
+            columns: t.columns.clone(),
+            rows: t.rows[..MAX_ROWS].to_vec(),
+        })
+    }
     let after = cut(after);
+    let after = after.as_ref();
     let before = before.map(cut);
+    let before = before.as_deref();
     let mut columns = after.columns.clone();
     let mut removed_columns = Vec::new();
     let mut added_columns = Vec::new();
@@ -330,19 +337,37 @@ fn diff_table(before: Option<&Table>, after: &Table) -> TableDiff {
             .cloned()
             .collect();
     }
-    let cell = |t: &Table, row: &[String], col: &str| {
-        t.columns
+    // Where each of `columns` is in a table, worked out once per table.
+    let places = |t: &Table| -> Vec<Option<usize>> {
+        let at: HashMap<&str, usize> = t
+            .columns
             .iter()
-            .position(|c| c == col)
-            .map(|i| row.get(i).cloned().unwrap_or_default())
+            .enumerate()
+            .rev()
+            .map(|(i, c)| (c.as_str(), i))
+            .collect();
+        columns
+            .iter()
+            .map(|c| at.get(c.as_str()).copied())
+            .collect()
     };
+    let cell = |places: &[Option<usize>], row: &[String], col: usize| {
+        places[col].map(|i| row.get(i).cloned().unwrap_or_default())
+    };
+    let row_cells = |places: &[Option<usize>], row: &[String]| -> Vec<Option<String>> {
+        (0..columns.len()).map(|c| cell(places, row, c)).collect()
+    };
+    let in_after = places(after);
     let Some(b) = before else {
         let rows = after
             .rows
             .iter()
             .map(|r| RowDiff {
                 state: RowState::Same,
-                cells: columns.iter().map(|c| [None, cell(&after, r, c)]).collect(),
+                cells: row_cells(&in_after, r)
+                    .into_iter()
+                    .map(|n| [None, n])
+                    .collect(),
             })
             .collect();
         return TableDiff {
@@ -360,12 +385,13 @@ fn diff_table(before: Option<&Table>, after: &Table) -> TableDiff {
             truncated,
         };
     };
-    let key = key_column(&columns, &[&b, &after]);
-    let key_of = |t: &Table, r: &[String]| key.and_then(|k| cell(t, r, &columns[k]));
+    let key = key_column(&columns, &[b, after]);
+    let in_b = places(b);
+    let key_of = |places: &[Option<usize>], r: &[String]| key.and_then(|k| cell(places, r, k));
     let mut b_index: HashMap<String, usize> = HashMap::new();
     if key.is_some() {
         for (i, r) in b.rows.iter().enumerate() {
-            b_index.insert(key_of(&b, r).unwrap_or_default(), i);
+            b_index.insert(key_of(&in_b, r).unwrap_or_default(), i);
         }
     }
     let mut used = vec![false; b.rows.len()];
@@ -373,7 +399,9 @@ fn diff_table(before: Option<&Table>, after: &Table) -> TableDiff {
     let (mut changed, mut changed_cells, mut added) = (0, 0, 0);
     for (i, r) in after.rows.iter().enumerate() {
         let matched = if key.is_some() {
-            b_index.get(&key_of(&after, r).unwrap_or_default()).copied()
+            b_index
+                .get(&key_of(&in_after, r).unwrap_or_default())
+                .copied()
         } else {
             (i < b.rows.len()).then_some(i)
         };
@@ -381,14 +409,16 @@ fn diff_table(before: Option<&Table>, after: &Table) -> TableDiff {
             added += 1;
             rows.push(RowDiff {
                 state: RowState::Added,
-                cells: columns.iter().map(|c| [None, cell(&after, r, c)]).collect(),
+                cells: row_cells(&in_after, r)
+                    .into_iter()
+                    .map(|n| [None, n])
+                    .collect(),
             });
             continue;
         };
         used[bi] = true;
-        let cells: Vec<[Option<String>; 2]> = columns
-            .iter()
-            .map(|c| [cell(&b, &b.rows[bi], c), cell(&after, r, c)])
+        let cells: Vec<[Option<String>; 2]> = (0..columns.len())
+            .map(|c| [cell(&in_b, &b.rows[bi], c), cell(&in_after, r, c)])
             .collect();
         let diffs = cells
             .iter()
@@ -413,7 +443,7 @@ fn diff_table(before: Option<&Table>, after: &Table) -> TableDiff {
             removed += 1;
             rows.push(RowDiff {
                 state: RowState::Removed,
-                cells: columns.iter().map(|c| [cell(&b, r, c), None]).collect(),
+                cells: row_cells(&in_b, r).into_iter().map(|o| [o, None]).collect(),
             });
         }
     }

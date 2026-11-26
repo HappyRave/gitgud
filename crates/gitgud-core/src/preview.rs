@@ -3,7 +3,6 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 
 use crate::image::Version;
-use crate::lfs::parse_lfs_pointer;
 use crate::repo::{Error, Repo, read_err};
 
 /// The MIME type a file is served with on the `gitgud` protocol's `/file` route.
@@ -52,18 +51,6 @@ impl Repo {
     ) -> Result<Vec<u8>, Error> {
         let bytes = self.file_at(path, version)?;
         self.lfs_resolve_with_fetch(git, path, bytes, auto_fetch_max_bytes)
-    }
-
-    /// The LFS object `path` points to at `version`, if it is a pointer.
-    ///
-    /// # Errors
-    /// As [`Repo::file_at`].
-    pub fn lfs_pointer_at(
-        &self,
-        path: &str,
-        version: &Version,
-    ) -> Result<Option<(String, u64)>, Error> {
-        Ok(parse_lfs_pointer(&self.file_at(path, version)?))
     }
 
     /// Whether a Unity file is stored as text, and the class of its first object.
@@ -147,6 +134,17 @@ pub fn write_open_copy(path: &str, label: &str, bytes: &[u8]) -> Result<PathBuf,
     } else {
         format!("{stem} ({safe}).{ext}")
     });
+    // An earlier copy (the same version opened again) is read-only.
+    match std::fs::metadata(&file) {
+        Ok(old) => {
+            let mut perms = old.permissions();
+            #[allow(clippy::permissions_set_readonly_false)]
+            perms.set_readonly(false);
+            std::fs::set_permissions(&file, perms).map_err(read_err)?;
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(read_err(e)),
+    }
     std::fs::write(&file, bytes).map_err(read_err)?;
     let mut perms = std::fs::metadata(&file).map_err(read_err)?.permissions();
     perms.set_readonly(true);
@@ -239,6 +237,13 @@ mod tests {
         assert!(copy.ends_with("horn (HEAD-1a2b).wav"));
         assert_eq!(std::fs::read(&copy).unwrap(), b"RIFF-one");
         assert!(std::fs::metadata(&copy).unwrap().permissions().readonly());
+        let again = write_open_copy("Assets/Audio/horn.wav", "HEAD 1a2b", b"RIFF-new").unwrap();
+        assert_eq!(again, copy, "opened again: the read-only copy is rewritten");
+        assert_eq!(std::fs::read(&copy).unwrap(), b"RIFF-new");
+        assert!(matches!(
+            r.file_at(".git/config", &Version::Worktree),
+            Err(Error::Refused(_))
+        ));
         clean_open_copies();
         assert!(!copy.exists());
     }
