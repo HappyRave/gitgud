@@ -151,15 +151,18 @@ describe("WorkingFileDiff", () => {
   it("opens a prefab in Visual first, and the view is remembered per format", async () => {
     prefs.views = {};
     const structural = { path: "Gun.prefab", addedObjects: 1, removedObjects: 0, modifiedProperties: 0, objects: [] };
-    mockCommands({
+    const calls = mockCommands({
       worktree_file_diff: () => diff("raw yaml line"),
       worktree_unity_diff: () => structural,
+      unity_asset_info: () => ({ binary: false, classId: 1, size: 120, objects: 1 }),
       model_info: () => {
         throw "Gun.prefab is not in that version";
       },
     });
     render(WorkingFileDiff, { repoId: 3, path: "Gun.prefab", side: "unstaged", perHunk: false, revision: 0, onhunk: vi.fn() });
     expect(await screen.findByRole("application", { name: "3D preview of Gun.prefab" })).toBeInTheDocument();
+    // Its lazy modules have loaded once it asks for the model: none are left loading after the test.
+    await waitFor(() => expect(calls.some((c) => c.cmd === "model_info")).toBe(true), { timeout: 5000 });
     expect(screen.getByRole("radio", { name: "Visual" })).toHaveAttribute("aria-checked", "true");
     await fireEvent.click(screen.getByRole("radio", { name: "Structure" }));
     expect(JSON.parse(localStorage.getItem("gitgud.views") ?? "{}")).toEqual({ prefab: "structure" });

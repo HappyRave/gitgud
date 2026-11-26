@@ -32,7 +32,8 @@
   type Side = { key: Key; side: ModelSide; info: AudioInfo; el: HTMLAudioElement; url: string };
   const AB = ["b", "a"] as const;
 
-  let sides = $state<Side[] | null>(null);
+  // Raw: waveform peaks per channel, never changed in place.
+  let sides = $state.raw<Side[] | null>(null);
   let error = $state<string | null>(null);
   let ab = $state<"a" | "b">(untrack(() => viewerChoice(path, "ab", AB)));
   let playing = $state(false);

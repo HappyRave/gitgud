@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import { describe, expect, it, vi } from "vitest";
+import { font } from "$lib/test/font";
 import { mockCommands } from "$lib/test/ipc";
 import SidePick from "./SidePick.svelte";
 
@@ -48,5 +49,31 @@ describe("SidePick", () => {
 
     await fireEvent.keyDown(window, { key: "2" });
     expect(onpick).toHaveBeenCalledWith("theirs");
+  });
+
+  it("shows the side that is left alone when the other deleted the file", async () => {
+    vi.stubGlobal(
+      "FontFace",
+      class {
+        load = () => Promise.resolve(this);
+      },
+    );
+    Object.defineProperty(document, "fonts", { configurable: true, value: { add: vi.fn(), delete: vi.fn() } });
+    const calls = mockCommands({
+      conflict_sides: () => ({ yours: { size: 2048, lfs: false }, theirs: null }),
+      font_info: () => font({ A: 1 }),
+    });
+    render(SidePick, {
+      repoId: 4,
+      path: "UI/Harbour.ttf",
+      revision: 1,
+      yoursLabel: "main",
+      theirsLabel: "feature/ui",
+      lock: null,
+      onpick: vi.fn(),
+    });
+    expect(await screen.findByText("2 glyphs")).toBeInTheDocument();
+    const versions = calls.filter((c) => c.cmd === "font_info").map((c) => (c.args as { version: unknown }).version);
+    expect(versions).toEqual(["yours"]);
   });
 });

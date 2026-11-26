@@ -129,16 +129,17 @@
         />
       </div>
     {:else if viewerFor(path) && (sides.yours || sides.theirs)}
+      <!-- One side deleted the file: the other is shown alone. -->
+      {@const both = sides.yours != null && sides.theirs != null}
+      {@const yours = { label: `Yours · ${yoursLabel}`, at: { at: "yours" as const } }}
       <div class="viewer model">
         <FilePreview
           {repoId}
           {path}
-          before={sides.yours ? { label: `Yours · ${yoursLabel}`, at: { at: "yours" } } : null}
-          after={sides.theirs
-            ? { label: `Theirs · ${theirsLabel}`, at: { at: "theirs" } }
-            : { label: `Yours · ${yoursLabel}`, at: { at: "yours" } }}
+          before={both ? yours : null}
+          after={sides.theirs ? { label: `Theirs · ${theirsLabel}`, at: { at: "theirs" as const } } : yours}
           bust={revision + fetchRev}
-          meta={{ before: sides.yours, after: sides.theirs }}
+          meta={{ before: both ? sides.yours : null, after: sides.theirs ?? sides.yours }}
           onfetch={(which, meta) => fetchSide(which, meta)}
         />
       </div>

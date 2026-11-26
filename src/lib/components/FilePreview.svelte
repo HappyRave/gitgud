@@ -38,6 +38,23 @@
     onfetch?: (side: "before" | "after", meta: BinarySide) => Promise<void>;
   } = $props();
 
+  // The viewers load when the versions they're given change; a parent building them anew
+  // each render (SidePick) passes equal objects, which mustn't reload the file.
+  function keepEqual<T>() {
+    let kept: { key: string; value: T } | null = null;
+    return (value: T): T => {
+      const key = JSON.stringify(value);
+      if (kept?.key !== key) {
+        kept = { key, value };
+      }
+      return kept.value;
+    };
+  }
+  const sameBefore = keepEqual<ModelSide | null>();
+  const sameAfter = keepEqual<ModelSide>();
+  const shownBefore = $derived(sameBefore(before));
+  const shownAfter = $derived(sameAfter(after));
+
   /** Unity class ids with a visual view: 43 Mesh opens in 3D, 114 ScriptableObject as a grid. */
   const ASSET_VIEWS: Record<number, ViewerKind> = { 43: "model", 114: "table" };
 
@@ -62,15 +79,20 @@
       return;
     }
     untrack(() => {
-      const read = (side: ModelSide | null) =>
-        side ? unityAssetInfo(repoId, target, toVersion(side.at)).catch(() => null) : Promise.resolve(null);
-      Promise.all([read(before), read(after)]).then(
+      const read = (side: ModelSide) => unityAssetInfo(repoId, target, toVersion(side.at));
+      // The earlier version may be unreadable (an LFS object not here): the view still
+      // opens on the shown one, whose failure is reported.
+      Promise.all([before ? read(before).catch(() => null) : null, read(after)]).then(
         ([b, a]) => {
           if (key === probeKey) {
             probed = { key, before: b, after: a };
           }
         },
-        (err) => (probeError = String(err)),
+        (err) => {
+          if (key === probeKey) {
+            probeError = err instanceof Error ? err.message : String(err);
+          }
+        },
       );
     });
   });
@@ -94,7 +116,7 @@
   $effect(() => {
     void probeKey;
     if (heavy && !binary) {
-      untrack(() => warmScene(repoId, target, openSides));
+      untrack(() => warmScene(repoId, target, openSides, bust));
     }
   });
 </script>
@@ -133,25 +155,25 @@
       </span>
     </div>
   {:else if shown === "scene"}
-    <ModelViewer {repoId} path={target} {before} {after} {bust} {meta} {onfetch} merged />
+    <ModelViewer {repoId} path={target} before={shownBefore} after={shownAfter} {bust} {meta} {onfetch} merged />
   {:else if shown === "model"}
-    <ModelViewer {repoId} path={target} {before} {after} {bust} {meta} {onfetch} />
+    <ModelViewer {repoId} path={target} before={shownBefore} after={shownAfter} {bust} {meta} {onfetch} />
   {:else if shown === "material"}
-    <MaterialViewer {repoId} path={target} {before} {after} {bust} {meta} {onfetch} />
+    <MaterialViewer {repoId} path={target} before={shownBefore} after={shownAfter} {bust} {meta} {onfetch} />
   {:else if shown === "curves"}
-    <CurveViewer {repoId} path={target} {before} {after} {bust} />
+    <CurveViewer {repoId} path={target} before={shownBefore} after={shownAfter} {bust} />
   {:else if shown === "atlas"}
-    <SpriteViewer {repoId} path={target} {before} {after} {bust} />
+    <SpriteViewer {repoId} path={target} before={shownBefore} after={shownAfter} {bust} />
   {:else if shown === "video"}
-    <VideoViewer {repoId} path={target} {before} {after} {bust} {meta} {onfetch} />
+    <VideoViewer {repoId} path={target} before={shownBefore} after={shownAfter} {bust} {meta} {onfetch} />
   {:else if shown === "pdf"}
-    <PdfViewer {repoId} path={target} {before} {after} {bust} {meta} {onfetch} />
+    <PdfViewer {repoId} path={target} before={shownBefore} after={shownAfter} {bust} {meta} {onfetch} />
   {:else if shown === "table"}
-    <DataViewer {repoId} path={target} {before} {after} {bust} />
+    <DataViewer {repoId} path={target} before={shownBefore} after={shownAfter} {bust} />
   {:else if shown === "audio"}
-    <AudioViewer {repoId} path={target} {before} {after} {bust} {meta} {onfetch} />
+    <AudioViewer {repoId} path={target} before={shownBefore} after={shownAfter} {bust} {meta} {onfetch} />
   {:else if shown === "font"}
-    <FontViewer {repoId} path={target} {before} {after} {bust} {meta} {onfetch} />
+    <FontViewer {repoId} path={target} before={shownBefore} after={shownAfter} {bust} {meta} {onfetch} />
   {:else}
     <div class="none">
       <p>No visual view for this kind of asset.</p>

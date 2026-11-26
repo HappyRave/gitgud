@@ -51,8 +51,9 @@ export class BitmapTextureLoader extends Loader<Texture> {
           premultiplyAlpha: "none",
           colorSpaceConversion: "none",
         });
+        // Not closed on dispose: a viewer still drawing a texture the cache freed
+        // re-uploads it from the bitmap. Garbage collection frees it.
         texture.image = bitmap;
-        texture.addEventListener("dispose", () => bitmap.close());
       }
       texture.needsUpdate = true;
     };

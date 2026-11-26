@@ -225,38 +225,47 @@
     const b = make(sides.after.url);
     const ready = (v: HTMLVideoElement) =>
       v.readyState >= 1 ? Promise.resolve() : new Promise<void>((r) => v.addEventListener("loadedmetadata", () => r(), { once: true }));
-    await Promise.all([ready(a), ready(b)]);
-    const times = sampleTimes(Math.min(a.duration, b.duration), fps);
-    const w = 96;
-    const h = Math.max(1, Math.round((w * (b.videoHeight || 9)) / (b.videoWidth || 16)));
-    const canvas = Object.assign(document.createElement("canvas"), { width: w, height: h });
-    const g = canvas.getContext("2d", { willReadFrequently: true });
-    if (!g) {
-      return;
-    }
-    const grab = async (v: HTMLVideoElement, t: number) => {
-      await new Promise<void>((r) => {
-        v.addEventListener("seeked", () => r(), { once: true });
-        v.currentTime = t;
-      });
-      g.drawImage(v, 0, 0, w, h);
-      return g.getImageData(0, 0, w, h).data;
-    };
-    const scores: number[] = [];
-    scan = { done: 0, total: times.length };
-    for (const t of times) {
+    try {
+      await Promise.all([ready(a), ready(b)]);
       if (token !== seq) {
         return;
       }
-      const fa = await grab(a, t);
-      const fb = await grab(b, t);
-      scores.push(frameDifference(fa, fb));
-      scan = { done: scores.length, total: times.length };
+      const times = sampleTimes(Math.min(a.duration, b.duration), fps);
+      const w = 96;
+      const h = Math.max(1, Math.round((w * (b.videoHeight || 9)) / (b.videoWidth || 16)));
+      const canvas = Object.assign(document.createElement("canvas"), { width: w, height: h });
+      const g = canvas.getContext("2d", { willReadFrequently: true });
+      if (!g) {
+        throw new Error("No 2D canvas to compare frames on");
+      }
+      const grab = async (v: HTMLVideoElement, t: number) => {
+        await new Promise<void>((r) => {
+          v.addEventListener("seeked", () => r(), { once: true });
+          v.currentTime = t;
+        });
+        g.drawImage(v, 0, 0, w, h);
+        return g.getImageData(0, 0, w, h).data;
+      };
+      const scores: number[] = [];
+      scan = { done: 0, total: times.length };
+      for (const t of times) {
+        if (token !== seq) {
+          return;
+        }
+        const fa = await grab(a, t);
+        const fb = await grab(b, t);
+        scores.push(frameDifference(fa, fb));
+        scan = { done: scores.length, total: times.length };
+      }
+      spans = diffSpans(scores);
+    } finally {
+      // The hidden players hold decoders until their source goes.
+      a.removeAttribute("src");
+      b.removeAttribute("src");
+      if (token === seq) {
+        scan = null;
+      }
     }
-    a.removeAttribute("src");
-    b.removeAttribute("src");
-    spans = diffSpans(scores);
-    scan = null;
   }
 
   function dragSwipe(e: PointerEvent) {

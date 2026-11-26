@@ -145,12 +145,27 @@ function firstMesh(root: Object3D): Mesh | null {
   return found;
 }
 
-/** The mesh Unity means by `name` or `id`; a file's only mesh is the one whatever it is called (an OBJ without `o` / `g` lines). */
-function findMesh(root: Object3D, name: string | null, id: string | null): Mesh | null {
-  let found: Mesh | null = null;
+/** A loaded model's meshes by name and by Unity's hashed `fileID`, the first of each in traversal order. */
+interface MeshIndex {
+  byName: Map<string, Mesh>;
+  byId: Map<string, Mesh>;
+  /** The file's mesh when it has exactly one. */
+  only: Mesh | null;
+}
+
+/** Built once per loaded model: a scene names the same file's meshes thousands of times, and each id is a 64-bit hash. */
+const meshIndexes = new WeakMap<Object3D, MeshIndex>();
+
+function meshIndex(root: Object3D): MeshIndex {
+  let index = meshIndexes.get(root);
+  if (index) {
+    return index;
+  }
+  const byName = new Map<string, Mesh>();
+  const byId = new Map<string, Mesh>();
+  const seen = new Map<string, number>();
   let only: Mesh | null = null;
   let count = 0;
-  const seen = new Map<string, number>();
   root.traverse((o) => {
     const mesh = o as Mesh;
     if (!mesh.isMesh) {
@@ -158,17 +173,29 @@ function findMesh(root: Object3D, name: string | null, id: string | null): Mesh 
     }
     count++;
     only = mesh;
-    if (found) {
-      return;
-    }
     const raw = (o.userData.originalName as string | undefined) ?? o.name;
     const n = seen.get(raw) ?? 0;
     seen.set(raw, n + 1);
-    if (name !== null ? raw === name || o.name === name : id !== null && unityFileId("Mesh", raw, n) === id) {
-      found = mesh;
+    for (const key of [raw, o.name]) {
+      if (!byName.has(key)) {
+        byName.set(key, mesh);
+      }
+    }
+    const id = unityFileId("Mesh", raw, n);
+    if (!byId.has(id)) {
+      byId.set(id, mesh);
     }
   });
-  return found ?? (count === 1 ? only : null);
+  index = { byName, byId, only: count === 1 ? only : null };
+  meshIndexes.set(root, index);
+  return index;
+}
+
+/** The mesh Unity means by `name` or `id`; a file's only mesh is the one whatever it is called (an OBJ without `o` / `g` lines). */
+function findMesh(root: Object3D, name: string | null, id: string | null): Mesh | null {
+  const index = meshIndex(root);
+  const found = name !== null ? index.byName.get(name) : id !== null ? index.byId.get(id) : undefined;
+  return found ?? index.only;
 }
 
 /** Turns a backend `ModelScene` into three.js objects, once every model file it uses has loaded. */

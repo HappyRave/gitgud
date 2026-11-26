@@ -201,13 +201,14 @@ export function setTextureMax(max: TextureMax) {
 
 /**
  * `url` of a texture for a 3D preview, asking the backend to shrink it per the setting,
- * and to GPU-compress it when the GPU takes that.
+ * and, when `compressed`, to GPU-compress it when the GPU takes that (only our own
+ * loader reads the DDS that comes back, not three's loaders).
  */
-export function previewTexture(url: string): string {
+export function previewTexture(url: string, compressed = true): string {
   if (!prefs.textureMax) {
     return url;
   }
-  return `${url}&max=${prefs.textureMax}${supportsBc() ? "&gpu=bc" : ""}`;
+  return `${url}&max=${prefs.textureMax}${compressed && supportsBc() ? "&gpu=bc" : ""}`;
 }
 
 export function setAuto3dLimit(limit: number) {

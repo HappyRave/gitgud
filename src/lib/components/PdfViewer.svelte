@@ -47,15 +47,17 @@
   let seq = 0;
   let drawSeq = 0;
 
-  async function load(side: ModelSide, count: (n: number) => void): Promise<Loaded> {
+  async function load(side: ModelSide, count: (n: number) => void, token: number): Promise<Loaded> {
     const { openPdf, readPages } = await import("$lib/viewers/pdfdoc");
     const res = await fetch(fileUrl(repoId, path, side.at, bust));
     if (!res.ok) {
       throw new Error(await res.text());
     }
     const doc = await openPdf(await res.arrayBuffer());
-    progress = { ...progress, total: progress.total + doc.numPages };
-    return { doc, pages: await readPages(doc, count) };
+    if (token === seq) {
+      progress = { ...progress, total: progress.total + doc.numPages };
+    }
+    return { doc, pages: await readPages(doc, count, () => token === seq) };
   }
 
   function release(d: typeof docs) {
@@ -79,8 +81,8 @@
     };
     const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
     Promise.all([
-      before ? load(before, count("before")).catch(() => null) : Promise.resolve(null),
-      load(after, count("after")).catch((e) => msg(e)),
+      before ? load(before, count("before"), token).catch(() => null) : Promise.resolve(null),
+      load(after, count("after"), token).catch((e) => msg(e)),
     ]).then(([b, a]) => {
       if (token !== seq) {
         void b?.doc.loadingTask.destroy();
@@ -160,7 +162,7 @@
         continue;
       }
       const r = await renderPage(loaded.doc, i, canvas, w, runs(k));
-      if (token !== drawSeq) {
+      if (!r || token !== drawSeq) {
         return;
       }
       const hit = mark(k);
@@ -171,7 +173,7 @@
 
   $effect(() => {
     void [docs, current, width, mode];
-    void draw();
+    draw().catch((e) => (error = e instanceof Error ? e.message : String(e)));
   });
 
   function onkey(e: KeyboardEvent) {

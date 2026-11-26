@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, type Snippet } from "svelte";
+  import { onDestroy, type Snippet, untrack } from "svelte";
   import type { Object3D } from "three";
   import type { BinaryMeta, BinarySide } from "$lib/api";
   import { type Change, type ModelStats, stats, TINT } from "$lib/model/compare";
@@ -85,10 +85,15 @@
   async function load(token: number) {
     // Read now: props are live, and after an await they may already be the next file's.
     const at = { repoId, path, before, after, bust, opener };
-    const [{ openSide, needsLfsFetch }, { LoadProgress }] = await Promise.all([
+    const [{ openSide, needsLfsFetch }, { LoadProgress }, { preferNewest }] = await Promise.all([
       import("$lib/model/open"),
       import("$lib/model/progress"),
+      import("$lib/model/fbxPool"),
     ]);
+    if (token !== seq) {
+      return;
+    }
+    preferNewest();
     const progress = new LoadProgress();
     progress.onchange = (s) => {
       if (token === seq) {
@@ -118,6 +123,7 @@
     errors = { before: absent(b) ? null : (b?.error ?? null), after: a.error };
     lfsMissing = needsLfsFetch(errors.before) || needsLfsFetch(errors.after);
     if (!a.model || !canvas) {
+      stage?.clear();
       loading = false;
       return;
     }
@@ -205,7 +211,8 @@
 
   $effect(() => {
     void inputs;
-    reload();
+    // Only the key: `load` reads the props themselves, which a parent may pass as new, equal objects.
+    untrack(reload);
   });
 
   /** The base map shown for `shader`: the one picked for it, else the automatic one. */

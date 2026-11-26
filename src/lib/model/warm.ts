@@ -9,10 +9,10 @@ import { toVersion } from "./source";
  * Gets a big scene or prefab ready while its "Open in 3D" card shows: each side's
  * scene info, then the textures its materials use, prepared as the 3D view will ask.
  */
-export function warmScene(repoId: number, path: string, sides: ModelSide[]) {
+export function warmScene(repoId: number, path: string, sides: ModelSide[], bust: number) {
   for (const side of sides) {
     const version = toVersion(side.at);
-    warmSceneInfo(repoId, path, version).then(
+    warmSceneInfo(repoId, path, version, bust).then(
       (info) => {
         const paths = [...new Set(info.materials.flatMap((m) => [m.baseMap, m.normalMap]).filter((p): p is string => !!p))];
         if (paths.length > 0 && prefs.textureMax > 0) {

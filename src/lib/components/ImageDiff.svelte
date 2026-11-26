@@ -411,7 +411,7 @@
 
   {#if mode === "side"}
     <div class="side">
-      {#each [{ which: "before" as const, side: before, meta: beforeMeta }, { which: "after" as const, side: after, meta: afterMeta }] as item (item.side.url)}
+      {#each [{ which: "before" as const, side: before, meta: beforeMeta }, { which: "after" as const, side: after, meta: afterMeta }] as item (item.which)}
         {@const loadState = loaded[item.side.url]}
         {@const gated = isGated(item.meta)}
         <figure>

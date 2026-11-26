@@ -15,10 +15,15 @@ describe("warmScene", () => {
       model_info: () => scene([mat("Art/wall.png", "Art/wall_n.png"), mat("Art/wall.png", null), mat(null, null)]),
       warm_textures: () => null,
     });
-    warmScene(4, "Scenes/Room.unity", [
-      { label: "HEAD", at: { at: "head" } },
-      { label: "On disk", at: { at: "worktree" } },
-    ]);
+    warmScene(
+      4,
+      "Scenes/Room.unity",
+      [
+        { label: "HEAD", at: { at: "head" } },
+        { label: "On disk", at: { at: "worktree" } },
+      ],
+      0,
+    );
     await new Promise((r) => setTimeout(r, 0));
     expect(calls.filter((c) => c.cmd === "model_info").map((c) => (c.args as { version: unknown }).version)).toEqual(["head", "worktree"]);
     const warmed = calls.filter((c) => c.cmd === "warm_textures").map((c) => c.args);
@@ -31,7 +36,7 @@ describe("warmScene", () => {
   it("leaves native-size textures alone: those aren't prepared", async () => {
     setTextureMax(0);
     const calls = mockCommands({ model_info: () => scene([mat("Art/wall.png", null)]) });
-    warmScene(4, "Scenes/Room.unity", [{ label: "HEAD", at: { at: "head" } }]);
+    warmScene(4, "Scenes/Room.unity", [{ label: "HEAD", at: { at: "head" } }], 0);
     await new Promise((r) => setTimeout(r, 0));
     expect(calls.some((c) => c.cmd === "warm_textures")).toBe(false);
   });

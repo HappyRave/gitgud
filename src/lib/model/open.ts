@@ -50,7 +50,7 @@ export async function openSide(
   try {
     const version = toVersion(side.at);
     progress.report(key("info"), { phase: "info" });
-    const info = await sceneInfo(repoId, path, version);
+    const info = await sceneInfo(repoId, path, version, bust);
     progress.report(key("info"), { phase: "done" });
     if (info.scene) {
       const model = buildPrefab(info.scene, info.materials, {
@@ -71,7 +71,8 @@ export async function openSide(
     const shared = await loadShared({
       kind,
       url: modelUrl(repoId, path, side.at, bust),
-      refUrl: (ref) => previewTexture(refUrl(repoId, path, ref, side.at, bust)),
+      // The model's own loader reads these references (FBX and glTF images): no DDS.
+      refUrl: (ref) => previewTexture(refUrl(repoId, path, ref, side.at, bust), false),
       imageUrl: (p) => previewTexture(imageUrl(repoId, p, side.at, bust)),
       info,
       name: fileName(path),

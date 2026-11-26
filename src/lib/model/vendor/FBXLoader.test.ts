@@ -70,5 +70,6 @@ describe("vendored FBXLoader", () => {
     });
     expect(meshes.map((m) => m.name)).toEqual(["Tri"]);
     expect(meshes[0].geometry.getAttribute("position").count).toBe(3);
+    expect(meshes[0].geometry.getAttribute("normal")?.count, "computed, so it lights").toBe(3);
   });
 });

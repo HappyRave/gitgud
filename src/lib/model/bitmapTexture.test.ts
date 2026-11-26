@@ -46,7 +46,7 @@ function dds(): ArrayBuffer {
 }
 
 describe("BitmapTextureLoader", () => {
-  it("decodes off the main thread, flipped while decoding, and closes the bitmap on dispose", async () => {
+  it("decodes off the main thread, flipped while decoding, and keeps the bitmap past dispose", async () => {
     const { bitmap, decode } = stub(true);
     const manager = new LoadingManager();
     const done = new Promise<void>((resolve) => (manager.onLoad = resolve));
@@ -60,7 +60,8 @@ describe("BitmapTextureLoader", () => {
     expect(texture.version).toBeGreaterThan(version);
     expect(loaded).toHaveBeenCalledWith(texture);
     texture.dispose();
-    expect(bitmap.close).toHaveBeenCalled();
+    expect(bitmap.close, "a viewer still drawing it re-uploads it").not.toHaveBeenCalled();
+    expect(texture.image).toBe(bitmap);
   });
 
   it("uploads a GPU-compressed answer as is, with its mip levels", async () => {

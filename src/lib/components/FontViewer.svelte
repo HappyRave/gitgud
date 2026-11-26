@@ -35,7 +35,8 @@
   /** Changed glyphs shown under the sample. */
   const SAMPLE_CAP = 120;
 
-  let sides = $state<{ before: Loaded | null; after: Loaded | null } | null>(null);
+  // Raw: a CJK font's tens of thousands of code points, never changed in place.
+  let sides = $state.raw<{ before: Loaded | null; after: Loaded | null } | null>(null);
   let tab = $state(untrack(() => viewerChoice(path, "tab", TABS)));
   let sample = $state(SAMPLE);
   let expanded = $state(false);
@@ -84,7 +85,11 @@
     });
   });
 
-  onDestroy(release);
+  onDestroy(() => {
+    // A load still running finds itself stale and removes its face.
+    seq++;
+    release();
+  });
 
   const infoOf = (s: Loaded | null | undefined) => (s && "info" in s ? s.info : null);
   const bInfo = $derived(infoOf(sides?.before));

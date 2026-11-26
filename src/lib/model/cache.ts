@@ -64,6 +64,12 @@ function geometryBytes(g: BufferGeometry): number {
 }
 
 function textureBytes(t: Texture): number {
+  const mipmaps = (t as Texture & { isCompressedTexture?: boolean }).isCompressedTexture
+    ? (t.mipmaps as { data?: ArrayBufferView }[] | undefined)
+    : undefined;
+  if (mipmaps) {
+    return mipmaps.reduce((n, m) => n + (m.data?.byteLength ?? 0), 0);
+  }
   const img = t.image as { width?: number; height?: number } | null;
   return img?.width && img.height ? img.width * img.height * 4 : 0;
 }
@@ -110,6 +116,8 @@ export class ModelCache {
     const hit = this.models.get(key);
     if (hit) {
       hit.used = ++this.clock;
+      this.models.delete(key);
+      this.models.set(key, hit);
       return hit.value;
     }
     const entry: Entry<Promise<LoadedModel>> = { value: load(), used: ++this.clock };
@@ -139,6 +147,8 @@ export class ModelCache {
     const hit = this.materials.get(key);
     if (hit) {
       hit.used = ++this.clock;
+      this.materials.delete(key);
+      this.materials.set(key, hit);
       return hit.value;
     }
     const m = make();
@@ -171,22 +181,27 @@ export class ModelCache {
     this.materials.clear();
   }
 
-  /** Drops the least recently used entries while over budget, keeping at least the newest. */
+  /**
+   * Drops the least recently used entries while over budget, keeping at least the newest.
+   * Both maps are kept in order of use, so the oldest entry is the first.
+   */
   private trim() {
-    while (this.models.size + this.materials.size > 1 && this.stats().bytes > this.budget) {
-      const oldest = (map: Map<string, Entry<unknown>>) =>
-        [...map.entries()].reduce<[string, number] | null>((o, [k, e]) => (!o || e.used < o[1] ? [k, e.used] : o), null);
-      const model = oldest(this.models);
-      const material = oldest(this.materials);
-      if (model && (!material || model[1] < material[1])) {
+    let bytes = this.stats().bytes;
+    const first = <T>(map: Map<string, T>) => map.entries().next().value;
+    while (this.models.size + this.materials.size > 1 && bytes > this.budget) {
+      const model = first(this.models);
+      const material = first(this.materials);
+      if (model && (!material || model[1].used < material[1].used)) {
         const loaded = this.loaded.get(model[0]);
         if (loaded) {
+          bytes -= loaded.geometry + unseenBytes(loaded.textures, new Set());
           disposeAll(loaded.geometries, loaded.materials);
         }
         this.loaded.delete(model[0]);
         this.models.delete(model[0]);
       } else if (material) {
-        disposeAll([], [this.materials.get(material[0])!.value]);
+        bytes -= unseenBytes(material[1].textures, new Set());
+        disposeAll([], [material[1].value]);
         this.materials.delete(material[0]);
       }
     }

@@ -159,7 +159,7 @@
           </tr>
         </thead>
         <tbody>
-          {#each rows as r (r.key)}
+          {#each rows as r, ri (ri)}
             <tr class:stale={r.after?.stale ?? r.before?.stale}>
               <td title={r.key}>{r.label}{#if r.after?.stale ?? r.before?.stale}<span class="tag">stale</span>{/if}</td>
               {#if before}

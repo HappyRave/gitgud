@@ -1668,6 +1668,11 @@ class GeometryParser {
 
 			geo.setAttribute( 'normal', normalAttribute );
 
+		} else {
+
+			// gitgud: no normals in the file; computed as Unity's importer does.
+			geo.computeVertexNormals();
+
 		}
 
 		buffers.uvs.forEach( function ( uvBuffer, i ) {

@@ -150,7 +150,7 @@
               />
               {#if size && layer !== "pixels"}
                 <svg viewBox="0 0 {size[0]} {size[1]}" preserveAspectRatio="none" aria-label="{side.label} slices">
-                  {#each spritesOf(key) as s (s.name)}
+                  {#each spritesOf(key) as s, si (si)}
                     {@const st = shownIn(key, s)}
                     {#if st}
                       {@const b = spriteBox(s, size[0], size[1])}

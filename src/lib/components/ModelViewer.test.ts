@@ -24,6 +24,7 @@ class FakeStage {
   setClip = vi.fn((name: string | null) => (this.clip = name));
   seek = vi.fn();
   refresh = vi.fn();
+  clear = vi.fn();
   cameraMoved = false;
   added() {}
   private models: [LoadedModel | null, LoadedModel | null] = [null, null];
@@ -99,12 +100,8 @@ describe("ModelViewer", () => {
     const view = render(ModelViewer, { repoId: 1, path: "Assets/gun.prefab", before: HEAD, after: DISK });
     await view.rerender({ repoId: 1, path: "Assets/Scenes/Big.unity", before: HEAD, after: DISK });
     expect(await screen.findByText("On disk", {}, { timeout: 5000 })).toBeInTheDocument();
-    expect(asked.sort()).toEqual([
-      "Assets/Scenes/Big.unity HEAD",
-      "Assets/Scenes/Big.unity On disk",
-      "Assets/gun.prefab HEAD",
-      "Assets/gun.prefab On disk",
-    ]);
+    // The first load was overtaken before it opened anything, so it opens nothing.
+    expect(asked.sort()).toEqual(["Assets/Scenes/Big.unity HEAD", "Assets/Scenes/Big.unity On disk"]);
   });
 
   it("lets a custom shader's base map be picked from its textures, and reloads with it", async () => {
@@ -254,6 +251,19 @@ describe("ModelViewer", () => {
     await fireEvent.click(await screen.findByRole("button", { name: "2 warnings" }));
     expect(screen.queryByRole("progressbar")).toBeNull();
     expect(screen.getAllByText(gone)).toHaveLength(1);
+  });
+
+  it("clears the last model when the next file fails, and ignores equal versions passed anew", async () => {
+    opened.set("On disk", { model: boat(0, false), error: null });
+    const view = render(ModelViewer, { repoId: 1, path: "Assets/boat.fbx", after: DISK });
+    await screen.findByText("On disk", {}, { timeout: 5000 });
+    await view.rerender({ repoId: 1, path: "Assets/boat.fbx", after: { ...DISK, at: { ...DISK.at } } });
+    expect(asked).toEqual(["Assets/boat.fbx On disk"]);
+
+    opened.set("On disk", { model: null, error: "Assets/raft.fbx: not an FBX file" });
+    await view.rerender({ repoId: 1, path: "Assets/raft.fbx", after: DISK });
+    expect(await screen.findByText(/not an FBX file/)).toBeInTheDocument();
+    expect(stages[0].clear).toHaveBeenCalled();
   });
 
   it("offers the LFS download when the model isn't on this machine", async () => {

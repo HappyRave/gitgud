@@ -28,7 +28,8 @@
   const H = 300;
   const PAD = 14;
 
-  let clip = $state<ClipCurves | null>(null);
+  // Raw: every key of every track, never changed in place.
+  let clip = $state.raw<ClipCurves | null>(null);
   let error = $state<string | null>(null);
   let users = $state<string[] | null>(null);
   let user = $state<string | null>(null);
@@ -182,7 +183,7 @@
           <div class="plot">
             <div class="canvas">
               <svg viewBox="0 0 {W} {H}" preserveAspectRatio="none" aria-label="Curves">
-                {#each ticks as t (t)}
+                {#each ticks as t, i (i)}
                   <line class="grid" x1={x(t)} x2={x(t)} y1="0" y2={H} />
                 {/each}
                 {#each plotted as t (trackId(t))}
@@ -209,7 +210,7 @@
               {/each}
             </div>
             <div class="axis">
-              {#each ticks as t (t)}<span>{t.toFixed(2)} s</span>{/each}
+              {#each ticks as t, i (i)}<span>{t.toFixed(2)} s</span>{/each}
             </div>
             <div class="vals"><span>{fmt(bounds[1])}</span><span>{fmt(bounds[0])}</span></div>
             {#each clip.flipbooks as f (trackId(f))}

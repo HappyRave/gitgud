@@ -24,7 +24,8 @@
   /** Rows drawn before "Show more". */
   const PAGE = 2000;
 
-  let data = $state<DataTables | null>(null);
+  // Raw: up to 20,000 rows of cells, never changed in place, so not worth proxying.
+  let data = $state.raw<DataTables | null>(null);
   let error = $state<string | null>(null);
   let tab = $state(0);
   let filter = $state<RowFilter>(untrack(() => viewerChoice(path, "rows", ROW_FILTERS)));
@@ -85,7 +86,7 @@
       <div class="top">
         {#if data.tables.length > 1}
           <div class="seg" role="tablist" aria-label="Tables">
-            {#each data.tables as t, i (t.name)}
+            {#each data.tables as t, i (i)}
               <button
                 type="button"
                 class="tbtn"
@@ -112,7 +113,7 @@
         <table>
           <thead>
             <tr>
-              {#each table.columns as c (c)}
+              {#each table.columns as c, ci (ci)}
                 <th class:add={addedCols.has(c)} class:del={removedCols.has(c)} class:key={c === table.key}>{c}</th>
               {/each}
             </tr>

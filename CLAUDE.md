@@ -164,7 +164,7 @@ replaying at most 255 rows (spike 4.3).
   normals layer and a geometry no model uses, still missing upstream in r187; a `geometryOnly` mode
   without images or textures; no `window` for camera aspect): re-copy and re-apply them when three is
   upgraded. Prefabs and scenes load FBX and Unity meshes `geometryOnly`: fetched and parsed on a pool
-  of six workers (`fbxPool.ts` queues jobs in the order asked, at most eight per worker;
+  of six workers (`fbxPool.ts` queues jobs in the order asked, the newest opened model's first (`preferNewest`), at most eight per worker, a dead worker's jobs failed and the worker replaced;
   `fbx.worker.ts`, `readGeometry.ts`) and handed back as transferable buffers (`packFbx.ts`, which
   keeps each mesh's material names so a whole model file placed in a scene still gets its import's
   remapped materials).

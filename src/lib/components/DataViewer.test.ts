@@ -53,6 +53,25 @@ describe("DataViewer", () => {
     expect(screen.getByText("skiff")).toBeInTheDocument();
   });
 
+  it("keeps two tables of the same name and repeated column names apart", async () => {
+    mockCommands({
+      data_tables: () => ({
+        kind: "JSON",
+        compared: false,
+        tables: [
+          tableDiff(["field", "field"], [row("same", "version", "1")], { name: "fields" }),
+          tableDiff(["id"], [row("same", "skiff")], { name: "fields" }),
+        ],
+      }),
+    });
+    render(DataViewer, { repoId: 1, path: "Data/boats.json", before: null, after: DISK });
+    expect(await screen.findByText("version")).toBeInTheDocument();
+    const tabs = screen.getAllByRole("tab", { name: "fields" });
+    expect(tabs).toHaveLength(2);
+    await fireEvent.click(tabs[1]);
+    expect(screen.getByText("skiff")).toBeInTheDocument();
+  });
+
   it("says why a file can't be read", async () => {
     mockCommands({
       data_tables: () => {

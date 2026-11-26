@@ -98,6 +98,11 @@ export class ModelStage {
   /** When the last frame was drawn (rAF time), and how long it took, in ms. */
   private drawn = 0;
   private drawCost = 0;
+  private dimmed = false;
+  /** Bumped when the models or their pieces change, so what is worked out from them is redone. */
+  private version = 0;
+  /** The older side's unchanged meshes, hidden while its changes are drawn ("merged"). */
+  private same: { version: number; comparison: Comparison; meshes: Object3D[] } | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
     const r = (this.renderer = new WebGLRenderer({ canvas, antialias: true, alpha: true }));
@@ -109,7 +114,9 @@ export class ModelStage {
     // Shadows come from the light, not the camera: redrawn only when the models change or move.
     r.shadowMap.autoUpdate = false;
     const pmrem = new PMREMGenerator(r);
-    this.env = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    const room = new RoomEnvironment();
+    this.env = pmrem.fromScene(room, 0.04).texture;
+    room.dispose();
     pmrem.dispose();
     this.controls = new OrbitControls(this.camera, canvas);
     this.controls.enableDamping = true;
@@ -138,12 +145,26 @@ export class ModelStage {
     }
     this.sides = [before ? this.side(before, box) : null, this.side(after, box)];
     this.complete = false;
+    this.version++;
     this.comparison = before ? compare(before.root, after.root) : { status: new Map(), changes: [] };
     this.applyShading();
     this.frameAll();
     this.setClip(this.clips()[0]?.name ?? null);
     this.shadowsStale = true;
     this.compile();
+  }
+
+  /** Shows nothing: the next file couldn't load, so the last one mustn't stay on screen. */
+  clear() {
+    for (const s of this.sides) {
+      if (s) {
+        this.release(s);
+      }
+    }
+    this.sides = [null, null];
+    this.comparison = { status: new Map(), changes: [] };
+    this.version++;
+    this.renderer.clear();
   }
 
   /** A piece of a model still loading arrived: draw it with the current shading. */
@@ -160,6 +181,7 @@ export class ModelStage {
       }
     });
     this.trickled = true;
+    this.version++;
   }
 
   /**
@@ -248,12 +270,20 @@ export class ModelStage {
   }
 
   setShading(shading: Shading) {
+    // Re-shading re-instances the whole model: only when it changes.
+    if (shading === this.shading) {
+      return;
+    }
     this.shading = shading;
     this.applyShading();
   }
 
   /** In the Changes shading, fades what didn't change ("Changed only"). */
   setDimUnchanged(dim: boolean) {
+    if (dim === this.dimmed) {
+      return;
+    }
+    this.dimmed = dim;
     this.kit.dimSame(dim);
     this.dirty = true;
   }
@@ -370,6 +400,8 @@ export class ModelStage {
     this.kit.dispose();
     this.env.dispose();
     this.renderer.dispose();
+    // Browsers cap live WebGL contexts; a remounted viewer would otherwise wait on GC for this one.
+    this.renderer.forceContextLoss();
   }
 
   /** Frees a side's GPU resources; the shading kit's materials and what the model cache holds stay. */
@@ -378,6 +410,8 @@ export class ModelStage {
     side.instanced?.undo();
     const textures = new Set<{ dispose(): void }>();
     side.scene.traverse((o) => {
+      // The rig's key light owns a shadow map render target.
+      (o as DirectionalLight).shadow?.dispose();
       const mesh = o as Mesh;
       if (mesh.geometry && !mesh.geometry.userData.shared) {
         mesh.geometry.dispose();
@@ -543,13 +577,19 @@ export class ModelStage {
 
   /** Draws only `side`'s changed or removed meshes, as amber wire ghosts. */
   private overlayChanged(side: Side) {
-    const hidden: Object3D[] = [];
-    side.model.root.traverse((o) => {
-      if ((o as Mesh).isMesh && o.visible && (this.comparison.status.get(o) ?? "same") === "same") {
-        o.visible = false;
-        hidden.push(o);
-      }
-    });
+    if (this.same?.version !== this.version || this.same.comparison !== this.comparison) {
+      const meshes: Object3D[] = [];
+      side.model.root.traverse((o) => {
+        if ((o as Mesh).isMesh && (this.comparison.status.get(o) ?? "same") === "same") {
+          meshes.push(o);
+        }
+      });
+      this.same = { version: this.version, comparison: this.comparison, meshes };
+    }
+    const hidden = this.same.meshes.filter((o) => o.visible);
+    for (const o of hidden) {
+      o.visible = false;
+    }
     // Instanced meshes are all unchanged ones.
     const instanced = side.instanced?.group;
     if (instanced) {
