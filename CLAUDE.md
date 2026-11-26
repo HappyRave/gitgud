@@ -282,7 +282,12 @@ replaying at most 255 rows (spike 4.3).
   portable copy (no `uninstall.exe` beside the exe) gets Download → the release page instead.
   `pnpm package [-Notes "..."]` (`scripts/package.ps1`) signs with the minisign key at
   `%USERPROFILE%\.tauri\gitgud.key` (no password; or `TAURI_SIGNING_PRIVATE_KEY`) and writes
-  `target/release/bundle/nsis/latest.json`; upload it with the setup `.exe` to release `v<version>`.
+  `target/release/bundle/nsis/latest.json`. `pnpm release -Version x.y.z -Notes "..." [-ChangesFile
+  notes.md] [-SkipChecks] [-DryRun]` (`scripts/release.ps1`) does a whole release: preflight (clean,
+  synced `main`, new tag, key), checks, bumps the five version files + `Cargo.lock`, builds installer
+  and portable, commits `Release vX`, pushes, publishes the GitHub release as Latest with every asset
+  and verifies the update endpoint. Run it outside the Claude app: its MSIX-virtualized
+  `%LOCALAPPDATA%` can hold a stale NSIS cache that breaks bundling.
 - **App stats** (`app_stats.rs`, `AppStatsBar.svelte`, `$lib/appStats.svelte.ts`, R8): `app_stats`
   samples gitgud's process tree with `sysinfo` (CPU as a share of the whole machine; RAM split app /
   WebView2 / git and helpers); the frontend polls it every 2 s while the window is visible and keeps
@@ -358,6 +363,7 @@ pnpm check                          # svelte-check
 pnpm vitest run
 pnpm vitest run <file> -t "<name>"  # single frontend test
 pnpm e2e                            # debug build, then e2e/*.test.ts against the real window
+pnpm release -Version 0.2.1 -Notes "..."   # checks, bump, build, commit, push, GitHub release (-DryRun: preflight only)
 pnpm dev                            # then /?mock or /?mock=merge: the UI on a fake backend, in a browser
                                     # (/?mock: Shift+E on a commit opens a history plan)
 ```
