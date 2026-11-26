@@ -1007,6 +1007,26 @@ export function installMock(scenario: string) {
         },
       ],
     }),
+    library_rescan_folder: ({ folderId }) => {
+      const inFolder = mockLib.repos.filter((r) => r.folderId === folderId);
+      return {
+        root: "C:/Work",
+        totalFound: 1,
+        elapsedMs: 9,
+        groups: [
+          {
+            dir: "C:/Work",
+            suggestedFolder: mockLib.folders.find((f) => f.id === folderId)?.name ?? "Work",
+            repos: [{ name: "new-jam", path: "C:/Work/new-jam", alreadyInLibrary: false }],
+          },
+        ],
+        gone: inFolder.slice(0, 1).map((r) => ({ id: r.id, name: r.name, path: r.path })),
+      };
+    },
+    library_apply_scan: ({ removeIds }) => {
+      mockLib = { ...mockLib, repos: mockLib.repos.filter((r) => !removeIds.includes(r.id)), undoAction: "Rescan" };
+      return mockLib;
+    },
     clone_repo: ({ dest }) => dest,
     cancel_clone: () => true,
     fetch_many: () => mockLib.repos.map((r) => r.cached!).filter(Boolean),

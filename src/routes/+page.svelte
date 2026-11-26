@@ -4,7 +4,9 @@
     gitInfo,
     launchPath,
     libraryAddRepos,
+    libraryApplyScan,
     libraryLoad,
+    libraryRescanFolder,
     libraryLocateRepo,
     librarySaveTabs,
     librarySummaries,
@@ -29,6 +31,7 @@
   import ShortcutSheet from "$lib/components/ShortcutSheet.svelte";
   import TabBar, { type RepoTabInfo } from "$lib/components/TabBar.svelte";
   import UpdateDialog from "$lib/components/UpdateDialog.svelte";
+  import { blockBrowserMenu } from "$lib/browserMenu";
   import { checkForUpdates, dismissOffer, skipOffer, updates } from "$lib/updates.svelte";
   import {
     isCloseTabKey,
@@ -64,6 +67,8 @@
   let shortcutsOpen = $state(false);
   let settingsOpen = $state(false);
   let scanResult = $state<ScanResult | null>(null);
+  /** The Library folder the open scan dialog rescans, if it is a rescan. */
+  let rescanOf = $state<string | null>(null);
   let cloneOpen = $state(false);
   let cloneInitialFolder = $state("");
   let fetchingMany = $state<FetchManyProgress | null>(null);
@@ -205,10 +210,20 @@
     }
   }
 
-  async function addScannedRepos(entries: AddRepoEntry[]) {
-    scanResult = null;
+  async function rescanFolder(folderId: string) {
     try {
-      library = await libraryAddRepos(entries);
+      scanResult = await libraryRescanFolder(folderId);
+      rescanOf = folderPathLabel(library.folders, folderId);
+    } catch (err) {
+      globalError = String(err);
+    }
+  }
+
+  async function addScannedRepos(entries: AddRepoEntry[], removeIds: string[]) {
+    scanResult = null;
+    rescanOf = null;
+    try {
+      library = removeIds.length > 0 ? await libraryApplyScan(entries, removeIds) : await libraryAddRepos(entries);
     } catch (err) {
       globalError = String(err);
     }
@@ -336,7 +351,7 @@
   });
 </script>
 
-<svelte:window onkeydown={onGlobalKeydown} />
+<svelte:window onkeydown={onGlobalKeydown} oncontextmenu={blockBrowserMenu} />
 
 <div class="shell">
   <TabBar
@@ -371,6 +386,7 @@
         onopen={openRepoTab}
         onadd={(folderId) => chooseAndOpenRepo(folderId)}
         onscan={runScanFolder}
+        onrescan={rescanFolder}
         onclone={() => {
           cloneInitialFolder = "";
           cloneOpen = true;
@@ -422,7 +438,15 @@
 {/if}
 
 {#if scanResult}
-  <ScanFolderDialog scan={scanResult} onadd={addScannedRepos} oncancel={() => (scanResult = null)} />
+  <ScanFolderDialog
+    scan={scanResult}
+    {rescanOf}
+    onadd={addScannedRepos}
+    oncancel={() => {
+      scanResult = null;
+      rescanOf = null;
+    }}
+  />
 {/if}
 
 {#if cloneOpen}

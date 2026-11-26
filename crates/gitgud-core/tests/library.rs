@@ -2,10 +2,151 @@ use std::path::Path;
 use std::time::Instant;
 
 use gitgud_core::library::{
-    AddRepoEntry, DEFAULT_SCAN_DEPTH, LibraryStore, OpenTabState, scan_folder,
+    AddRepoEntry, DEFAULT_SCAN_DEPTH, LibraryStore, OpenTabState, display_path, scan_folder,
 };
 use gitgud_core::remote_url::HostKind;
 use gitgud_core::testing::TestRepo;
+
+fn add(store: &LibraryStore, path: &Path, folder: &str) {
+    store
+        .add_repos(&[AddRepoEntry {
+            path: path.to_string_lossy().into_owned(),
+            folder_path: Some(folder.into()),
+            name: None,
+        }])
+        .unwrap();
+}
+
+fn folder_id(store: &LibraryStore, name: &str) -> String {
+    let snap = store.snapshot().unwrap();
+    snap.state
+        .folders
+        .iter()
+        .find(|f| f.name == name)
+        .unwrap()
+        .id
+        .clone()
+}
+
+#[test]
+fn rescan_finds_new_repos_and_gone_ones_and_applies_in_one_undo() {
+    let dir = tempfile::tempdir().unwrap();
+    let projects = dir.path().join("Projects");
+    let seed = TestRepo::init();
+    let init = |p: &Path| {
+        seed.git(&["init", "-q", &p.to_string_lossy()]);
+    };
+    for name in ["keep", "doomed", "old/legacy"] {
+        init(&projects.join(name));
+    }
+    let elsewhere = dir.path().join("Elsewhere/other");
+    init(&elsewhere);
+
+    let store = LibraryStore::load(dir.path().join("lib.json")).unwrap();
+    add(&store, &projects.join("keep"), "Projects");
+    add(&store, &projects.join("doomed"), "Projects");
+    add(&store, &projects.join("old/legacy"), "Projects / Old");
+    add(&store, &elsewhere, "Elsewhere");
+
+    std::fs::remove_dir_all(projects.join("doomed")).unwrap();
+    init(&projects.join("fresh"));
+    init(&projects.join("old/newer"));
+
+    let scan = store
+        .rescan_folder(&folder_id(&store, "Projects"), DEFAULT_SCAN_DEPTH)
+        .unwrap();
+    assert_eq!(scan.root, display_path(&projects));
+    assert_eq!(
+        scan.gone
+            .iter()
+            .map(|g| g.name.as_str())
+            .collect::<Vec<_>>(),
+        ["doomed"]
+    );
+    let fresh: Vec<(&str, &str)> = scan
+        .groups
+        .iter()
+        .flat_map(|g| {
+            g.repos
+                .iter()
+                .filter(|r| !r.already_in_library)
+                .map(move |r| (r.name.as_str(), g.suggested_folder.as_str()))
+        })
+        .collect();
+    assert_eq!(fresh, [("fresh", "Projects"), ("newer", "Projects / old")]);
+    assert!(
+        scan.groups
+            .iter()
+            .flat_map(|g| &g.repos)
+            .all(|r| r.name != "other"),
+        "a rescan stays inside the folder's own disk folder"
+    );
+
+    let entries: Vec<AddRepoEntry> = scan
+        .groups
+        .iter()
+        .flat_map(|g| {
+            g.repos
+                .iter()
+                .filter(|r| !r.already_in_library)
+                .map(|r| AddRepoEntry {
+                    path: r.path.clone(),
+                    folder_path: Some(g.suggested_folder.clone()),
+                    name: None,
+                })
+        })
+        .collect();
+    let gone: Vec<String> = scan.gone.iter().map(|g| g.id.clone()).collect();
+    let snap = store.apply_scan(&entries, &gone).unwrap();
+    let names: Vec<&str> = snap.state.repos.iter().map(|r| r.name.as_str()).collect();
+    assert!(names.contains(&"fresh") && names.contains(&"newer") && !names.contains(&"doomed"));
+    assert_eq!(snap.undo_action.as_deref(), Some("Rescan: add 2, remove 1"));
+
+    let undone = store.undo().unwrap();
+    let names: Vec<&str> = undone.state.repos.iter().map(|r| r.name.as_str()).collect();
+    assert_eq!(names, ["keep", "doomed", "legacy", "other"]);
+}
+
+#[test]
+fn rescan_of_a_deleted_folder_lists_everything_gone() {
+    let dir = tempfile::tempdir().unwrap();
+    let games = dir.path().join("Games");
+    let seed = TestRepo::init();
+    for name in ["a", "b"] {
+        seed.git(&["init", "-q", &games.join(name).to_string_lossy()]);
+    }
+    let store = LibraryStore::load(dir.path().join("lib.json")).unwrap();
+    add(&store, &games.join("a"), "Games");
+    add(&store, &games.join("b"), "Games");
+    std::fs::remove_dir_all(&games).unwrap();
+
+    let scan = store
+        .rescan_folder(&folder_id(&store, "Games"), DEFAULT_SCAN_DEPTH)
+        .unwrap();
+    assert!(scan.groups.is_empty());
+    assert_eq!(scan.gone.len(), 2);
+
+    let ids: Vec<String> = scan.gone.iter().map(|g| g.id.clone()).collect();
+    let snap = store.apply_scan(&[], &ids).unwrap();
+    assert!(snap.state.repos.is_empty());
+    assert!(
+        snap.state.folders.iter().any(|f| f.name == "Games"),
+        "the emptied folder stays"
+    );
+    assert_eq!(snap.undo_action.as_deref(), Some("Remove 2 repositories"));
+}
+
+#[test]
+fn rescan_refuses_folders_it_cannot_place_on_disk() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = LibraryStore::load(dir.path().join("lib.json")).unwrap();
+    store.create_folder("Empty", None).unwrap();
+    let err = store
+        .rescan_folder(&folder_id(&store, "Empty"), DEFAULT_SCAN_DEPTH)
+        .unwrap_err();
+    assert!(err.to_string().contains("no repositories"), "{err}");
+    assert!(store.rescan_folder("f-nope", DEFAULT_SCAN_DEPTH).is_err());
+}
 
 #[test]
 fn library_crud_persistence_and_undo_redo() {

@@ -137,6 +137,18 @@ pub struct ScanResult {
     pub total_found: usize,
     pub elapsed_ms: u64,
     pub groups: Vec<ScanGroup>,
+    /// On a rescan ([`LibraryStore::rescan_folder`]): the folder's repositories gone from disk.
+    #[serde(default)]
+    pub gone: Vec<GoneRepo>,
+}
+
+/// A Library repository a rescan found missing on disk.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GoneRepo {
+    pub id: String,
+    pub name: String,
+    pub path: String,
 }
 
 #[derive(Debug, Clone)]
@@ -214,53 +226,7 @@ impl LibraryStore {
         }
 
         let before = capture_undo("", &guard.state);
-        let mut known: HashSet<String> = guard
-            .state
-            .repos
-            .iter()
-            .map(|r| path_key(&r.path))
-            .collect();
-        let mut added = 0usize;
-
-        for entry in entries {
-            let normalized = display_path(Path::new(&entry.path));
-            let key = path_key(&normalized);
-            if key.is_empty() || !known.insert(key) {
-                continue;
-            }
-            let folder_id = entry
-                .folder_path
-                .as_deref()
-                .and_then(|fp| ensure_folder_path(&mut guard, fp));
-            let id_num = alloc_id(&mut guard.next_id);
-            let name = entry
-                .name
-                .as_deref()
-                .map(str::trim)
-                .filter(|n| !n.is_empty())
-                .map(ToOwned::to_owned)
-                .unwrap_or_else(|| repo_display_name(&normalized));
-            let order = guard
-                .state
-                .repos
-                .iter()
-                .filter(|r| r.folder_id == folder_id)
-                .map(|r| r.order)
-                .max()
-                .map_or(0, |m| m + 1);
-            guard.state.repos.push(LibraryRepo {
-                id: format!("r-{id_num}"),
-                name,
-                path: normalized,
-                folder_id,
-                pinned: false,
-                order,
-                last_opened: None,
-                cached: None,
-            });
-            added += 1;
-        }
-
+        let added = insert_repos(&mut guard, entries);
         if added > 0 {
             let label = if added == 1 {
                 "Add repository".to_owned()
@@ -283,24 +249,115 @@ impl LibraryStore {
             return Err(Error::Refused("repository is not in the library".into()));
         };
         let removed_name = guard.state.repos[pos].name.clone();
-        let removed_key = path_key(&guard.state.repos[pos].path);
         let before = capture_undo("", &guard.state);
-        guard.state.repos.remove(pos);
-        guard
-            .state
-            .tabs
-            .open_paths
-            .retain(|p| path_key(p) != removed_key);
-        if guard
-            .state
-            .tabs
-            .active_path
-            .as_deref()
-            .is_some_and(|p| path_key(p) == removed_key)
-        {
-            guard.state.tabs.active_path = None;
-        }
+        drop_repo_at(&mut guard, pos);
         push_undo(&mut guard, format!("Remove {removed_name}"), before);
+        save_atomic(&self.file, &guard.state)?;
+        Ok(make_snapshot(&guard))
+    }
+
+    /// Scans the disk folder that holds the repositories of `folder_id` and its subfolders (the
+    /// nearest folder all of them sit in) for repositories to add, and lists the folder's
+    /// repositories that are gone from disk. New repositories are suggested into `folder_id`.
+    ///
+    /// # Errors
+    /// [`Error::Refused`] when the folder is unknown, holds no repositories, or they share no
+    /// folder on disk.
+    pub fn rescan_folder(&self, folder_id: &str, max_depth: usize) -> Result<ScanResult, Error> {
+        let (label, repos, existing) = {
+            let guard = self.lock()?;
+            let folders = &guard.state.folders;
+            if !folders.iter().any(|f| f.id == folder_id) {
+                return Err(Error::Refused("folder is not in the library".into()));
+            }
+            let repos: Vec<GoneRepo> = guard
+                .state
+                .repos
+                .iter()
+                .filter(|r| {
+                    r.folder_id
+                        .as_deref()
+                        .is_some_and(|f| is_descendant(folders, folder_id, f))
+                })
+                .map(|r| GoneRepo {
+                    id: r.id.clone(),
+                    name: r.name.clone(),
+                    path: r.path.clone(),
+                })
+                .collect();
+            let existing: Vec<String> = guard.state.repos.iter().map(|r| r.path.clone()).collect();
+            (folder_label(folders, folder_id), repos, existing)
+        };
+        if repos.is_empty() {
+            return Err(Error::Refused(format!(
+                "{label} has no repositories, so there's no folder on disk to rescan"
+            )));
+        }
+        let root = common_parent(repos.iter().map(|r| Path::new(&r.path))).ok_or_else(|| {
+            Error::Refused(format!("{label}'s repositories share no folder on disk"))
+        })?;
+        let gone: Vec<GoneRepo> = repos
+            .into_iter()
+            .filter(|r| repo::open(&r.path).is_err())
+            .collect();
+        let mut result = if root.is_dir() {
+            scan_folder(&root, &existing, max_depth)?
+        } else {
+            ScanResult {
+                root: display_path(&root),
+                total_found: 0,
+                elapsed_ms: 0,
+                groups: Vec::new(),
+                gone: Vec::new(),
+            }
+        };
+        let scanned_root = PathBuf::from(&result.root);
+        for group in &mut result.groups {
+            group.suggested_folder = std::iter::once(label.clone())
+                .chain(
+                    Path::new(&group.dir)
+                        .strip_prefix(&scanned_root)
+                        .into_iter()
+                        .flat_map(|rel| rel.iter().map(|c| c.to_string_lossy().into_owned())),
+                )
+                .collect::<Vec<_>>()
+                .join(" / ");
+        }
+        result.gone = gone;
+        Ok(result)
+    }
+
+    /// Applies a scan's choices in one undo step: adds `entries` and removes the repositories
+    /// `remove_ids` from the Library (files on disk are left alone).
+    ///
+    /// # Errors
+    /// [`Error::Read`] when writing fails.
+    pub fn apply_scan(
+        &self,
+        entries: &[AddRepoEntry],
+        remove_ids: &[String],
+    ) -> Result<LibrarySnapshot, Error> {
+        let mut guard = self.lock()?;
+        let before = capture_undo("", &guard.state);
+        let mut removed = 0usize;
+        for id in remove_ids {
+            if let Some(pos) = guard.state.repos.iter().position(|r| &r.id == id) {
+                drop_repo_at(&mut guard, pos);
+                removed += 1;
+            }
+        }
+        let added = insert_repos(&mut guard, entries);
+        if added + removed == 0 {
+            return Ok(make_snapshot(&guard));
+        }
+        let label = match (added, removed) {
+            (1, 0) => "Add repository".to_owned(),
+            (a, 0) => format!("Add {a} repositories"),
+            (0, 1) => "Remove 1 repository".to_owned(),
+            (0, r) => format!("Remove {r} repositories"),
+            (a, r) => format!("Rescan: add {a}, remove {r}"),
+        };
+        push_undo(&mut guard, label, before);
         save_atomic(&self.file, &guard.state)?;
         Ok(make_snapshot(&guard))
     }
@@ -908,6 +965,7 @@ pub fn scan_folder(
         total_found,
         elapsed_ms,
         groups,
+        gone: Vec::new(),
     })
 }
 
@@ -974,6 +1032,116 @@ fn suggest_folder_name(root: &Path, group_dir: &Path) -> String {
     } else {
         parts.join(" / ")
     }
+}
+
+/// Adds `entries` not already in the Library; returns how many were added.
+fn insert_repos(guard: &mut StoreInner, entries: &[AddRepoEntry]) -> usize {
+    let mut known: HashSet<String> = guard
+        .state
+        .repos
+        .iter()
+        .map(|r| path_key(&r.path))
+        .collect();
+    let mut added = 0usize;
+    for entry in entries {
+        let normalized = display_path(Path::new(&entry.path));
+        let key = path_key(&normalized);
+        if key.is_empty() || !known.insert(key) {
+            continue;
+        }
+        let folder_id = entry
+            .folder_path
+            .as_deref()
+            .and_then(|fp| ensure_folder_path(guard, fp));
+        let id_num = alloc_id(&mut guard.next_id);
+        let name = entry
+            .name
+            .as_deref()
+            .map(str::trim)
+            .filter(|n| !n.is_empty())
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| repo_display_name(&normalized));
+        let order = guard
+            .state
+            .repos
+            .iter()
+            .filter(|r| r.folder_id == folder_id)
+            .map(|r| r.order)
+            .max()
+            .map_or(0, |m| m + 1);
+        guard.state.repos.push(LibraryRepo {
+            id: format!("r-{id_num}"),
+            name,
+            path: normalized,
+            folder_id,
+            pinned: false,
+            order,
+            last_opened: None,
+            cached: None,
+        });
+        added += 1;
+    }
+    added
+}
+
+/// Removes the repository at `pos` and closes its saved tab.
+fn drop_repo_at(guard: &mut StoreInner, pos: usize) {
+    let removed_key = path_key(&guard.state.repos.remove(pos).path);
+    let tabs = &mut guard.state.tabs;
+    tabs.open_paths.retain(|p| path_key(p) != removed_key);
+    if tabs
+        .active_path
+        .as_deref()
+        .is_some_and(|p| path_key(p) == removed_key)
+    {
+        tabs.active_path = None;
+    }
+}
+
+/// `"Studio / VR"` for folder `VR` inside `Studio`, the form [`ensure_folder_path`] reads.
+fn folder_label(folders: &[LibraryFolder], folder_id: &str) -> String {
+    let mut names = Vec::new();
+    let mut cur = Some(folder_id);
+    while let Some(id) = cur
+        && names.len() <= folders.len()
+    {
+        let Some(f) = folders.iter().find(|f| f.id == id) else {
+            break;
+        };
+        names.push(f.name.as_str());
+        cur = f.parent_id.as_deref();
+    }
+    names.reverse();
+    names.join(" / ")
+}
+
+/// The deepest folder containing the parent folder of every path in `repos`.
+fn common_parent<'a>(repos: impl Iterator<Item = &'a Path>) -> Option<PathBuf> {
+    let mut common: Option<Vec<std::path::Component<'a>>> = None;
+    for repo in repos {
+        let parts: Vec<_> = repo.parent()?.components().collect();
+        common = Some(match common {
+            None => parts,
+            Some(prev) => prev
+                .into_iter()
+                .zip(parts)
+                .take_while(|(a, b)| {
+                    path_key(&a.as_os_str().to_string_lossy())
+                        == path_key(&b.as_os_str().to_string_lossy())
+                })
+                .map(|(a, _)| a)
+                .collect(),
+        });
+    }
+    let common = common?;
+    // Sharing only a drive (or `/`) means the repositories have nothing in common to rescan.
+    if !common
+        .iter()
+        .any(|c| matches!(c, std::path::Component::Normal(_)))
+    {
+        return None;
+    }
+    Some(common.into_iter().collect())
 }
 
 fn ensure_folder_path(guard: &mut StoreInner, folder_path: &str) -> Option<String> {
@@ -1209,6 +1377,18 @@ mod tests {
         assert_eq!(a, b);
         #[cfg(not(windows))]
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn common_parent_is_the_deepest_shared_folder_and_never_a_bare_drive() {
+        let parent = |paths: &[&str]| common_parent(paths.iter().map(Path::new));
+        assert_eq!(
+            parent(&[r"C:\Work\Games\a", r"c:\work\Games\b\c"]),
+            Some(PathBuf::from(r"C:\Work\Games"))
+        );
+        assert_eq!(parent(&[r"C:\Work\solo"]), Some(PathBuf::from(r"C:\Work")));
+        assert_eq!(parent(&[r"C:\Work\a", r"C:\Other\b"]), None);
+        assert_eq!(parent(&[r"C:\Work\a", r"D:\Work\b"]), None);
     }
 
     #[test]

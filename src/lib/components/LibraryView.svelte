@@ -44,6 +44,7 @@
     onopen,
     onadd,
     onscan,
+    onrescan,
     onclone,
     onlocate,
     onfetchvisible,
@@ -60,6 +61,8 @@
     onopen: (path: string) => void;
     onadd: (folderId?: string | null) => void;
     onscan: () => void;
+    /** Rescan the disk folder behind Library folder `folderId` (new repos, repos gone from disk). */
+    onrescan: (folderId: string) => void;
     onclone: () => void;
     onlocate: (id: string) => void;
     onfetchvisible: (paths: string[]) => void;
@@ -153,6 +156,7 @@
       x: event.clientX,
       y: event.clientY,
       items: [
+        { label: "Rescan…", run: () => onrescan(folderId) },
         { label: "New subfolder…", run: () => startNewFolder(folderId) },
         { label: "Rename", hint: "F2", run: () => (renamingFolder = { id: folderId, value: folderName }) },
         { label: "Delete folder", run: () => mutate(() => libraryDeleteFolder(folderId)) },
@@ -499,7 +503,12 @@
           <div class="empty ab">No repositories match this filter.</div>
         {:else}
           {#each grouped.groups as group (group.id)}
-            <div class="gh">
+            {@const groupFolder = library.folders.find((f) => f.id === group.folderId)}
+            <div
+              class="gh"
+              role="presentation"
+              oncontextmenu={(e) => groupFolder && openFolderMenu(e, groupFolder.id, groupFolder.name)}
+            >
               <b>{group.label}</b>
               <span class="ab">
                 · {group.repos.length + group.hiddenCount}

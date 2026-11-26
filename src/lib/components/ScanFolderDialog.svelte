@@ -5,15 +5,22 @@
 
   let {
     scan,
+    rescanOf = null,
     busy = false,
     onadd,
     oncancel,
   }: {
     scan: ScanResult;
+    /** The Library folder being rescanned, for the title; null for a plain scan. */
+    rescanOf?: string | null;
     busy?: boolean;
-    onadd: (entries: AddRepoEntry[]) => void;
+    onadd: (entries: AddRepoEntry[], removeIds: string[]) => void;
     oncancel: () => void;
   } = $props();
+
+  const gone = $derived(scan.gone ?? []);
+  let keep = $state<Record<string, boolean>>({});
+  const removeIds = $derived(gone.filter((g) => !keep[g.id]).map((g) => g.id));
 
   let checked = $state<Record<string, boolean>>({});
   let folders = $state<Record<string, string>>({});
@@ -53,14 +60,14 @@
   });
 </script>
 
-<Dialog title="Add repositories · scan {scan.root}" width={620} {oncancel}>
+<Dialog title={rescanOf ? `Rescan ${rescanOf}` : `Add repositories · scan ${scan.root}`} width={620} {oncancel}>
   <div class="hdline">
     <code>{scan.root}</code>
     <span class="ab">{scan.totalFound} found in {(scan.elapsedMs / 1000).toFixed(1)} s</span>
   </div>
 
   {#if scan.groups.length === 0}
-    <p class="ab">No Git repositories were found inside this folder.</p>
+    <p class="ab">{rescanOf ? "Nothing new on disk here." : "No Git repositories were found inside this folder."}</p>
   {:else}
     <div class="groups">
       {#each scan.groups as group (group.dir)}
@@ -101,6 +108,25 @@
     <p class="ab">{existingCount} of these {existingCount === 1 ? "is" : "are"} already in gitgud and stay where they are.</p>
   {/if}
 
+  {#if gone.length > 0}
+    <h3>Gone from disk · {gone.length}</h3>
+    <div class="groups" role="list" aria-label="Gone from disk">
+      {#each gone as repo (repo.id)}
+        <label class="row gone" role="listitem">
+          <input
+            type="checkbox"
+            aria-label="Remove {repo.name}"
+            checked={!keep[repo.id]}
+            onchange={(e) => (keep = { ...keep, [repo.id]: !(e.currentTarget as HTMLInputElement).checked })}
+          />
+          <b>{repo.name}</b>
+          <span class="ab path">{repo.path}</span>
+        </label>
+      {/each}
+    </div>
+    <p class="ab">Removing only takes them out of gitgud (Ctrl+Z brings them back); nothing on disk changes.</p>
+  {/if}
+
   {#snippet footer()}
     <span class="ab">Folders are suggested from the disk layout; change any before adding.</span>
     <span class="sp"></span>
@@ -108,10 +134,16 @@
     <button
       class="pri"
       bind:this={addButton}
-      disabled={busy || selectedEntries.length === 0}
-      onclick={() => onadd(selectedEntries)}
+      disabled={busy || selectedEntries.length + removeIds.length === 0}
+      onclick={() => onadd(selectedEntries, removeIds)}
     >
-      Add {selectedEntries.length} {selectedEntries.length === 1 ? "repo" : "repos"}
+      {#if removeIds.length === 0}
+        Add {selectedEntries.length} {selectedEntries.length === 1 ? "repo" : "repos"}
+      {:else if selectedEntries.length === 0}
+        Remove {removeIds.length} {removeIds.length === 1 ? "repo" : "repos"}
+      {:else}
+        Add {selectedEntries.length} · remove {removeIds.length}
+      {/if}
     </button>
   {/snippet}
 </Dialog>
@@ -166,6 +198,22 @@
     border-radius: 4px;
     background: var(--panel);
     color: var(--fg);
+  }
+  .row.gone {
+    grid-template-columns: auto auto minmax(0, 1fr);
+    cursor: pointer;
+  }
+  .path {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  h3 {
+    margin: 4px 0 0;
+    font: 600 11px var(--body);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
   }
   p {
     margin: 0;

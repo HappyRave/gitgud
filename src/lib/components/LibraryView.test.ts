@@ -91,6 +91,7 @@ function setup(snap = SNAP) {
   const onlocate = vi.fn();
   const onfetchvisible = vi.fn();
   const onlibrarychange = vi.fn();
+  const onrescan = vi.fn();
   render(LibraryView, {
     active: true,
     library: snap,
@@ -99,6 +100,7 @@ function setup(snap = SNAP) {
     onopen,
     onadd: vi.fn(),
     onscan: vi.fn(),
+    onrescan,
     onclone: vi.fn(),
     onlocate,
     onfetchvisible,
@@ -106,7 +108,7 @@ function setup(snap = SNAP) {
     onrefreshsummaries: vi.fn(),
     onerror: vi.fn(),
   });
-  return { calls, onopen, onlocate, onfetchvisible, onlibrarychange };
+  return { calls, onopen, onlocate, onfetchvisible, onlibrarychange, onrescan };
 }
 
 describe("LibraryView", () => {
@@ -119,6 +121,21 @@ describe("LibraryView", () => {
     const [dot, cell] = screen.getAllByTitle("2 untracked");
     expect(dot).toHaveClass("dot", "hollow");
     expect(cell).toHaveTextContent("2 untracked");
+  });
+
+  it("offers Rescan on a folder's right-click menu", async () => {
+    const { onrescan } = setup();
+    const studio = screen.getAllByRole("button").find((b) => b.classList.contains("it") && b.textContent?.includes("Studio"))!;
+    await fireEvent.contextMenu(studio);
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Rescan…" }));
+    expect(onrescan).toHaveBeenCalledWith("f-studio");
+  });
+
+  it("offers the folder menu on a folder's header in the list too", async () => {
+    const { onrescan } = setup();
+    await fireEvent.contextMenu(screen.getByText("Studio / VR", { selector: ".gh b" }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Rescan…" }));
+    expect(onrescan).toHaveBeenCalledWith("f-vr");
   });
 
   it("marks Unity projects with the Unity logo", () => {

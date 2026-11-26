@@ -1024,6 +1024,23 @@ async fn scan_folder(library: State<'_, LibraryStore>, root: String) -> Result<S
     core_scan_folder(Path::new(&root), &existing, DEFAULT_SCAN_DEPTH)
 }
 
+#[tauri::command]
+async fn library_rescan_folder(
+    library: State<'_, LibraryStore>,
+    folder_id: String,
+) -> Result<ScanResult, Error> {
+    library.rescan_folder(&folder_id, DEFAULT_SCAN_DEPTH)
+}
+
+#[tauri::command]
+async fn library_apply_scan(
+    library: State<'_, LibraryStore>,
+    entries: Vec<AddRepoEntry>,
+    remove_ids: Vec<String>,
+) -> Result<LibrarySnapshot, Error> {
+    library.apply_scan(&entries, &remove_ids)
+}
+
 const CLONE_PROGRESS: &str = "clone-progress";
 const FETCH_MANY_PROGRESS: &str = "fetch-many-progress";
 
@@ -1886,6 +1903,8 @@ fn app_with_library<R: Runtime>(builder: Builder<R>, library: Option<LibraryStor
             library_undo,
             library_redo,
             scan_folder,
+            library_rescan_folder,
+            library_apply_scan,
             clone_repo,
             cancel_clone,
             fetch_many,
@@ -3225,6 +3244,62 @@ mod tests {
             ipc.call("sequencer_state", json!({ "id": id })).unwrap(),
             Value::Null
         );
+    }
+
+    #[test]
+    fn library_rescan_and_apply_through_ipc() {
+        let ipc = Ipc::new();
+        let seed = history();
+        let root = tempfile::tempdir().unwrap();
+        let (kept, gone, fresh) = (
+            root.path().join("kept"),
+            root.path().join("gone"),
+            root.path().join("fresh"),
+        );
+        for p in [&kept, &gone] {
+            seed.git(&["init", "-q", p.to_str().unwrap()]);
+        }
+        let entries: Vec<Value> = [&kept, &gone]
+            .iter()
+            .map(|p| json!({ "path": p, "folderPath": "Work", "name": null }))
+            .collect();
+        let snap = ipc
+            .call("library_add_repos", json!({ "entries": entries }))
+            .unwrap();
+        let folder = snap["folders"][0]["id"].as_str().unwrap().to_owned();
+        std::fs::remove_dir_all(&gone).unwrap();
+        seed.git(&["init", "-q", fresh.to_str().unwrap()]);
+
+        let scan = ipc
+            .call("library_rescan_folder", json!({ "folderId": folder }))
+            .unwrap();
+        assert_eq!(scan["gone"][0]["name"], "gone");
+        let new: Vec<&Value> = scan["groups"][0]["repos"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|r| r["alreadyInLibrary"] == false)
+            .collect();
+        assert_eq!(new.len(), 1);
+        assert_eq!(scan["groups"][0]["suggestedFolder"], "Work");
+
+        let applied = ipc
+            .call(
+                "library_apply_scan",
+                json!({
+                    "entries": [{ "path": new[0]["path"], "folderPath": "Work", "name": null }],
+                    "removeIds": [scan["gone"][0]["id"]],
+                }),
+            )
+            .unwrap();
+        let names: Vec<&str> = applied["repos"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, ["kept", "fresh"]);
+        assert_eq!(applied["undoAction"], "Rescan: add 1, remove 1");
     }
 
     #[test]

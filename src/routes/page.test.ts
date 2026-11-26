@@ -230,6 +230,52 @@ describe("start page: git and app stats", () => {
   });
 });
 
+describe("library rescan", () => {
+  it("rescans a folder from its menu and applies adds and removals in one call", async () => {
+    const LIB = {
+      version: 1,
+      folders: [{ id: "f-games", name: "Games", parentId: null, order: 0 }],
+      repos: [
+        { id: "r-gone", name: "doomed", path: "C:/Games/doomed", folderId: "f-games", pinned: false, order: 0, lastOpened: null, cached: null },
+      ],
+      tabs: { openPaths: [], activePath: null },
+      undoAction: null,
+      redoAction: null,
+    };
+    const calls = app({
+      library_load: () => LIB,
+      library_rescan_folder: () => ({
+        root: "C:/Games",
+        totalFound: 1,
+        elapsedMs: 3,
+        groups: [{ dir: "C:/Games", suggestedFolder: "Games", repos: [{ name: "fresh", path: "C:/Games/fresh", alreadyInLibrary: false }] }],
+        gone: [{ id: "r-gone", name: "doomed", path: "C:/Games/doomed" }],
+      }),
+      library_apply_scan: () => ({ ...LIB, repos: [], undoAction: "Rescan: add 1, remove 1" }),
+    });
+    render(Page);
+
+    const folder = await vi.waitFor(() => {
+      const found = screen.getAllByRole("button").find((b) => b.classList.contains("it") && b.textContent?.includes("Games"));
+      expect(found).toBeDefined();
+      return found!;
+    });
+    await fireEvent.contextMenu(folder);
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Rescan…" }));
+    const dlg = await screen.findByRole("dialog", { name: "Rescan Games" });
+    await fireEvent.click(within(dlg).getByRole("button", { name: "Add 1 · remove 1" }));
+
+    await vi.waitFor(() =>
+      expect(calls.find((c) => c.cmd === "library_apply_scan")?.args).toEqual({
+        entries: [{ path: "C:/Games/fresh", folderPath: "Games", name: "fresh" }],
+        removeIds: ["r-gone"],
+      }),
+    );
+    expect(calls.find((c) => c.cmd === "library_rescan_folder")?.args).toEqual({ folderId: "f-games" });
+    expect(screen.queryByRole("dialog", { name: "Rescan Games" })).toBeNull();
+  });
+});
+
 describe("updates", () => {
   it("checks at startup and offers a newer release; Skip closes it", async () => {
     const calls = app({

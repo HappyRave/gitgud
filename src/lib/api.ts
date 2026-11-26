@@ -804,6 +804,14 @@ export interface ScanResult {
   totalFound: number;
   elapsedMs: number;
   groups: ScanGroup[];
+  /** On a rescan: the folder's repositories gone from disk. */
+  gone?: GoneRepo[];
+}
+
+export interface GoneRepo {
+  id: string;
+  name: string;
+  path: string;
 }
 
 export interface LfsProgress {
@@ -1328,6 +1336,8 @@ export interface Commands {
   library_undo: { args: Record<string, never>; result: LibrarySnapshot };
   library_redo: { args: Record<string, never>; result: LibrarySnapshot };
   scan_folder: { args: { root: string }; result: ScanResult };
+  library_rescan_folder: { args: { folderId: string }; result: ScanResult };
+  library_apply_scan: { args: { entries: AddRepoEntry[]; removeIds: string[] }; result: LibrarySnapshot };
   clone_repo: { args: { url: string; dest: string; folderPath: string | null; longPaths: boolean }; result: string };
   cancel_clone: { args: Record<string, never>; result: boolean };
   fetch_many: { args: { paths: string[] }; result: RepoSummary[] };
@@ -1541,6 +1551,9 @@ export const librarySaveTabs = (tabs: OpenTabState) => call("library_save_tabs",
 export const libraryUndo = () => call("library_undo", {});
 export const libraryRedo = () => call("library_redo", {});
 export const scanFolder = (root: string) => call("scan_folder", { root });
+export const libraryRescanFolder = (folderId: string) => call("library_rescan_folder", { folderId });
+export const libraryApplyScan = (entries: AddRepoEntry[], removeIds: string[]) =>
+  call("library_apply_scan", { entries, removeIds });
 export const cloneRepo = (url: string, dest: string, folderPath: string | null, longPaths: boolean) =>
   call("clone_repo", { url, dest, folderPath, longPaths });
 export const cancelClone = () => call("cancel_clone", {});
