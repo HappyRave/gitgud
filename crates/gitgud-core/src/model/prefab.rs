@@ -178,6 +178,106 @@ fn nested_id(instance: i64, inner: i64) -> i64 {
     (instance ^ inner) & i64::MAX
 }
 
+/// A node for each GameObject in `docs` that has a Transform, placed by it;
+/// parents, meshes and materials come later.
+fn game_object_nodes(docs: &[Doc], by_id: &HashMap<i64, &Doc>) -> Vec<Node> {
+    let mut nodes = Vec::new();
+    for d in docs
+        .iter()
+        .filter(|d| d.class_id == GAME_OBJECT && !d.stripped)
+    {
+        let transform = d.body["m_Component"]
+            .as_vec()
+            .into_iter()
+            .flatten()
+            .filter_map(|c| obj_ref(&c["component"]))
+            .map(|r| id(&r.file_id))
+            .find(|t| {
+                by_id
+                    .get(t)
+                    .is_some_and(|t| matches!(t.class_id, TRANSFORM | RECT_TRANSFORM))
+            });
+        let Some(transform) = transform else {
+            continue;
+        };
+        let t = &by_id[&transform].body;
+        nodes.push(Node {
+            out: ModelNode {
+                name: scalar(&d.body["m_Name"]).unwrap_or_default(),
+                parent: None,
+                position: vec3(&t["m_LocalPosition"], [0.0; 3]),
+                rotation: quat(&t["m_LocalRotation"]),
+                scale: vec3(&t["m_LocalScale"], [1.0; 3]),
+                active: num(&d.body["m_IsActive"]).is_none_or(|a| a != 0.0),
+                mesh: None,
+                materials: Vec::new(),
+                skinned: false,
+                controller: None,
+            },
+            transform,
+            game_object: id(&d.file_id),
+            filter: None,
+            renderer: None,
+            removed: false,
+        });
+    }
+    nodes
+}
+
+/// Stripped objects stand for an object of a nested instance: their id → that
+/// object's id as the outer prefab sees it.
+fn stripped_aliases(docs: &[Doc]) -> HashMap<i64, i64> {
+    let mut alias = HashMap::new();
+    for d in docs.iter().filter(|d| d.stripped) {
+        if let (Some(src), Some(inst)) = (
+            obj_ref(&d.body["m_CorrespondingSourceObject"]),
+            obj_ref(&d.body["m_PrefabInstance"]),
+        ) {
+            alias.insert(
+                id(&d.file_id),
+                nested_id(id(&inst.file_id), id(&src.file_id)),
+            );
+        }
+    }
+    alias
+}
+
+/// Only a LOD Group's most detailed level is drawn: the others would stack on it.
+fn drop_lower_lods(docs: &[Doc], tree: &mut Tree, alias: &HashMap<i64, i64>) {
+    let resolve = |x: i64| alias.get(&x).copied().unwrap_or(x);
+    let by_renderer = tree.index().renderer;
+    for d in docs
+        .iter()
+        .filter(|d| d.class_id == LOD_GROUP && !d.stripped)
+    {
+        let renderers = |lod: &yaml_rust2::Yaml| -> Vec<i64> {
+            lod["renderers"]
+                .as_vec()
+                .into_iter()
+                .flatten()
+                .filter_map(|r| obj_ref(&r["renderer"]))
+                .map(|r| resolve(id(&r.file_id)))
+                .collect()
+        };
+        let Some(lods) = d.body["m_LODs"].as_vec() else {
+            continue;
+        };
+        let Some((first, rest)) = lods.split_first() else {
+            continue;
+        };
+        let keep = renderers(first);
+        for r in rest.iter().flat_map(renderers) {
+            if keep.contains(&r) {
+                continue;
+            }
+            if let Some(&ix) = by_renderer.get(&r) {
+                tree.nodes[ix].out.mesh = None;
+                tree.nodes[ix].out.materials.clear();
+            }
+        }
+    }
+}
+
 pub(crate) struct PrefabBuilder<'a, 'g> {
     guids: &'g Guids<'a>,
     pub materials: Vec<Material>,
@@ -331,47 +431,9 @@ impl<'a, 'g> PrefabBuilder<'a, 'g> {
             docs: &by_id,
             mesh_keys,
         };
-        let mut tree = Tree { nodes: Vec::new() };
-
-        for d in docs
-            .iter()
-            .filter(|d| d.class_id == GAME_OBJECT && !d.stripped)
-        {
-            let transform = d.body["m_Component"]
-                .as_vec()
-                .into_iter()
-                .flatten()
-                .filter_map(|c| obj_ref(&c["component"]))
-                .map(|r| id(&r.file_id))
-                .find(|t| {
-                    by_id
-                        .get(t)
-                        .is_some_and(|t| matches!(t.class_id, TRANSFORM | RECT_TRANSFORM))
-                });
-            let Some(transform) = transform else {
-                continue;
-            };
-            let t = &by_id[&transform].body;
-            tree.nodes.push(Node {
-                out: ModelNode {
-                    name: scalar(&d.body["m_Name"]).unwrap_or_default(),
-                    parent: None,
-                    position: vec3(&t["m_LocalPosition"], [0.0; 3]),
-                    rotation: quat(&t["m_LocalRotation"]),
-                    scale: vec3(&t["m_LocalScale"], [1.0; 3]),
-                    active: num(&d.body["m_IsActive"]).is_none_or(|a| a != 0.0),
-                    mesh: None,
-                    materials: Vec::new(),
-                    skinned: false,
-                    controller: None,
-                },
-                transform,
-                game_object: id(&d.file_id),
-                filter: None,
-                renderer: None,
-                removed: false,
-            });
-        }
+        let mut tree = Tree {
+            nodes: game_object_nodes(&docs, &by_id),
+        };
 
         let mut instance_roots: Vec<(usize, i64)> = Vec::new();
         for d in docs
@@ -404,19 +466,7 @@ impl<'a, 'g> PrefabBuilder<'a, 'g> {
             }
         }
 
-        // Stripped objects stand for an object of a nested instance.
-        let mut alias: HashMap<i64, i64> = HashMap::new();
-        for d in docs.iter().filter(|d| d.stripped) {
-            if let (Some(src), Some(inst)) = (
-                obj_ref(&d.body["m_CorrespondingSourceObject"]),
-                obj_ref(&d.body["m_PrefabInstance"]),
-            ) {
-                alias.insert(
-                    id(&d.file_id),
-                    nested_id(id(&inst.file_id), id(&src.file_id)),
-                );
-            }
-        }
+        let alias = stripped_aliases(&docs);
         let resolve = |x: i64| alias.get(&x).copied().unwrap_or(x);
         let ix = tree.index();
         let by_transform = |x: i64| ix.transform.get(&x).copied();
@@ -436,6 +486,22 @@ impl<'a, 'g> PrefabBuilder<'a, 'g> {
             }
         }
 
+        self.attach_components(&docs, &mut tree, &ix.game_object, &alias, &local)?;
+        drop_lower_lods(&docs, &mut tree, &alias);
+        Ok(tree)
+    }
+
+    /// Fills each node's mesh, materials, skinning, terrain and animator from the
+    /// components in `docs` that belong to its GameObject (`game_objects`: id → node).
+    fn attach_components(
+        &mut self,
+        docs: &[Doc],
+        tree: &mut Tree,
+        game_objects: &HashMap<i64, usize>,
+        alias: &HashMap<i64, i64>,
+        local: &Local<'_>,
+    ) -> Result<(), Error> {
+        let resolve = |x: i64| alias.get(&x).copied().unwrap_or(x);
         for d in docs.iter().filter(|d| !d.stripped) {
             if !matches!(
                 d.class_id,
@@ -446,7 +512,7 @@ impl<'a, 'g> PrefabBuilder<'a, 'g> {
             let Some(go) = obj_ref(&d.body["m_GameObject"]) else {
                 continue;
             };
-            let Some(&ix) = ix.game_object.get(&resolve(id(&go.file_id))) else {
+            let Some(&ix) = game_objects.get(&resolve(id(&go.file_id))) else {
                 continue;
             };
             let me = id(&d.file_id);
@@ -458,7 +524,7 @@ impl<'a, 'g> PrefabBuilder<'a, 'g> {
                         obj_ref(&d.body["m_Mesh"]),
                         &owner,
                         "MeshFilter.m_Mesh",
-                        Some(&local),
+                        Some(local),
                     )?;
                 }
                 MESH_RENDERER | SKINNED_MESH_RENDERER => {
@@ -470,7 +536,7 @@ impl<'a, 'g> PrefabBuilder<'a, 'g> {
                             obj_ref(&d.body["m_Mesh"]),
                             &owner,
                             "SkinnedMeshRenderer.m_Mesh",
-                            Some(&local),
+                            Some(local),
                         )?;
                     }
                     let refs: Vec<Option<ObjRef>> = d.body["m_Materials"]
@@ -497,40 +563,7 @@ impl<'a, 'g> PrefabBuilder<'a, 'g> {
                 }
             }
         }
-
-        // Only a LOD Group's most detailed level is drawn: the others would stack on it.
-        let by_renderer = tree.index().renderer;
-        for d in docs
-            .iter()
-            .filter(|d| d.class_id == LOD_GROUP && !d.stripped)
-        {
-            let renderers = |lod: &yaml_rust2::Yaml| -> Vec<i64> {
-                lod["renderers"]
-                    .as_vec()
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|r| obj_ref(&r["renderer"]))
-                    .map(|r| resolve(id(&r.file_id)))
-                    .collect()
-            };
-            let Some(lods) = d.body["m_LODs"].as_vec() else {
-                continue;
-            };
-            let Some((first, rest)) = lods.split_first() else {
-                continue;
-            };
-            let keep = renderers(first);
-            for r in rest.iter().flat_map(renderers) {
-                if keep.contains(&r) {
-                    continue;
-                }
-                if let Some(&ix) = by_renderer.get(&r) {
-                    tree.nodes[ix].out.mesh = None;
-                    tree.nodes[ix].out.materials.clear();
-                }
-            }
-        }
-        Ok(tree)
+        Ok(())
     }
 
     /// The nodes a PrefabInstance brings in, its modifications applied.
