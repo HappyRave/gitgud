@@ -259,7 +259,7 @@ fn build_proposal_tree(
     let selected_paths: Vec<String>;
     if !input.hunk_ids.is_empty() {
         let wanted: HashSet<&str> = input.hunk_ids.iter().map(String::as_str).collect();
-        let mut patch_bundle = String::new();
+        let mut patch_bundle = Vec::new();
         let mut matched_paths = BTreeSet::new();
         let mut matched_ids = HashSet::new();
         for entry in &status.entries {
@@ -278,7 +278,7 @@ fn build_proposal_tree(
                     let ids = assign_hunk_ids(&entry.path, hunks.iter().map(|(h, _)| h));
                     for ((_, raw_patch), hid) in hunks.into_iter().zip(ids) {
                         if wanted.contains(hid.as_str()) {
-                            patch_bundle.push_str(&raw_patch);
+                            patch_bundle.extend_from_slice(&raw_patch);
                             matched_paths.insert(entry.path.clone());
                             matched_ids.insert(hid);
                         }
@@ -307,7 +307,7 @@ fn build_proposal_tree(
         git.run_env(
             root,
             &["apply", "--cached", "--whitespace=nowarn", "-"],
-            Some(patch_bundle.as_bytes()),
+            Some(&patch_bundle),
             &idx_env,
         )?;
         selected_paths = matched_paths.into_iter().collect();

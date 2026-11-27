@@ -188,6 +188,45 @@ fn keeps_crlf_bytes_when_the_index_holds_them() {
 }
 
 #[test]
+fn hunks_and_lines_of_a_non_utf8_file_stage_byte_for_byte() {
+    let repo = committed("l.txt", "a\nb\nc\nd\ne\nf\ng\nh\ni\nj\n");
+    let edited = b"a\nb\xe9\nc\nd\ne\nf\ng\nh\ni\nj \xe0\xe8\n";
+    std::fs::write(repo.path().join("l.txt"), edited).unwrap();
+    let r = open(&repo);
+    let diff = r.worktree_file_diff("l.txt", Side::Unstaged).unwrap();
+    let hunks = headers(&diff);
+    assert_eq!(hunks.len(), 2);
+
+    r.stage_hunk(&cli(), "l.txt", hunks[1]).unwrap();
+    assert_eq!(
+        index_bytes(&repo, "l.txt"),
+        b"a\nb\nc\nd\ne\nf\ng\nh\ni\nj \xe0\xe8\n"
+    );
+
+    let first = &r.worktree_file_diff("l.txt", Side::Unstaged).unwrap().hunks[0];
+    let added = first
+        .lines
+        .iter()
+        .position(|l| l.kind == LineKind::Added)
+        .unwrap();
+    let removed = first
+        .lines
+        .iter()
+        .position(|l| l.kind == LineKind::Removed)
+        .unwrap();
+    r.stage_lines(
+        &cli(),
+        "l.txt",
+        &LineSelect {
+            hunk: HunkHeader::from(first),
+            lines: vec![removed, added],
+        },
+    )
+    .unwrap();
+    assert_eq!(index_bytes(&repo, "l.txt"), edited);
+}
+
+#[test]
 fn handles_a_last_line_without_newline() {
     let repo = committed("f.txt", "a\nb\nlast");
     repo.write("f.txt", "a\nb\nlast changed");

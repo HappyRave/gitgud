@@ -90,8 +90,10 @@ replaying at most 255 rows (spike 4.3).
   prediction with `merge-tree --write-tree --name-only`; conflicts classified Unity YAML / code /
   binary (LFS, binary, or deleted on one side) and remembered in `.git/gitgud/merge.json`; text
   conflicts chunked by `git merge-file --diff3` over the index stages, with 31-character markers so
-  marker-like lines in files can't confuse the parser. Resolving writes through the to-worktree
-  filters (autocrlf) and stages; start, picks and abort are destructive writes over the files the
+  marker-like lines in files can't confuse the parser. Resolving gives the text back the sides'
+  `\r\n` line ends and, for a non-UTF-8 file (read one character per byte), its exact bytes
+  (`merge::TextForm`), then writes through the to-worktree filters (autocrlf) and stages; start,
+  picks and abort are destructive writes over the files the
   merge can touch. The frontend keeps per-hunk picks locally until "Save and mark resolved".
 - **Rebase** (`rebase.rs`): prediction replays the commits `rebase` would pick (`rev-list
   --cherry-pick --right-only --no-merges`) with `merge-tree --merge-base=<parent>` over trees, so

@@ -378,6 +378,95 @@ fn resolve_with_writes_crlf_for_autocrlf_users() {
     );
 }
 
+fn staged_bytes(repo: &TestRepo, path: &str) -> Vec<u8> {
+    std::process::Command::new("git")
+        .args(["show", &format!(":{path}")])
+        .current_dir(repo.path())
+        .output()
+        .unwrap()
+        .stdout
+}
+
+/// `main` and `other` both edit the last line of `path`, committed as given.
+fn diverged_bytes(base: &[u8], theirs: &[u8], yours: &[u8]) -> (TestRepo, Session, u32) {
+    let repo = TestRepo::init();
+    let write = |bytes: &[u8], msg: &str| {
+        std::fs::write(repo.path().join("f.txt"), bytes).unwrap();
+        repo.commit_all(msg);
+    };
+    write(base, "base");
+    repo.git(&["checkout", "-q", "-b", "other"]);
+    write(theirs, "theirs");
+    repo.git(&["checkout", "-q", "main"]);
+    write(yours, "yours");
+    let session = Session::default();
+    let id = session.open(repo.path()).unwrap().id;
+    session.merge(id, "other").unwrap();
+    (repo, session, id)
+}
+
+#[test]
+fn resolving_a_crlf_file_keeps_crlf_in_the_repo() {
+    let (repo, session, id) = diverged_bytes(
+        b"keep\r\nb\r\n",
+        b"keep\r\ntheirs\r\n",
+        b"keep\r\nyours\r\n",
+    );
+    let git = session.git().unwrap();
+    let text = session
+        .get(id)
+        .unwrap()
+        .repo
+        .conflict_text(&git, "f.txt")
+        .unwrap();
+    assert_eq!(
+        text.chunks[0],
+        Chunk::Same {
+            lines: vec!["keep".into()]
+        }
+    );
+
+    session
+        .resolve_with(id, "f.txt", "keep\nyours\ntheirs\n", "use both")
+        .unwrap();
+
+    assert_eq!(staged_bytes(&repo, "f.txt"), b"keep\r\nyours\r\ntheirs\r\n");
+}
+
+#[test]
+fn resolving_a_latin1_file_keeps_its_bytes() {
+    let (repo, session, id) = diverged_bytes(
+        b"caf\xe9\nb\n",
+        b"caf\xe9\ntheirs \xe0\n",
+        b"caf\xe9\nyours\n",
+    );
+    let git = session.git().unwrap();
+    let text = session
+        .get(id)
+        .unwrap()
+        .repo
+        .conflict_text(&git, "f.txt")
+        .unwrap();
+    let Chunk::Same { lines } = &text.chunks[0] else {
+        panic!("{text:?}");
+    };
+    assert_eq!(lines, &vec!["caf\u{e9}".to_owned()]);
+    let Chunk::Conflict { theirs, .. } = &text.chunks[1] else {
+        panic!("{text:?}");
+    };
+
+    let err = session
+        .resolve_with(id, "f.txt", "caf\u{e9} \u{20ac}\n", "edited")
+        .unwrap_err();
+    assert!(err.to_string().contains("isn't UTF-8"), "{err}");
+
+    let merged = format!("caf\u{e9}\n{}\n", theirs[0]);
+    session
+        .resolve_with(id, "f.txt", &merged, "take theirs")
+        .unwrap();
+    assert_eq!(staged_bytes(&repo, "f.txt"), b"caf\xe9\ntheirs \xe0\n");
+}
+
 #[test]
 fn resolve_side_keeps_one_whole_and_deletions_stay_deleted() {
     let (repo, session, id) = diverged();

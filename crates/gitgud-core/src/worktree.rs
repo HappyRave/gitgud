@@ -222,13 +222,14 @@ impl Repo {
                 "{path} is binary: stage or unstage the whole file"
             )));
         }
-        let (old, new) = (String::from_utf8_lossy(&old), String::from_utf8_lossy(&new));
-        let hunk = hunks_keeping_eol(&old, &new)
+        let (old_s, new_s) = (String::from_utf8_lossy(&old), String::from_utf8_lossy(&new));
+        let hunk = hunks_keeping_eol(&old_s, &new_s)
             .into_iter()
             .find(|h| HunkHeader::from(h) == wanted)
             .ok_or_else(|| Error::Stale(path.to_owned()))?;
 
-        let patch = patch(path, &hunk);
+        let raw = raw_lines(path, &hunk, &old, &new)?;
+        let patch = patch(path, &hunk, &raw, false);
         let mut args = vec!["apply", "--whitespace=nowarn"];
         if to_index {
             args.push("--cached");
@@ -237,8 +238,7 @@ impl Repo {
             args.push("--reverse");
         }
         args.push("-");
-        git.run(self.root(), &args, Some(patch.as_bytes()))
-            .map(drop)
+        git.run(self.root(), &args, Some(&patch)).map(drop)
     }
 
     fn apply_lines_to(
@@ -260,22 +260,22 @@ impl Repo {
                 "{path} is binary: stage or unstage the whole file"
             )));
         }
-        let (old, new) = (String::from_utf8_lossy(&old), String::from_utf8_lossy(&new));
-        let hunk = hunks_keeping_eol(&old, &new)
+        let (old_s, new_s) = (String::from_utf8_lossy(&old), String::from_utf8_lossy(&new));
+        let hunk = hunks_keeping_eol(&old_s, &new_s)
             .into_iter()
             .find(|h| HunkHeader::from(h) == select.hunk)
             .ok_or_else(|| Error::Stale(path.to_owned()))?;
 
+        let raw = raw_lines(path, &hunk, &old, &new)?;
         let chosen: BTreeSet<usize> = select.lines.iter().copied().collect();
         let forward = side == Side::Unstaged && to_index;
-        let patch = patch_lines(path, &hunk, &chosen, forward)?;
+        let patch = patch_lines(path, &hunk, &raw, &chosen, forward)?;
         let mut args = vec!["apply", "--whitespace=nowarn"];
         if to_index {
             args.push("--cached");
         }
         args.push("-");
-        git.run(self.root(), &args, Some(patch.as_bytes()))
-            .map(drop)
+        git.run(self.root(), &args, Some(&patch)).map(drop)
     }
 
     pub(crate) fn versions(&self, path: &str, side: Side) -> Result<Versions, Error> {
@@ -328,7 +328,7 @@ impl Repo {
         &self,
         path: &str,
         side: Side,
-    ) -> Result<Vec<(Hunk, String)>, Error> {
+    ) -> Result<Vec<(Hunk, Vec<u8>)>, Error> {
         let v = self.versions(path, side)?;
         let old = v.old.unwrap_or_default();
         let new = v.new.unwrap_or_default();
@@ -337,25 +337,14 @@ impl Repo {
         }
         let (old_s, new_s) = (String::from_utf8_lossy(&old), String::from_utf8_lossy(&new));
         let is_new = old.is_empty();
-        Ok(hunks_keeping_eol(&old_s, &new_s)
+        hunks_keeping_eol(&old_s, &new_s)
             .into_iter()
             .map(|h| {
-                let raw = patch(path, &h);
-                let final_patch = if is_new {
-                    let mut lines = raw.split_inclusive('\n');
-                    let _ = lines.next();
-                    let _ = lines.next();
-                    format!(
-                        "--- /dev/null\n+++ {}\n{}",
-                        quote(&format!("b/{path}")),
-                        lines.collect::<String>()
-                    )
-                } else {
-                    raw
-                };
-                (h, final_patch)
+                let raw = raw_lines(path, &h, &old, &new)?;
+                let patch = patch(path, &h, &raw, is_new);
+                Ok((h, patch))
             })
-            .collect())
+            .collect()
     }
 
     /// The work tree file converted to its git form, `None` when it's gone.
@@ -399,26 +388,77 @@ fn worktree_has_non_pointer(root: &Path, path: &str) -> bool {
     parse_lfs_pointer(&head[..n]).is_none()
 }
 
-/// A one-hunk patch git can apply; lines keep their exact endings.
-pub(crate) fn patch(path: &str, hunk: &Hunk) -> String {
-    let range = |start: u32, len: u32| format!("{start},{len}");
-    let mut out = format!(
-        "--- {}\n+++ {}\n@@ -{} +{} @@\n",
-        quote(&format!("a/{path}")),
-        quote(&format!("b/{path}")),
-        range(hunk.old_start, hunk.old_lines),
-        range(hunk.new_start, hunk.new_lines)
-    );
-    for line in &hunk.lines {
-        out.push(match line.kind {
-            LineKind::Context => ' ',
-            LineKind::Added => '+',
-            LineKind::Removed => '-',
-        });
-        out.push_str(&line.text);
-        if !line.text.ends_with('\n') {
-            out.push_str("\n\\ No newline at end of file\n");
+/// Each line of `hunk` as its exact bytes in `old` / `new`. Hunks are found on
+/// text decoded lossily, so non-UTF-8 bytes would otherwise come back as U+FFFD.
+fn raw_lines<'a>(
+    path: &str,
+    hunk: &Hunk,
+    old: &'a [u8],
+    new: &'a [u8],
+) -> Result<Vec<&'a [u8]>, Error> {
+    let start = |start: u32, len: u32| {
+        if len == 0 {
+            start as usize
+        } else {
+            start.saturating_sub(1) as usize
         }
+    };
+    let mut old_lines = old
+        .split_inclusive(|b| *b == b'\n')
+        .skip(start(hunk.old_start, hunk.old_lines));
+    let mut new_lines = new
+        .split_inclusive(|b| *b == b'\n')
+        .skip(start(hunk.new_start, hunk.new_lines));
+    let mut raw = Vec::with_capacity(hunk.lines.len());
+    for line in &hunk.lines {
+        let bytes = match line.kind {
+            LineKind::Context => {
+                new_lines.next();
+                old_lines.next()
+            }
+            LineKind::Removed => old_lines.next(),
+            LineKind::Added => new_lines.next(),
+        };
+        match bytes {
+            Some(b) if String::from_utf8_lossy(b) == line.text => raw.push(b),
+            _ => return Err(Error::Stale(path.to_owned())),
+        }
+    }
+    Ok(raw)
+}
+
+fn push_line(out: &mut Vec<u8>, prefix: u8, bytes: &[u8]) {
+    out.push(prefix);
+    out.extend_from_slice(bytes);
+    if !bytes.ends_with(b"\n") {
+        out.extend_from_slice(b"\n\\ No newline at end of file\n");
+    }
+}
+
+/// A one-hunk patch git can apply, from `raw` (the hunk's lines as exact bytes,
+/// see [`raw_lines`]); `new_file` patches against `/dev/null`.
+pub(crate) fn patch(path: &str, hunk: &Hunk, raw: &[&[u8]], new_file: bool) -> Vec<u8> {
+    let old_name = if new_file {
+        "/dev/null".to_owned()
+    } else {
+        quote(&format!("a/{path}"))
+    };
+    let mut out = format!(
+        "--- {old_name}\n+++ {}\n@@ -{},{} +{},{} @@\n",
+        quote(&format!("b/{path}")),
+        hunk.old_start,
+        hunk.old_lines,
+        hunk.new_start,
+        hunk.new_lines
+    )
+    .into_bytes();
+    for (line, bytes) in hunk.lines.iter().zip(raw) {
+        let prefix = match line.kind {
+            LineKind::Context => b' ',
+            LineKind::Added => b'+',
+            LineKind::Removed => b'-',
+        };
+        push_line(&mut out, prefix, bytes);
     }
     out
 }
@@ -430,10 +470,11 @@ pub(crate) fn patch(path: &str, hunk: &Hunk) -> String {
 fn patch_lines(
     path: &str,
     hunk: &Hunk,
+    raw: &[&[u8]],
     selected: &BTreeSet<usize>,
     forward: bool,
-) -> Result<String, Error> {
-    let mut body = String::new();
+) -> Result<Vec<u8>, Error> {
+    let mut body = Vec::new();
     let mut before_count = 0u32;
     let mut after_count = 0u32;
     let mut applied_any = false;
@@ -488,11 +529,7 @@ fn patch_lines(
             }
         };
         if let Some(prefix) = emitted {
-            body.push(prefix);
-            body.push_str(&line.text);
-            if !line.text.ends_with('\n') {
-                body.push_str("\n\\ No newline at end of file\n");
-            }
+            push_line(&mut body, prefix as u8, raw[idx]);
         }
     }
 
@@ -512,11 +549,14 @@ fn patch_lines(
     } else {
         before_start
     };
-    Ok(format!(
-        "--- {}\n+++ {}\n@@ -{before_start},{before_count} +{after_start},{after_count} @@\n{body}",
+    let mut out = format!(
+        "--- {}\n+++ {}\n@@ -{before_start},{before_count} +{after_start},{after_count} @@\n",
         quote(&format!("a/{path}")),
         quote(&format!("b/{path}")),
-    ))
+    )
+    .into_bytes();
+    out.extend_from_slice(&body);
+    Ok(out)
 }
 
 /// Git's C-style quoting for paths with characters a patch header can't hold raw.

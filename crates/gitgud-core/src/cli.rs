@@ -152,6 +152,20 @@ impl GitCli {
         args: &[&str],
         stdin: Option<&[u8]>,
     ) -> Result<(i32, String, String), Error> {
+        let (code, stdout, stderr) = self.run_status_bytes(cwd, args, stdin)?;
+        Ok((code, String::from_utf8_lossy(&stdout).into_owned(), stderr))
+    }
+
+    /// As [`GitCli::run_status`], with stdout's exact bytes.
+    ///
+    /// # Errors
+    /// As [`GitCli::run_status`].
+    pub fn run_status_bytes(
+        &self,
+        cwd: &Path,
+        args: &[&str],
+        stdin: Option<&[u8]>,
+    ) -> Result<(i32, Vec<u8>, String), Error> {
         let fail = |message: String| command_error(args, message);
         let mut cmd = self.command(cwd, args);
         cmd.stdin(if stdin.is_some() {
@@ -173,7 +187,7 @@ impl GitCli {
             .ok_or_else(|| fail("git was killed".into()))?;
         Ok((
             code,
-            String::from_utf8_lossy(&output.stdout).into_owned(),
+            output.stdout,
             String::from_utf8_lossy(&output.stderr).into_owned(),
         ))
     }

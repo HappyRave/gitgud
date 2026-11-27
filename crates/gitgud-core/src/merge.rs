@@ -455,7 +455,9 @@ impl Repo {
             path_str(&b)?,
             path_str(&t)?,
         ];
-        let (code, out, err) = git.run_status(self.root(), &args, None)?;
+        let (code, out, err) = git.run_status_bytes(self.root(), &args, None)?;
+        let form = TextForm::of(&[&base, &yours, &theirs]);
+        let out = form.decode(&out);
         if !(0..=127).contains(&code) {
             return Err(command_error(&args, failure_message(&out, &err)));
         }
@@ -486,16 +488,20 @@ impl Repo {
         .map(drop)
     }
 
-    /// Resolves `path` with `content` (git form, `\n` line ends): written through
-    /// the work-tree filters (autocrlf...) and staged.
+    /// Resolves `path` with `content` (git form; a lone `\n` gets back the `\r\n`
+    /// the conflicting sides use, and the bytes their encoding had, see
+    /// [`TextForm`]): written through the work-tree filters (autocrlf...) and staged.
     ///
     /// # Errors
-    /// [`Error::Read`] / [`Error::Command`] when writing or staging fails.
+    /// [`Error::Read`] / [`Error::Command`] when writing or staging fails,
+    /// [`Error::Refused`] when `content` has characters the file's encoding lacks.
     pub fn resolve_with(&self, git: &GitCli, path: &str, content: &str) -> Result<(), Error> {
         use gix::filter::plumbing::driver::apply::Delay;
         use gix::filter::plumbing::pipeline::convert::to_worktree::Options;
         // Only conflicted index paths: never a path outside the work tree.
-        self.stages(path)?;
+        let stages = self.stages(path)?;
+        let sides: Vec<&[u8]> = stages.iter().flatten().map(Vec::as_slice).collect();
+        let content = TextForm::of(&sides).encode(path, content)?;
         let repo = self.gix();
         let (mut pipeline, _index) = repo.filter_pipeline(None).map_err(read_err)?;
         let options = Options {
@@ -503,7 +509,7 @@ impl Repo {
             ..Options::default()
         };
         let mut converted = pipeline
-            .convert_to_worktree(content.as_bytes(), BStr::new(path), options)
+            .convert_to_worktree(&content, BStr::new(path), options)
             .map_err(read_err)?;
         let mut out = Vec::new();
         converted.read_to_end(&mut out).map_err(read_err)?;
@@ -688,6 +694,72 @@ fn side_info(repo: &Repo, data: &[u8]) -> SideInfo {
         lfs: false,
         oid: None,
         hydrated: true,
+    }
+}
+
+/// How a conflicted file's text maps to bytes, so the resolved text is written
+/// back as the sides had it: line ends (`\r\n` when most lines of the sides use
+/// it) and encoding (UTF-8, else one character per byte, which keeps any 8-bit
+/// encoding exact).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TextForm {
+    crlf: bool,
+    bytes: bool,
+}
+
+impl TextForm {
+    pub(crate) fn of(sides: &[&[u8]]) -> Self {
+        let (mut crlf, mut lf) = (0usize, 0usize);
+        for side in sides {
+            for line in side.split_inclusive(|b| *b == b'\n') {
+                if line.ends_with(b"\r\n") {
+                    crlf += 1;
+                } else if line.ends_with(b"\n") {
+                    lf += 1;
+                }
+            }
+        }
+        Self {
+            crlf: crlf > lf,
+            bytes: sides.iter().any(|s| std::str::from_utf8(s).is_err()),
+        }
+    }
+
+    /// `merge-file`'s output as text: lines lose `\r` later, in [`parse_merge_file`].
+    pub(crate) fn decode(self, out: &[u8]) -> String {
+        if self.bytes {
+            out.iter().map(|&b| char::from(b)).collect()
+        } else {
+            String::from_utf8_lossy(out).into_owned()
+        }
+    }
+
+    pub(crate) fn encode(self, path: &str, text: &str) -> Result<Vec<u8>, Error> {
+        let text = if self.crlf {
+            let mut out = String::with_capacity(text.len() + text.len() / 32);
+            let mut prev = '\0';
+            for c in text.chars() {
+                if c == '\n' && prev != '\r' {
+                    out.push('\r');
+                }
+                out.push(c);
+                prev = c;
+            }
+            std::borrow::Cow::Owned(out)
+        } else {
+            std::borrow::Cow::Borrowed(text)
+        };
+        if !self.bytes {
+            return Ok(text.into_owned().into_bytes());
+        }
+        text.chars()
+            .map(|c| u8::try_from(u32::from(c)).ok())
+            .collect::<Option<Vec<u8>>>()
+            .ok_or_else(|| {
+                Error::Refused(format!(
+                    "{path} isn't UTF-8, so it can only hold the characters it already uses"
+                ))
+            })
     }
 }
 
