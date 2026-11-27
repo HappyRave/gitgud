@@ -329,7 +329,10 @@ impl Repo {
             Some(hit) => hit,
             None => {
                 let info = self.read_model_info(git, path, version, kind)?;
-                if let Some((d, tree)) = &disk {
+                // Gitignored files read from disk aren't fixed by the commit.
+                if let Some((d, tree)) = &disk
+                    && info.from_disk == 0
+                {
                     d.put_model_info(tree, path, &info);
                 }
                 info
@@ -742,6 +745,27 @@ mod tests {
             );
             assert!(info.from_disk >= 2, "{v:?}: {}", info.from_disk);
         }
+        // The pack changes on disk: the commit's scene follows after a refresh, and
+        // nothing stale was kept on disk for the next session.
+        repo.write(
+            "Assets/Packs/Crate.prefab",
+            &crate_prefab.replace("m_Name: Crate", "m_Name: Barrel"),
+        );
+        crate::unity_yaml::forget_guid_index(&r);
+        let commit = Version::Commit(repo.git(&["rev-parse", "HEAD"]).trim().to_owned());
+        let names = |r: &crate::repo::Repo| {
+            let info = r.model_info(None, "Assets/Level.prefab", &commit).unwrap();
+            info.scene
+                .unwrap()
+                .nodes
+                .into_iter()
+                .map(|n| n.name)
+                .collect::<Vec<_>>()
+        };
+        assert!(names(&r).contains(&"Barrel".to_owned()));
+        let next_session = crate::repo::open(repo.path()).unwrap();
+        assert!(names(&next_session).contains(&"Barrel".to_owned()));
+
         let key = |v: Version| {
             r.model_info(None, "Assets/Packs/crate.fbx", &v)
                 .unwrap()

@@ -49,11 +49,12 @@ impl InfoCache {
         self.entries.push((path.to_owned(), origin, info));
     }
 
-    /// Drops the results read from the index or work tree, which may have changed.
+    /// Drops the results read from the index or work tree, which may have changed,
+    /// and a commit's that read gitignored files from disk.
     pub fn forget_live(&mut self) {
         self.generation += 1;
         self.entries
-            .retain(|(_, o, _)| matches!(o, Origin::Tree(_)));
+            .retain(|(_, o, info)| matches!(o, Origin::Tree(_)) && info.from_disk == 0);
     }
 
     /// Drops the results read from `origin`.

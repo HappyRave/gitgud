@@ -112,6 +112,12 @@ impl Repo {
                 }
             })
             .collect();
+        // A layer baked grey (its texture not downloaded yet) must not be kept.
+        let complete = t
+            .layers
+            .iter()
+            .zip(&textures)
+            .all(|(l, img)| l.texture.is_none() || img.is_some());
         let baked = bake(&t, &textures, size);
         let mut png = Vec::new();
         image::codecs::png::PngEncoder::new_with_quality(
@@ -123,7 +129,9 @@ impl Repo {
         .map_err(|e| Error::Read(format!("{path}: can't encode the baked layers: {e}")))?;
         let name = super::tree::base_name(path).trim_end_matches(".asset");
         let out = terrain_glb(&t, name, Some(&png));
-        if let Some(k) = key.as_deref() {
+        if let Some(k) = key.as_deref()
+            && complete
+        {
             disk.put_geometry(k, &out);
         }
         Ok(out)
@@ -496,6 +504,30 @@ mod tests {
             r.terrain_glb("grass.png", &Version::Head, 64).is_err(),
             "not a TerrainData"
         );
+    }
+
+    #[test]
+    fn a_terrain_baked_without_a_layer_texture_is_not_kept() {
+        let raw = [0x21u8, 0x43, 0x65, 0x87, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        let layer_guid = "12345678000000000000000000000000";
+        let tex_guid = "abcd0000000000000000000000000000";
+        let repo = crate::testing::TestRepo::init();
+        std::fs::write(repo.path().join("Island.asset"), terrain_data(&raw)).unwrap();
+        // Not an image yet, as an LFS texture that isn't downloaded.
+        repo.write("grass.png", "not downloaded")
+            .write("Island.asset.meta", "guid: 99990000000000000000000000000000\n")
+            .write("grass.png.meta", &format!("guid: {tex_guid}\n"))
+            .write(
+                "Grass.terrainlayer",
+                &format!("%YAML 1.1\n--- !u!1953259897 &1\nTerrainLayer:\n  m_DiffuseTexture: {{fileID: 2800000, guid: {tex_guid}, type: 3}}\n  m_TileSize: {{x: 5, y: 5}}\n"),
+            )
+            .write("Grass.terrainlayer.meta", &format!("guid: {layer_guid}\n"))
+            .commit_all("terrain");
+        let r = crate::repo::open(repo.path()).unwrap();
+
+        r.terrain_glb("Island.asset", &Version::Head, 64).unwrap();
+
+        assert_eq!(DiskCache::new(&r).stats().geometry, 0);
     }
 
     /// Writes the baked texture of `GITGUD_TERRAIN_PATH` in repo `GITGUD_TERRAIN_REPO`
