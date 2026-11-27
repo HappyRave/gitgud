@@ -1,5 +1,4 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::fs;
 
 use serde::Serialize;
 
@@ -336,19 +335,11 @@ fn text_risk(
     if is_binary(&old) || is_binary(&theirs) || is_binary(&mine) {
         return Ok(Risk::WontMerge);
     }
-    let dir = repo.git_dir().join("gitgud").join("overlap");
-    fs::create_dir_all(&dir).map_err(read_err)?;
-    let write = |name: &str, data: &[u8]| -> Result<String, Error> {
-        let p = dir.join(name);
-        fs::write(&p, data).map_err(read_err)?;
-        p.to_str()
-            .map(str::to_owned)
-            .ok_or_else(|| Error::Read(format!("{} isn't UTF-8", p.display())))
-    };
+    let dir = crate::repo::Scratch::new(repo, "overlap")?;
     let (m, b, t) = (
-        write("mine", &mine)?,
-        write("base", &old)?,
-        write("theirs", &theirs)?,
+        dir.write("mine", &mine)?,
+        dir.write("base", &old)?,
+        dir.write("theirs", &theirs)?,
     );
     let (code, _, err) = git.run_status(
         repo.root(),

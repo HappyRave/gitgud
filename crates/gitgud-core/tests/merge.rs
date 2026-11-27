@@ -406,6 +406,55 @@ fn diverged_bytes(base: &[u8], theirs: &[u8], yours: &[u8]) -> (TestRepo, Sessio
 }
 
 #[test]
+fn conflicts_of_several_files_read_at_once_stay_apart() {
+    let repo = TestRepo::init();
+    let names: Vec<String> = (0..6).map(|i| format!("f{i}.txt")).collect();
+    for n in &names {
+        repo.write(n, &format!("{n} base\n"));
+    }
+    repo.commit_all("base");
+    repo.git(&["checkout", "-q", "-b", "other"]);
+    for n in &names {
+        repo.write(n, &format!("{n} theirs\n"));
+    }
+    repo.commit_all("theirs");
+    repo.git(&["checkout", "-q", "main"]);
+    for n in &names {
+        repo.write(n, &format!("{n} yours\n"));
+    }
+    repo.commit_all("yours");
+    let session = Session::default();
+    let id = session.open(repo.path()).unwrap().id;
+    session.merge(id, "other").unwrap();
+    let r = session.get(id).unwrap().repo.clone();
+    let git = session.git().unwrap();
+
+    std::thread::scope(|s| {
+        for n in &names {
+            let (r, git) = (&r, &git);
+            s.spawn(move || {
+                for _ in 0..5 {
+                    let text = r.conflict_text(git, n).unwrap();
+                    let Chunk::Conflict { yours, theirs, .. } = &text.chunks[0] else {
+                        panic!("{text:?}");
+                    };
+                    assert_eq!(yours, &[format!("{n} yours")]);
+                    assert_eq!(theirs, &[format!("{n} theirs")]);
+                }
+            });
+        }
+    });
+    assert!(
+        !repo
+            .path()
+            .join(".git/gitgud/merge-file")
+            .read_dir()
+            .unwrap()
+            .any(|_| true)
+    );
+}
+
+#[test]
 fn resolving_a_crlf_file_keeps_crlf_in_the_repo() {
     let (repo, session, id) = diverged_bytes(
         b"keep\r\nb\r\n",

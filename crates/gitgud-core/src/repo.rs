@@ -199,6 +199,43 @@ pub(crate) fn read_err(err: impl std::error::Error) -> Error {
     Error::Read(err.to_string())
 }
 
+/// A folder of its own under `.git/gitgud/<kind>/` for one call's temporary
+/// files, removed when dropped: reads run side by side, so fixed names would mix
+/// one call's files with another's.
+pub(crate) struct Scratch(PathBuf);
+
+impl Scratch {
+    pub(crate) fn new(repo: &Repo, kind: &str) -> Result<Self, Error> {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = repo
+            .gix()
+            .git_dir()
+            .join("gitgud")
+            .join(kind)
+            .join(format!("{}-{n}", std::process::id()));
+        std::fs::create_dir_all(&dir).map_err(read_err)?;
+        Ok(Self(dir))
+    }
+
+    /// Writes `name` in the folder and returns its path as a `&str` argument.
+    pub(crate) fn write(&self, name: &str, data: &[u8]) -> Result<String, Error> {
+        let path = self.0.join(name);
+        std::fs::write(&path, data).map_err(read_err)?;
+        path.to_str()
+            .map(str::to_owned)
+            .ok_or_else(|| Error::Read(format!("{} isn't UTF-8", path.display())))
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        if let Err(e) = std::fs::remove_dir_all(&self.0) {
+            eprintln!("gitgud: cannot remove {}: {e}", self.0.display());
+        }
+    }
+}
+
 /// A repository's branch and changed files.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Status {

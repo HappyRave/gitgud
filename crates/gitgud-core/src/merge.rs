@@ -439,18 +439,11 @@ impl Repo {
         if is_binary(&yours) || is_binary(&theirs) || is_binary(&base) {
             return Err(Error::Refused(format!("{path} is binary: pick a side")));
         }
-        let dir = self.git_dir().join("gitgud").join("merge-file");
-        fs::create_dir_all(&dir).map_err(read_err)?;
-        let files =
-            [("yours", &yours), ("base", &base), ("theirs", &theirs)].map(|(name, data)| {
-                let p = dir.join(name);
-                fs::write(&p, data).map(|()| p)
-            });
-        let [y, b, t] = files;
+        let dir = crate::repo::Scratch::new(self, "merge-file")?;
         let (y, b, t) = (
-            y.map_err(read_err)?,
-            b.map_err(read_err)?,
-            t.map_err(read_err)?,
+            dir.write("yours", &yours)?,
+            dir.write("base", &base)?,
+            dir.write("theirs", &theirs)?,
         );
         let marker = format!("--marker-size={MARKER}");
         let args = [
@@ -464,9 +457,9 @@ impl Repo {
             "base",
             "-L",
             "theirs",
-            path_str(&y)?,
-            path_str(&b)?,
-            path_str(&t)?,
+            &y,
+            &b,
+            &t,
         ];
         let (code, out, err) = git.run_status_bytes(self.root(), &args, None)?;
         let form = TextForm::of(&[&base, &yours, &theirs]);
@@ -774,11 +767,6 @@ impl TextForm {
                 ))
             })
     }
-}
-
-fn path_str(p: &Path) -> Result<&str, Error> {
-    p.to_str()
-        .ok_or_else(|| Error::Read(format!("{} is not UTF-8", p.display())))
 }
 
 /// Splits `git merge-file --diff3` output (with [`MARKER`]-long markers) into
