@@ -540,95 +540,33 @@ struct UnityDoc {
     props: BTreeMap<String, String>,
 }
 
+/// Each document's flat properties, as the structure diff reads them (list
+/// items indexed, overrides keyed by target), named for the verify list.
 fn parse_unity_docs(text: &str) -> BTreeMap<String, UnityDoc> {
-    let mut docs = BTreeMap::new();
-    let mut current_id: Option<String> = None;
-    let mut component = String::new();
-    let mut name_hint: Option<String> = None;
-    let mut props: BTreeMap<String, String> = BTreeMap::new();
-    let mut stack: Vec<(usize, String)> = Vec::new();
-
-    let flush = |docs: &mut BTreeMap<String, UnityDoc>,
-                 id: Option<String>,
-                 comp: &str,
-                 name: Option<String>,
-                 props: BTreeMap<String, String>| {
-        let Some(id) = id else {
-            return;
-        };
-        let display_name = match (comp.is_empty(), name) {
-            (false, Some(n)) => format!("{comp} ({n})"),
-            (false, None) => format!("{comp} (&{id})"),
-            (true, Some(n)) => format!("{n} (&{id})"),
-            (true, None) => format!("&{id}"),
-        };
-        docs.insert(
-            id,
-            UnityDoc {
-                display_name,
-                props,
-            },
-        );
-    };
-
-    for raw in text.lines() {
-        let line = raw.trim_end_matches('\r');
-        if let Some(rest) = line.strip_prefix("--- !u!") {
-            flush(
-                &mut docs,
-                current_id.take(),
-                &component,
-                name_hint.take(),
-                std::mem::take(&mut props),
-            );
-            component.clear();
-            stack.clear();
-            let id = rest
-                .split('&')
-                .nth(1)
-                .map(|s| s.split_whitespace().next().unwrap_or(s).to_owned())
-                .unwrap_or_default();
-            current_id = Some(id);
-            continue;
-        }
-        if current_id.is_none() || line.trim().is_empty() || line.trim_start().starts_with('#') {
-            continue;
-        }
-        let indent = line.len() - line.trim_start().len();
-        let trimmed = line.trim();
-        if indent == 0 && trimmed.ends_with(':') && !trimmed.contains(' ') {
-            component = trimmed.trim_end_matches(':').to_owned();
-            stack.clear();
-            continue;
-        }
-        if let Some((k, v)) = trimmed.split_once(':') {
-            let key = k.trim_start_matches("- ").trim();
-            let val = v.trim();
-            while stack.last().is_some_and(|(ind, _)| *ind >= indent) {
-                stack.pop();
-            }
-            if val.is_empty() {
-                stack.push((indent, key.to_owned()));
-            } else {
-                let full_key = if stack.is_empty() {
-                    key.to_owned()
-                } else {
-                    let prefix = stack
-                        .iter()
-                        .map(|(_, s)| s.as_str())
-                        .collect::<Vec<_>>()
-                        .join(".");
-                    format!("{prefix}.{key}")
-                };
-                if key == "m_Name" && name_hint.is_none() {
-                    name_hint = Some(val.to_owned());
-                }
-                props.insert(full_key, val.to_owned());
-            }
-        }
-    }
-    flush(&mut docs, current_id, &component, name_hint, props);
-    docs
+    crate::unity_yaml::UnityScene::parse(text)
+        .docs
+        .into_iter()
+        .map(|(id, doc)| {
+            let display_name = match (doc.root_type.is_empty(), doc.name_hint) {
+                (false, Some(n)) => format!("{} ({n})", doc.root_type),
+                (false, None) => format!("{} (&{id})", doc.root_type),
+                (true, Some(n)) => format!("{n} (&{id})"),
+                (true, None) => format!("&{id}"),
+            };
+            let props = doc
+                .props
+                .into_iter()
+                .map(|(key, prop)| (key, prop.value))
+                .collect();
+            (
+                id,
+                UnityDoc {
+                    display_name,
+                    props,
+                },
+            )
+        })
+        .collect()
 }
 
 fn invoke_merge_driver(
@@ -811,5 +749,33 @@ mod tests {
         assert_eq!(file.verify[0].ours.as_deref(), Some("20"));
         assert_eq!(file.verify[0].theirs.as_deref(), Some("30"));
         assert!(!file.verify[0].confirmed);
+    }
+
+    #[test]
+    fn a_child_or_override_dropped_by_the_merge_is_flagged() {
+        let doc = |children: &str, mods: &str| {
+            format!(
+                "--- !u!4 &100\nTransform:\n  m_Children:\n{children}--- !u!1001 &50\n\
+                 PrefabInstance:\n  m_Modification:\n    m_Modifications:\n{mods}"
+            )
+        };
+        let child = |id: u32| format!("  - {{fileID: {id}}}\n");
+        let mod_of = |target: u32, value: u32| {
+            format!(
+                "    - target: {{fileID: {target}, guid: aa, type: 3}}\n      propertyPath: \
+                 m_IsActive\n      value: {value}\n      objectReference: {{fileID: 0}}\n"
+            )
+        };
+        let both_children = format!("{}{}", child(1), child(2));
+        let base = doc(&both_children, &format!("{}{}", mod_of(7, 1), mod_of(8, 1)));
+        let ours = doc(&both_children, &format!("{}{}", mod_of(7, 0), mod_of(8, 1)));
+        let theirs = base.clone();
+        // The merge loses the first child and ours' override of target 7.
+        let merged = doc(&child(2), &format!("{}{}", mod_of(7, 1), mod_of(8, 1)));
+
+        let file = compare_unity_merge("Assets/A.prefab", &base, &ours, &theirs, &merged);
+        let flagged: Vec<&str> = file.verify.iter().map(|v| v.property.as_str()).collect();
+        assert!(flagged.contains(&"m_Children[0]"), "{flagged:?}");
+        assert!(flagged.contains(&"override:m_IsActive @7"), "{flagged:?}");
     }
 }
