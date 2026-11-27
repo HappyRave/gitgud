@@ -281,7 +281,7 @@
   {/if}
 
   {#snippet footer()}
-    <span class="muted foot">Saved as <code>lfs.fetchinclude</code> in .git/config; Sourcetree and the terminal follow it.</span>
+    <span class="muted foot">Saved as <code>lfs.fetchinclude</code> in .git/gitgud/lfs-include.config, included from .git/config; Sourcetree and the terminal follow it.</span>
     <span class="sp"></span>
     {#if plan?.partial}
       <button type="button" disabled={!!working} onclick={whole}>Download everything</button>

@@ -643,12 +643,7 @@ pub fn apply(
     cancel: &Cancel,
 ) -> Result<LfsPlan, Error> {
     let Some(state) = state else {
-        git.run(
-            repo.root(),
-            &["config", "--local", "--unset-all", "lfs.fetchinclude"],
-            None,
-        )
-        .or_else(not_set)?;
+        set_fetchinclude(git, repo, None)?;
         save_state(repo, None)?;
         git.run_with_progress(repo.root(), &["lfs", "pull"], on_progress, cancel)?;
         return Ok(plan(git, repo, &PartialState::build())?.0);
@@ -680,21 +675,64 @@ pub fn apply(
     } else {
         &include
     };
-    git.run(
-        repo.root(),
-        &["config", "--local", "lfs.fetchinclude", value],
-        None,
-    )?;
+    set_fetchinclude(git, repo, Some(value))?;
     git.run_with_progress(repo.root(), &["lfs", "pull"], on_progress, cancel)?;
     to_pointers(git, repo, &dehydrate)?;
     Ok(plan(git, repo, state)?.0)
 }
 
-fn not_set(e: Error) -> Result<String, Error> {
-    // `git config --unset-all` exits 5 when the key isn't there.
-    match e {
-        Error::Command { .. } => Ok(String::new()),
-        other => Err(other),
+/// Where `lfs.fetchinclude` lives, relative to the folder of `.git/config` that
+/// includes it: the list can pass Windows' 32k command-line limit, so it is
+/// written to a file, never passed to `git config`.
+const INCLUDE_CONFIG: &str = "gitgud/lfs-include.config";
+
+/// Sets `lfs.fetchinclude` to `value`, or removes it for `None` (every file wanted).
+fn set_fetchinclude(git: &GitCli, repo: &Repo, value: Option<&str>) -> Result<(), Error> {
+    let root = repo.root();
+    // A value an older gitgud wrote straight into .git/config would win over the include.
+    config_unset(git, root, &["--unset-all", "lfs.fetchinclude"])?;
+    let file = repo.gix().common_dir().join(INCLUDE_CONFIG);
+    let pattern = format!("^{}$", INCLUDE_CONFIG.replace('.', "\\."));
+    let Some(value) = value else {
+        match std::fs::remove_file(&file) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(read_err(e)),
+            _ => {}
+        }
+        return config_unset(git, root, &["--unset-all", "include.path", &pattern]);
+    };
+    let escaped = value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n");
+    if let Some(dir) = file.parent() {
+        std::fs::create_dir_all(dir).map_err(read_err)?;
+    }
+    std::fs::write(&file, format!("[lfs]\n\tfetchinclude = \"{escaped}\"\n")).map_err(read_err)?;
+    git.run(
+        root,
+        &[
+            "config",
+            "--local",
+            "--replace-all",
+            "include.path",
+            INCLUDE_CONFIG,
+            &pattern,
+        ],
+        None,
+    )
+    .map(drop)
+}
+
+/// `git config --local <args>` that removes entries; none being there is fine (exit 5).
+fn config_unset(git: &GitCli, root: &Path, args: &[&str]) -> Result<(), Error> {
+    let mut all = vec!["config", "--local"];
+    all.extend_from_slice(args);
+    match git.run_status(root, &all, None)? {
+        (0 | 5, ..) => Ok(()),
+        (_, stdout, stderr) => Err(crate::cli::command_error(
+            &all,
+            crate::cli::failure_message(&stdout, &stderr),
+        )),
     }
 }
 

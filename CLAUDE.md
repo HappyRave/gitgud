@@ -334,7 +334,9 @@ replaying at most 255 rows (spike 4.3).
   scenes / prefabs into `.git/lfs` (`git lfs fetch --include`) to read them; Unity's always-loaded
   files (outside `Assets/`, code / DLLs, `Resources`, `Editor`, `StreamingAssets`, `Gizmos`,
   `AddressableAssetsData`) and kept paths are walked too. `apply` writes the wanted files to
-  `lfs.fetchinclude` (whole folders collapsed below the top level; wildcard-like characters become `?`),
+  `lfs.fetchinclude` (whole folders collapsed below the top level; wildcard-like characters become `?`)
+  in `.git/gitgud/lfs-include.config`, which `.git/config` includes (`include.path`), since the list can
+  pass Windows' command-line limit;
   runs `git lfs pull`, and turns unneeded files back into pointers (unmodified, object in the store;
   refused while Unity is open), so Sourcetree and the terminal follow the same choice. Downloads are
   added to `kept`, since git-lfs would turn a downloaded file outside the include list back into a

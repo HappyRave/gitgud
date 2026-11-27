@@ -217,6 +217,52 @@ fn a_downloaded_folder_is_kept_and_dropping_it_turns_its_files_back_into_pointer
 }
 
 #[test]
+fn the_include_list_lives_in_a_file_not_on_a_command_line() {
+    let (_origin, _bare, clone, session, id) = partial_clone();
+    // What an older gitgud wrote: it would win over the include.
+    clone.git(&["config", "--local", "lfs.fetchinclude", "Assets/Old.png"]);
+    session
+        .lfs_partial_apply(id, Some(PartialState::build()), |_| {})
+        .unwrap();
+
+    let origin = clone.git(&["config", "--show-origin", "--get-all", "lfs.fetchinclude"]);
+    assert_eq!(origin.lines().count(), 1, "{origin}");
+    assert!(origin.contains("gitgud/lfs-include.config"), "{origin}");
+    assert!(!origin.contains("Assets/Old.png"), "{origin}");
+
+    session
+        .lfs_partial_apply(id, Some(PartialState::build()), |_| {})
+        .unwrap();
+    assert_eq!(
+        clone
+            .git(&["config", "--get-all", "include.path"])
+            .lines()
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn an_edit_status_doesnt_see_is_never_turned_into_a_pointer() {
+    let (_origin, _bare, clone, session, id) = partial_clone();
+    session.lfs_partial_apply(id, None, |_| {}).unwrap();
+    clone.git(&["update-index", "--assume-unchanged", "Assets/Old.png"]);
+    clone.write("Assets/Old.png", "my hidden edit");
+    assert_eq!(
+        clone.git(&["status", "--porcelain"]),
+        "",
+        "git can't see it"
+    );
+
+    session
+        .lfs_partial_apply(id, Some(PartialState::build()), |_| {})
+        .unwrap();
+
+    assert_eq!(read(&clone, "Assets/Old.png"), "my hidden edit");
+    assert!(is_pointer(&clone, "Assets/Pack/Unused.png"));
+}
+
+#[test]
 fn whole_again_downloads_everything_and_forgets_the_choice() {
     let (_origin, _bare, clone, session, id) = partial_clone();
     session
