@@ -266,7 +266,7 @@ fn run() -> Result<(), String> {
                     let p = rest.get(1).ok_or("locks lock requires <path>")?;
                     lfs::lfs_lock(&git_cli, &opened, p).map_err(|e| e.to_string())?;
                     if json_out {
-                        println!(r#"{{"locked":"{p}"}}"#);
+                        println!("{}", serde_json::json!({ "locked": p }));
                     } else {
                         println!("Locked {p}");
                     }
@@ -276,7 +276,7 @@ fn run() -> Result<(), String> {
                     let force = rest.iter().any(|a| a == "--force");
                     lfs::lfs_unlock(&git_cli, &opened, p, force).map_err(|e| e.to_string())?;
                     if json_out {
-                        println!(r#"{{"unlocked":"{p}"}}"#);
+                        println!("{}", serde_json::json!({ "unlocked": p }));
                     } else {
                         println!("Unlocked {p}");
                     }
