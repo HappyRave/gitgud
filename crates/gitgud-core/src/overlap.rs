@@ -284,26 +284,14 @@ fn their_changes(
 
 /// The paths git won't merge as text: LFS, or `merge` unset / `binary`.
 fn merge_attrs(git: &GitCli, repo: &Repo, paths: &[&String]) -> Result<BTreeSet<String>, Error> {
-    let mut input = Vec::new();
-    for p in paths {
-        input.extend_from_slice(p.as_bytes());
-        input.push(0);
-    }
-    let out = git.run(
-        repo.root(),
-        &["check-attr", "-z", "--stdin", "filter", "merge"],
-        Some(&input),
-    )?;
-    let fields: Vec<&str> = out.split('\0').collect();
-    Ok(fields
-        .as_chunks::<3>()
-        .0
-        .iter()
-        .filter(|[_, attr, value]| {
-            (*attr == "filter" && *value == "lfs")
-                || (*attr == "merge" && (*value == "unset" || *value == "binary"))
+    Ok(repo
+        .attributes(git, paths, &["filter", "merge"])?
+        .into_iter()
+        .filter(|(_, attr, value)| {
+            (attr == "filter" && value == "lfs")
+                || (attr == "merge" && (value == "unset" || value == "binary"))
         })
-        .map(|[path, _, _]| (*path).to_owned())
+        .map(|(path, _, _)| path)
         .collect())
 }
 

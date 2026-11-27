@@ -623,25 +623,6 @@ impl Repo {
         });
         Ok(conflicts)
     }
-
-    /// Which of `paths` git stores through LFS (`filter=lfs` in .gitattributes).
-    fn lfs_paths(&self, git: &GitCli, paths: &[String]) -> Result<Vec<String>, Error> {
-        if paths.is_empty() {
-            return Ok(Vec::new());
-        }
-        let out = git.run(
-            self.root(),
-            &["check-attr", "-z", "--stdin", "filter"],
-            Some(paths.join("\0").as_bytes()),
-        )?;
-        // Records: path \0 attribute \0 value \0
-        let fields: Vec<&str> = out.split('\0').collect();
-        Ok(fields
-            .chunks(3)
-            .filter(|r| r.len() == 3 && r[2] == "lfs")
-            .map(|r| r[0].to_owned())
-            .collect())
-    }
 }
 
 /// Unity first, then code, then binaries (R4-A list order).

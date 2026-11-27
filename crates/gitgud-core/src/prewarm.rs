@@ -20,7 +20,7 @@ const PREWARM_MAX_FILE: u64 = 32 << 20;
 /// # Errors
 /// Git's error from `check-attr` or `fast-import`, or a read failure.
 pub(crate) fn prewarm_blobs(git: &GitCli, repo: &Repo, paths: &[String]) -> Result<usize, Error> {
-    let lfs = lfs_paths(git, repo, paths)?;
+    let lfs = repo.lfs_paths(git, paths)?;
     let files: Vec<&String> = paths
         .iter()
         .filter(|p| !lfs.contains(p.as_str()))
@@ -49,30 +49,4 @@ pub(crate) fn prewarm_blobs(git: &GitCli, repo: &Repo, paths: &[String]) -> Resu
     }
     git.run(repo.root(), &["fast-import", "--quiet"], Some(&stream))?;
     Ok(blobs.len())
-}
-
-/// The paths among `paths` whose `filter` attribute is `lfs`.
-fn lfs_paths(
-    git: &GitCli,
-    repo: &Repo,
-    paths: &[String],
-) -> Result<std::collections::HashSet<String>, Error> {
-    let mut input = Vec::new();
-    for p in paths {
-        input.extend_from_slice(p.as_bytes());
-        input.push(0);
-    }
-    let out = git.run(
-        repo.root(),
-        &["check-attr", "-z", "--stdin", "filter"],
-        Some(&input),
-    )?;
-    let fields: Vec<&str> = out.split('\0').collect();
-    Ok(fields
-        .as_chunks::<3>()
-        .0
-        .iter()
-        .filter(|[_, _, value]| *value == "lfs")
-        .map(|[path, _, _]| (*path).to_owned())
-        .collect())
 }

@@ -143,6 +143,56 @@ impl Repo {
         Ok(out.trim().to_owned())
     }
 
+    /// `git check-attr` of each of `names` for each of `paths`, as
+    /// (path, attribute, value) with value `unspecified`, `set`, `unset` or the text.
+    ///
+    /// # Errors
+    /// Git's error.
+    pub(crate) fn attributes<P: AsRef<str>>(
+        &self,
+        git: &crate::cli::GitCli,
+        paths: &[P],
+        names: &[&str],
+    ) -> Result<Vec<(String, String, String)>, Error> {
+        if paths.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut input = Vec::new();
+        for p in paths {
+            input.extend_from_slice(p.as_ref().as_bytes());
+            input.push(0);
+        }
+        let mut args = vec!["check-attr", "-z", "--stdin"];
+        args.extend_from_slice(names);
+        let out = git.run(self.root(), &args, Some(&input))?;
+        let fields: Vec<&str> = out.split('\0').collect();
+        Ok(fields
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|[path, attr, value]| {
+                ((*path).to_owned(), (*attr).to_owned(), (*value).to_owned())
+            })
+            .collect())
+    }
+
+    /// Which of `paths` git stores through LFS (`filter=lfs`).
+    ///
+    /// # Errors
+    /// Git's error.
+    pub(crate) fn lfs_paths<P: AsRef<str>>(
+        &self,
+        git: &crate::cli::GitCli,
+        paths: &[P],
+    ) -> Result<std::collections::HashSet<String>, Error> {
+        Ok(self
+            .attributes(git, paths, &["filter"])?
+            .into_iter()
+            .filter(|(_, _, value)| value == "lfs")
+            .map(|(path, _, _)| path)
+            .collect())
+    }
+
     /// The contents of blob `id`.
     pub(crate) fn blob(&self, id: gix::ObjectId) -> Result<Vec<u8>, Error> {
         let repo = self.gix();
