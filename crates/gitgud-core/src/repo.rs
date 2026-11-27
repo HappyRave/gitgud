@@ -41,6 +41,8 @@ pub struct Repo {
     /// The op log's LFS objects no ref or the index reaches, with the key of the
     /// refs, index and objects it was walked for; see `OpLog::stats`.
     pub(crate) oplog_only_lfs: Mutex<Option<(u64, std::collections::HashSet<String>)>>,
+    /// Stacked branches with the [`Repo::refs_key`] they were found for.
+    pub(crate) stacks: Mutex<Option<(u64, Vec<crate::stacks::BranchStack>)>>,
 }
 
 /// GUID -> asset path, from one tree's `.meta` files.
@@ -70,6 +72,7 @@ pub fn open(path: impl AsRef<Path>) -> Result<Repo, Error> {
         listings: Mutex::new(Vec::new()),
         drafts: Mutex::new(HashMap::new()),
         oplog_only_lfs: Mutex::new(None),
+        stacks: Mutex::new(None),
     })
 }
 
@@ -81,6 +84,35 @@ impl Repo {
 
     pub(crate) fn gix(&self) -> gix::Repository {
         self.inner.to_thread_local()
+    }
+
+    /// A hash of every ref and where it points, HEAD, and the config file's size and
+    /// time: what results built from the refs (stacks, reachability) depend on.
+    pub(crate) fn refs_key(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let gix = self.gix();
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        let mut tips: Vec<(String, String)> = Vec::new();
+        if let Ok(refs) = gix.references()
+            && let Ok(iter) = refs.all()
+        {
+            for r in iter.flatten() {
+                tips.push((r.name().as_bstr().to_string(), format!("{:?}", r.target())));
+            }
+        }
+        tips.sort();
+        tips.hash(&mut h);
+        gix.head_name()
+            .ok()
+            .flatten()
+            .map(|n| n.to_string())
+            .hash(&mut h);
+        gix.head_id().ok().map(|id| id.detach()).hash(&mut h);
+        if let Ok(meta) = std::fs::metadata(gix.common_dir().join("config")) {
+            meta.len().hash(&mut h);
+            meta.modified().ok().hash(&mut h);
+        }
+        h.finish()
     }
 
     /// The contents of blob `id`.

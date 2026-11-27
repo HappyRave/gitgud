@@ -43,6 +43,24 @@ impl Repo {
     /// # Errors
     /// [`Error::Read`] when refs or commit history cannot be read.
     pub fn branch_stacks(&self) -> Result<Vec<BranchStack>, Error> {
+        // Many history walks per pair of branches; asked after every refresh, while
+        // the refs seldom move.
+        let key = self.refs_key();
+        let mut kept = self
+            .stacks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some((k, stacks)) = kept.as_ref()
+            && *k == key
+        {
+            return Ok(stacks.clone());
+        }
+        let stacks = self.find_stacks()?;
+        *kept = Some((key, stacks.clone()));
+        Ok(stacks)
+    }
+
+    fn find_stacks(&self) -> Result<Vec<BranchStack>, Error> {
         let gix_repo = self.gix();
         let current = gix_repo.head_name().map_err(read_err)?;
         let refs = gix_repo.references().map_err(read_err)?;

@@ -1140,7 +1140,7 @@ fn oplog_only_lfs_bytes(repo: &Repo, entries: &[Entry], prune_end: usize) -> (u6
 
     // Walking the history is the slow part, and its answer only changes when a
     // ref, the index or the op log's objects do.
-    let key = reachability_key(gix, &snapshot_sizes);
+    let key = reachability_key(repo, &snapshot_sizes);
     let remaining = {
         let mut kept = repo
             .oplog_only_lfs
@@ -1171,22 +1171,12 @@ fn oplog_only_lfs_bytes(repo: &Repo, entries: &[Entry], prune_end: usize) -> (u6
     (total_lfs, reclaimable_lfs)
 }
 
-/// A hash of every ref tip, HEAD, the index file's size and time, and `objects`.
-fn reachability_key(gix: &gix::Repository, objects: &HashMap<String, u64>) -> u64 {
+/// [`Repo::refs_key`], the index file's size and time, and `objects`.
+fn reachability_key(repo: &Repo, objects: &HashMap<String, u64>) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
-    let mut tips: Vec<(String, String)> = Vec::new();
-    if let Ok(refs) = gix.references()
-        && let Ok(iter) = refs.all()
-    {
-        for r in iter.flatten() {
-            tips.push((r.name().as_bstr().to_string(), format!("{:?}", r.target())));
-        }
-    }
-    tips.sort();
-    tips.hash(&mut h);
-    gix.head_id().ok().map(|id| id.detach()).hash(&mut h);
-    if let Ok(meta) = fs::metadata(gix.index_path()) {
+    repo.refs_key().hash(&mut h);
+    if let Ok(meta) = fs::metadata(repo.gix().index_path()) {
         meta.len().hash(&mut h);
         meta.modified().ok().hash(&mut h);
     }
