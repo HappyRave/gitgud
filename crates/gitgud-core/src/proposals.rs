@@ -665,6 +665,21 @@ pub fn approve_proposal(
     }
 
     let root = repo.root();
+    // The commit below takes the whole index, so anything already staged would go in too.
+    match git.run_status(root, &["diff", "--cached", "--quiet"], None)? {
+        (0, ..) => {}
+        (1, ..) => {
+            return Err(Error::Refused(
+                "Unstage your staged changes first: approving commits everything staged".into(),
+            ));
+        }
+        (_, stdout, stderr) => {
+            return Err(crate::cli::command_error(
+                &["diff", "--cached", "--quiet"],
+                crate::cli::failure_message(&stdout, &stderr),
+            ));
+        }
+    }
     let patch_bytes = diff_bytes_for_proposal(repo, git, &prop, &paths)?;
     if patch_bytes.is_empty() {
         return Err(Error::Refused(
@@ -679,6 +694,8 @@ pub fn approve_proposal(
         Some(&patch_bytes),
     )?;
     if code != 0 {
+        // The index matched HEAD before, so this drops exactly what the failed apply left.
+        git.run(root, &["reset", "-q"], None)?;
         return Err(Error::Refused(format!(
             "Cannot replay proposal onto current HEAD without conflicts:\n{}",
             crate::cli::failure_message(&stdout, &stderr)
@@ -797,8 +814,7 @@ fn diff_bytes_for_proposal(
     for p in paths {
         args.push(p.as_str());
     }
-    let out = git.run(repo.root(), &args, None)?;
-    Ok(out.into_bytes())
+    git.run_bytes(repo.root(), &args, None)
 }
 
 fn compute_risk_flags(

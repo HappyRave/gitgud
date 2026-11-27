@@ -259,3 +259,98 @@ fn wait_for_proposal_returns_on_verdict_and_times_out_when_pending() {
     assert_eq!(done.proposal.status, ProposalStatus::ChangesRequested);
     assert_eq!(done.proposal.comments[0].text, "please rename");
 }
+
+fn propose(opened: &gitgud_core::repo::Repo, git: &GitCli, path: &str) -> String {
+    create_proposal(
+        opened,
+        git,
+        &CreateProposalInput {
+            message: format!("agent: {path}"),
+            why: None,
+            agent: Some("claude".into()),
+            paths: vec![path.into()],
+            hunk_ids: vec![],
+        },
+    )
+    .unwrap()
+    .id
+}
+
+#[test]
+fn approve_refuses_while_other_changes_are_staged() {
+    let repo = TestRepo::init();
+    repo.write("a.txt", "a\n")
+        .write("mine.txt", "mine\n")
+        .commit_all("base");
+    repo.write("a.txt", "a agent\n");
+    let git = GitCli::new(&locate().unwrap());
+    let opened = repo::open(repo.path()).unwrap();
+    let id = propose(&opened, &git, "a.txt");
+
+    repo.write("mine.txt", "mine staged\n");
+    repo.git(&["add", "mine.txt"]);
+    let session = Session::default();
+    let sid = session.open(repo.path()).unwrap().id;
+    let err = session.proposal_approve(sid, &id, None, &[]).unwrap_err();
+    assert!(
+        matches!(&err, gitgud_core::repo::Error::Refused(m) if m.contains("Unstage")),
+        "{err:?}"
+    );
+    assert_eq!(repo.git(&["log", "-1", "--format=%s"]).trim(), "base");
+    assert_eq!(
+        repo.git(&["diff", "--cached", "--name-only"]).trim(),
+        "mine.txt"
+    );
+    assert_eq!(
+        get_proposal(&opened, &id).unwrap().status,
+        ProposalStatus::Pending
+    );
+}
+
+#[test]
+fn approve_that_cannot_replay_leaves_the_index_as_it_was() {
+    let repo = TestRepo::init();
+    repo.write("a.txt", "one\n").commit_all("base");
+    repo.write("a.txt", "agent\n");
+    let git = GitCli::new(&locate().unwrap());
+    let opened = repo::open(repo.path()).unwrap();
+    let id = propose(&opened, &git, "a.txt");
+
+    repo.write("a.txt", "mine\n").commit_all("mine");
+    let session = Session::default();
+    let sid = session.open(repo.path()).unwrap().id;
+    let err = session.proposal_approve(sid, &id, None, &[]).unwrap_err();
+    assert!(
+        matches!(err, gitgud_core::repo::Error::Refused(_)),
+        "{err:?}"
+    );
+    assert_eq!(repo.git(&["ls-files", "-u"]), "");
+    assert!(repo.git_ok(&["diff", "--cached", "--quiet"]));
+    assert_eq!(repo.git(&["log", "-1", "--format=%s"]).trim(), "mine");
+}
+
+#[test]
+fn approve_keeps_non_utf8_bytes() {
+    let repo = TestRepo::init();
+    repo.write("latin1.txt", "caf\n").commit_all("base");
+    let latin1 = b"caf\xe9\n";
+    std::fs::write(repo.path().join("latin1.txt"), latin1).unwrap();
+    let git = GitCli::new(&locate().unwrap());
+    let opened = repo::open(repo.path()).unwrap();
+    let id = propose(&opened, &git, "latin1.txt");
+
+    // HEAD moves so approval has to replay the patch.
+    repo.write("other.txt", "x\n");
+    repo.git(&["add", "other.txt"]);
+    repo.git(&["commit", "-m", "other"]);
+    let session = Session::default();
+    let sid = session.open(repo.path()).unwrap().id;
+    session.proposal_approve(sid, &id, None, &[]).unwrap();
+    let blob = std::process::Command::new("git")
+        .args(["show", "HEAD:latin1.txt"])
+        .current_dir(repo.path())
+        .output()
+        .unwrap()
+        .stdout;
+    assert_eq!(blob, latin1);
+}

@@ -45,6 +45,31 @@ impl GitCli {
         stdin: Option<&[u8]>,
         env: &[(&str, &Path)],
     ) -> Result<String, Error> {
+        self.run_bytes_env(cwd, args, stdin, env)
+            .map(|out| String::from_utf8_lossy(&out).into_owned())
+    }
+
+    /// As [`GitCli::run`], returning stdout's exact bytes: for patches and file
+    /// contents, which may not be UTF-8.
+    ///
+    /// # Errors
+    /// As [`GitCli::run`].
+    pub fn run_bytes(
+        &self,
+        cwd: &Path,
+        args: &[&str],
+        stdin: Option<&[u8]>,
+    ) -> Result<Vec<u8>, Error> {
+        self.run_bytes_env(cwd, args, stdin, &[])
+    }
+
+    fn run_bytes_env(
+        &self,
+        cwd: &Path,
+        args: &[&str],
+        stdin: Option<&[u8]>,
+        env: &[(&str, &Path)],
+    ) -> Result<Vec<u8>, Error> {
         let fail = |message: String| command_error(args, message);
         let mut cmd = self.command(cwd, args);
         cmd.envs(env.iter().map(|(k, v)| (k, v.as_os_str())));
@@ -65,12 +90,11 @@ impl GitCli {
         })
         .map_err(|e| fail(e.to_string()))?;
 
-        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
         if output.status.success() {
-            return Ok(stdout);
+            return Ok(output.stdout);
         }
         Err(fail(failure_message(
-            &stdout,
+            &String::from_utf8_lossy(&output.stdout),
             &String::from_utf8_lossy(&output.stderr),
         )))
     }
