@@ -281,6 +281,60 @@ fn respects_another_gits_index_lock() {
 }
 
 #[test]
+fn a_lock_taken_during_undo_of_a_commit_moves_nothing() {
+    let (repo, session, id) = setup();
+    repo.write("a.txt", "changed\n");
+    session
+        .write(id, "Stage a.txt", |r, g| r.stage(g, &paths(&["a.txt"])))
+        .unwrap();
+    session
+        .write(id, "Commit", |r, g| r.commit(g, "commit a"))
+        .unwrap();
+    let tip = head(&repo);
+    let lock = repo.path().join(".git/index.lock");
+    std::fs::write(&lock, "").unwrap();
+
+    assert!(session.undo(id).is_err());
+    assert_eq!(head(&repo), tip, "the branch stays where the index is");
+    std::fs::remove_file(&lock).unwrap();
+    assert_eq!(session.undo(id).unwrap().action, "Commit");
+    assert_eq!(cached(&repo), "a.txt");
+}
+
+#[test]
+fn a_failed_action_keeps_redo() {
+    let (repo, session, id) = setup();
+    repo.write("a.txt", "changed\n");
+    session
+        .write(id, "Stage a.txt", |r, g| r.stage(g, &paths(&["a.txt"])))
+        .unwrap();
+    session.undo(id).unwrap();
+
+    session
+        .write(id, "Refused", |_, _| Err(Error::Refused("no".into())))
+        .unwrap_err();
+
+    assert_eq!(session.redo(id).unwrap().action, "Stage a.txt");
+    assert_eq!(cached(&repo), "a.txt");
+}
+
+#[test]
+fn a_failed_action_that_changed_something_can_be_undone() {
+    let (repo, session, id) = setup();
+    repo.write("a.txt", "changed\n");
+    session
+        .write(id, "Stage then fail", |r, g| {
+            r.stage(g, &paths(&["a.txt"]))?;
+            Err(Error::Refused("stopped halfway".into()))
+        })
+        .unwrap_err();
+    assert_eq!(cached(&repo), "a.txt");
+
+    assert_eq!(session.undo(id).unwrap().action, "Stage then fail (failed)");
+    assert_eq!(cached(&repo), "");
+}
+
+#[test]
 fn the_log_survives_reopening_the_repo() {
     let (repo, session, id) = setup();
     repo.write("a.txt", "changed\n");

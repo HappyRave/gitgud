@@ -209,33 +209,40 @@ impl OpLog {
         destructive: Option<(&GitCli, &[String])>,
         op: impl FnOnce() -> Result<T, Error>,
     ) -> Result<T, Error> {
-        let mut entries = self.load()?;
-        let mut dropped_snapshot = false;
-        entries.retain(|e| {
-            if e.undone {
-                self.remove_files(&e.before);
-                self.remove_files(&e.after);
-                dropped_snapshot |= e.before.worktree.is_some() || e.after.worktree.is_some();
-                false
-            } else {
-                true
-            }
-        });
-        let id = entries.last().map_or(1, |e| e.id + 1);
+        // Undone entries are dropped by a new action, but only once the log that
+        // forgets them is saved: an action that fails leaves redo as it was.
+        let (undone, mut entries): (Vec<Entry>, Vec<Entry>) =
+            self.load()?.into_iter().partition(|e| e.undone);
+        let id = entries
+            .iter()
+            .chain(&undone)
+            .map(|e| e.id)
+            .max()
+            .map_or(1, |n| n + 1);
         let git = destructive.map(|(g, _)| g);
         let before = self.capture(repo, git, id, "before")?;
-        let value = match op() {
-            Ok(v) => v,
-            Err(e) => {
+        let (value, label) = match op() {
+            Ok(v) => (Ok(v), action.to_owned()),
+            Err(e) => (Err(e), format!("{action} (failed)")),
+        };
+        let after = match self.capture(repo, git, id, "after") {
+            Ok(after) => after,
+            Err(capture) => {
                 self.remove_files(&before);
-                return Err(e);
+                return value.and(Err(capture));
             }
         };
-        let after = self.capture(repo, git, id, "after")?;
+        // A failed action that changed nothing isn't worth an entry; one that
+        // stopped halfway is, so Ctrl+Z can take back what it did.
+        if value.is_err() && self.same_state(&before, &after)? {
+            self.remove_files(&before);
+            self.remove_files(&after);
+            return value;
+        }
         entries.push(Entry {
             id,
             time: now(),
-            action: action.to_owned(),
+            action: label,
             undone: false,
             paths: destructive.map(|(_, p)| p.to_vec()).unwrap_or_default(),
             before,
@@ -243,12 +250,34 @@ impl OpLog {
         });
         let pruned_snapshot = self.prune(&mut entries);
         self.save(&entries)?;
+        let mut dropped_snapshot = false;
+        for e in &undone {
+            self.remove_files(&e.before);
+            self.remove_files(&e.after);
+            dropped_snapshot |= e.before.worktree.is_some() || e.after.worktree.is_some();
+        }
         if (dropped_snapshot || pruned_snapshot)
             && let Some(g) = git
         {
             Snapshots::sync_kept(repo, g, &kept_snapshot_trees(&entries))?;
         }
-        Ok(value)
+        value
+    }
+
+    /// Whether nothing the op log tracks differs between `a` and `b`.
+    fn same_state(&self, a: &State, b: &State) -> Result<bool, Error> {
+        let index = |s: &State| match &s.index {
+            Some(name) => index_entries(&self.dir.join(name)),
+            None => Ok(Vec::new()),
+        };
+        Ok(a.head == b.head
+            && a.branches == b.branches
+            && a.stash_ref == b.stash_ref
+            && a.stash_log == b.stash_log
+            && a.merge == b.merge
+            && a.rebasing == b.rebasing
+            && a.worktree == b.worktree
+            && index(a)? == index(b)?)
     }
 
     /// Every entry, oldest first.
@@ -292,27 +321,7 @@ impl OpLog {
     /// gitgud since (then undoing could lose that change), or another git holds
     /// the index lock; [`Error::Command`] when git can't move a ref.
     pub fn undo(&self, repo: &Repo, git: &GitCli) -> Result<String, Error> {
-        let mut entries = self.load()?;
-        let Some(pos) = entries.iter().rposition(|e| !e.undone) else {
-            return Err(Error::Refused("nothing to undo".into()));
-        };
-        let entry = &entries[pos];
-        let moved = moved_branches(entry);
-        let stash_moved = stash_changed(entry);
-        self.ensure_at(repo, git, entry, &entry.after, &moved, stash_moved, "undo")?;
-        self.restore(
-            repo,
-            git,
-            &entry.before,
-            &entry.paths,
-            &moved,
-            stash_moved,
-            &format!("gitgud: undo {}", entry.action),
-        )?;
-        entries[pos].undone = true;
-        let action = entries[pos].action.clone();
-        self.save(&entries)?;
-        Ok(action)
+        self.step(repo, git, true)
     }
 
     /// Re-applies the oldest undone action. Returns its label.
@@ -320,26 +329,60 @@ impl OpLog {
     /// # Errors
     /// As [`OpLog::undo`].
     pub fn redo(&self, repo: &Repo, git: &GitCli) -> Result<String, Error> {
+        self.step(repo, git, false)
+    }
+
+    /// Undoes (`undo`) or redoes one entry. Everything that can refuse runs before
+    /// anything moves: the index lock is taken first and held until the index is
+    /// written, and the refs move in one transaction, so a refusal changes nothing.
+    fn step(&self, repo: &Repo, git: &GitCli, undo: bool) -> Result<String, Error> {
         let mut entries = self.load()?;
-        let Some(pos) = entries.iter().position(|e| e.undone) else {
-            return Err(Error::Refused("nothing to redo".into()));
+        let found = if undo {
+            entries.iter().rposition(|e| !e.undone)
+        } else {
+            entries.iter().position(|e| e.undone)
         };
+        let (verb, done) = if undo {
+            ("undo", "undone")
+        } else {
+            ("redo", "redone")
+        };
+        let pos = found.ok_or_else(|| Error::Refused(format!("nothing to {verb}")))?;
         let entry = &entries[pos];
+        let (from, to) = if undo {
+            (&entry.after, &entry.before)
+        } else {
+            (&entry.before, &entry.after)
+        };
         let moved = moved_branches(entry);
         let stash_moved = stash_changed(entry);
-        self.ensure_at(repo, git, entry, &entry.before, &moved, stash_moved, "redo")?;
-        self.restore(
-            repo,
-            git,
-            &entry.after,
-            &entry.paths,
-            &moved,
-            stash_moved,
-            &format!("gitgud: redo {}", entry.action),
-        )?;
-        entries[pos].undone = false;
-        let action = entries[pos].action.clone();
+        let lock = IndexLock::take(&self.git_dir)?;
+        self.ensure_at(repo, git, entry, from, &moved, stash_moved, verb)?;
+        let index = to
+            .index
+            .as_ref()
+            .map(|name| fs::read(self.dir.join(name)).map_err(read_err))
+            .transpose()?;
+        let message = format!("gitgud: {verb} {}", entry.action);
+        move_refs(repo, git, to, &moved, stash_moved, &message)?;
+        if stash_moved {
+            restore_stash_log(repo, to)?;
+        }
+        self.restore_merge_files(to)?;
+        lock.commit(index.as_deref())?;
+
+        let action = entry.action.clone();
+        let paths = entry.paths.clone();
+        let tree = to.worktree.clone();
+        entries[pos].undone = undo;
         self.save(&entries)?;
+        if let (Some(tree), false) = (tree, paths.is_empty()) {
+            restore_files(repo, git, &tree, &paths).map_err(|e| {
+                Error::Refused(format!(
+                    "\"{action}\" was {done}, but its files couldn't be put back: {e}"
+                ))
+            })?;
+        }
         Ok(action)
     }
 
@@ -468,7 +511,15 @@ impl OpLog {
         let here = head_state(repo)?;
         let same_index = index_entries(&self.git_dir.join("index"))?
             == match &expected.index {
-                Some(name) => index_entries(&self.dir.join(name))?,
+                Some(name) => {
+                    let copy = self.dir.join(name);
+                    if !copy.exists() {
+                        return Err(Error::Read(format!(
+                            "the op log's copy of the index ({name}) is missing"
+                        )));
+                    }
+                    index_entries(&copy)?
+                }
                 None => Vec::new(),
             };
         let files = self.merge_files()?;
@@ -519,161 +570,6 @@ impl OpLog {
             }
         }
         Ok(())
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn restore(
-        &self,
-        repo: &Repo,
-        git: &GitCli,
-        to: &State,
-        paths: &[String],
-        moved: &[String],
-        stash_moved: bool,
-        message: &str,
-    ) -> Result<(), Error> {
-        self.restore_refs_and_index(repo, git, to, message)?;
-        for name in moved {
-            match (tip_in(to, name), branch_tip(repo, name)?) {
-                (Some(t), now) if now.as_deref() != Some(t) => {
-                    git.run(repo.root(), &["update-ref", "-m", message, name, t], None)?;
-                }
-                (None, Some(now)) => {
-                    git.run(repo.root(), &["update-ref", "-d", name, &now], None)?;
-                }
-                _ => {}
-            }
-        }
-        if stash_moved {
-            self.restore_stash(repo, git, to, message)?;
-        }
-        if let (Some(tree), false) = (&to.worktree, paths.is_empty()) {
-            restore_files(repo, git, tree, paths)?;
-        }
-        self.restore_merge_files(to)
-    }
-
-    fn restore_stash(
-        &self,
-        repo: &Repo,
-        git: &GitCli,
-        to: &State,
-        message: &str,
-    ) -> Result<(), Error> {
-        match (&to.stash_ref, branch_tip(repo, "refs/stash")?) {
-            (Some(t), now) if now.as_deref() != Some(t) => {
-                git.run(
-                    repo.root(),
-                    &["update-ref", "--no-deref", "-m", message, "refs/stash", t],
-                    None,
-                )?;
-            }
-            (None, Some(now)) => {
-                git.run(repo.root(), &["update-ref", "-d", "refs/stash", &now], None)?;
-            }
-            _ => {}
-        }
-        let log_path = repo.gix().common_dir().join("logs/refs/stash");
-        match &to.stash_log {
-            Some(log) => {
-                if let Some(parent) = log_path.parent() {
-                    fs::create_dir_all(parent).map_err(read_err)?;
-                }
-                fs::write(&log_path, log).map_err(read_err)?;
-            }
-            None => match fs::remove_file(&log_path) {
-                Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(read_err(e)),
-                _ => {}
-            },
-        }
-        Ok(())
-    }
-
-    fn restore_refs_and_index(
-        &self,
-        repo: &Repo,
-        git: &GitCli,
-        to: &State,
-        message: &str,
-    ) -> Result<(), Error> {
-        let root = repo.root();
-        let here = head_state(repo)?;
-        match &to.head {
-            HeadState::Branch { name, tip } => {
-                let current_tip = match &here {
-                    HeadState::Branch { name: n, tip } if n == name => tip.clone(),
-                    _ => branch_tip(repo, name)?,
-                };
-                match (tip, &current_tip) {
-                    (Some(t), Some(c)) if t != c => {
-                        git.run(root, &["update-ref", "-m", message, name, t, c], None)?;
-                    }
-                    (Some(t), None) => {
-                        git.run(root, &["update-ref", "-m", message, name, t, ""], None)?;
-                    }
-                    (None, Some(c)) => {
-                        git.run(root, &["update-ref", "-d", name, c], None)?;
-                    }
-                    _ => {}
-                }
-                if !matches!(&here, HeadState::Branch { name: n, .. } if n == name) {
-                    git.run(root, &["symbolic-ref", "-m", message, "HEAD", name], None)?;
-                }
-            }
-            HeadState::Detached { id } => {
-                if here != to.head {
-                    git.run(
-                        root,
-                        &["update-ref", "--no-deref", "-m", message, "HEAD", id],
-                        None,
-                    )?;
-                }
-            }
-        }
-        if let Some((name, Some(tip))) = &to.rebasing
-            && branch_tip(repo, name)?.as_ref() != Some(tip)
-        {
-            git.run(root, &["update-ref", "-m", message, name, tip], None)?;
-        }
-        self.restore_index(to)
-    }
-
-    /// Writes the saved index back under git's own `index.lock`, so a git running
-    /// at the same time fails instead of racing us.
-    fn restore_index(&self, to: &State) -> Result<(), Error> {
-        let index = self.git_dir.join("index");
-        let lock = self.git_dir.join("index.lock");
-        let mut file = match fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&lock)
-        {
-            Ok(f) => f,
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                return Err(Error::Refused(
-                    "another git process is using the index (.git/index.lock exists)".into(),
-                ));
-            }
-            Err(e) => return Err(read_err(e)),
-        };
-        let written = match &to.index {
-            Some(name) => fs::read(self.dir.join(name))
-                .and_then(|bytes| file.write_all(&bytes))
-                .and_then(|()| file.sync_all()),
-            None => Ok(()),
-        };
-        drop(file);
-        let done = written.and_then(|()| match &to.index {
-            Some(_) => fs::rename(&lock, &index),
-            None => fs::remove_file(&lock).and_then(|()| match fs::remove_file(&index) {
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-                other => other,
-            }),
-        });
-        if done.is_err() {
-            let _ = fs::remove_file(&lock);
-        }
-        done.map_err(read_err)
     }
 
     /// Lists recent entries in `.git/gitgud/oplog` and computes storage + prune preview.
@@ -897,6 +793,182 @@ fn blob_in(repo: &Repo, tree: &str, path: &str) -> Result<Option<String>, Error>
 
 /// Puts `paths` in the work tree back as snapshot `tree` had them: rewritten
 /// through git (so eol and filters apply), or deleted where the tree has none.
+/// git's own `.git/index.lock`, held while an undo or redo moves anything, so a
+/// git running at the same time fails instead of racing us. Dropped without
+/// [`IndexLock::commit`], it leaves the index as it was.
+struct IndexLock {
+    lock: PathBuf,
+    index: PathBuf,
+    file: Option<fs::File>,
+}
+
+impl IndexLock {
+    fn take(git_dir: &Path) -> Result<Self, Error> {
+        let lock = git_dir.join("index.lock");
+        let file = match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&lock)
+        {
+            Ok(f) => f,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                return Err(Error::Refused(
+                    "another git process is using the index (.git/index.lock exists)".into(),
+                ));
+            }
+            Err(e) => return Err(read_err(e)),
+        };
+        Ok(Self {
+            lock,
+            index: git_dir.join("index"),
+            file: Some(file),
+        })
+    }
+
+    /// Replaces the index with `bytes`, or deletes it for `None`.
+    fn commit(mut self, bytes: Option<&[u8]>) -> Result<(), Error> {
+        let Some(mut file) = self.file.take() else {
+            return Err(Error::Read("index lock committed twice".into()));
+        };
+        let written = match bytes {
+            Some(bytes) => file.write_all(bytes).and_then(|()| file.sync_all()),
+            None => Ok(()),
+        };
+        drop(file);
+        written.map_err(read_err)?;
+        match bytes {
+            Some(_) => fs::rename(&self.lock, &self.index).map_err(read_err),
+            None => match fs::remove_file(&self.index) {
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(read_err(e)),
+                _ => Ok(()),
+            },
+        }
+    }
+}
+
+impl Drop for IndexLock {
+    fn drop(&mut self) {
+        self.file = None;
+        match fs::remove_file(&self.lock) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                eprintln!("gitgud: cannot remove {}: {e}", self.lock.display());
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Moves HEAD's branch, the rebased branch, every branch the entry moved and
+/// the stash to where `to` has them, in one `update-ref` transaction: either
+/// all of them move or none does.
+fn move_refs(
+    repo: &Repo,
+    git: &GitCli,
+    to: &State,
+    moved: &[String],
+    stash_moved: bool,
+    message: &str,
+) -> Result<(), Error> {
+    let mut tx = RefTransaction::default();
+    let here = head_state(repo)?;
+    let mut switch_to = None;
+    let mut detach_at = None;
+    match &to.head {
+        HeadState::Branch { name, tip } => {
+            let now = match &here {
+                HeadState::Branch { name: n, tip } if n == name => tip.clone(),
+                _ => branch_tip(repo, name)?,
+            };
+            tx.set(name, tip.as_deref(), now.as_deref(), false);
+            if !matches!(&here, HeadState::Branch { name: n, .. } if n == name) {
+                switch_to = Some(name);
+            }
+        }
+        HeadState::Detached { id } => match &here {
+            HeadState::Detached { id: now } => tx.set("HEAD", Some(id), Some(now), true),
+            // git refuses to detach HEAD in the transaction that moves its branch.
+            HeadState::Branch { .. } => detach_at = Some(id),
+        },
+    }
+    if let Some((name, Some(tip))) = &to.rebasing {
+        let now = branch_tip(repo, name)?;
+        tx.set(name, Some(tip), now.as_deref(), false);
+    }
+    for name in moved {
+        let now = branch_tip(repo, name)?;
+        tx.set(name, tip_in(to, name), now.as_deref(), false);
+    }
+    if stash_moved {
+        let now = branch_tip(repo, "refs/stash")?;
+        tx.set("refs/stash", to.stash_ref.as_deref(), now.as_deref(), true);
+    }
+    if !tx.text.is_empty() {
+        git.run(
+            repo.root(),
+            &["update-ref", "-m", message, "--stdin"],
+            Some(tx.text.as_bytes()),
+        )?;
+    }
+    if let Some(name) = switch_to {
+        git.run(
+            repo.root(),
+            &["symbolic-ref", "-m", message, "HEAD", name],
+            None,
+        )?;
+    }
+    if let Some(id) = detach_at {
+        git.run(
+            repo.root(),
+            &["update-ref", "--no-deref", "-m", message, "HEAD", id],
+            None,
+        )?;
+    }
+    Ok(())
+}
+
+/// `git update-ref --stdin` commands, each ref at most once (the first wins).
+#[derive(Default)]
+struct RefTransaction {
+    text: String,
+    queued: HashSet<String>,
+}
+
+impl RefTransaction {
+    /// Moves `name` from `now` to `target` (`None`: absent), checking `now`.
+    fn set(&mut self, name: &str, target: Option<&str>, now: Option<&str>, no_deref: bool) {
+        if target == now || !self.queued.insert(name.to_owned()) {
+            return;
+        }
+        if no_deref {
+            self.text.push_str("option no-deref\n");
+        }
+        let line = match (target, now) {
+            (Some(t), Some(n)) => format!("update {name} {t} {n}\n"),
+            (Some(t), None) => format!("create {name} {t}\n"),
+            (None, Some(n)) => format!("delete {name} {n}\n"),
+            (None, None) => return,
+        };
+        self.text.push_str(&line);
+    }
+}
+
+/// Puts `.git/logs/refs/stash` back, so the stash list matches `to`.
+fn restore_stash_log(repo: &Repo, to: &State) -> Result<(), Error> {
+    let log_path = repo.gix().common_dir().join("logs/refs/stash");
+    match &to.stash_log {
+        Some(log) => {
+            if let Some(parent) = log_path.parent() {
+                fs::create_dir_all(parent).map_err(read_err)?;
+            }
+            fs::write(&log_path, log).map_err(read_err)
+        }
+        None => match fs::remove_file(&log_path) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(read_err(e)),
+            _ => Ok(()),
+        },
+    }
+}
+
 fn restore_files(repo: &Repo, git: &GitCli, tree: &str, paths: &[String]) -> Result<(), Error> {
     let mut present = Vec::new();
     for path in paths {

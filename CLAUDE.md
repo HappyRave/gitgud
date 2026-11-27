@@ -79,7 +79,10 @@ replaying at most 255 rows (spike 4.3).
 - **Op log** (`oplog.rs`, spec §3.3): before and after each write it keeps HEAD, the branch tip and
   a file copy of `.git/index` in `.git/gitgud/oplog/` (no git process). Undo / redo refuse when
   HEAD or the staged entries changed outside gitgud (stat-only index rewrites from `git status`
-  don't count) and respect git's `index.lock`. The spec says "under a private ref"; entries are
+  don't count). An undo / redo holds `index.lock` from its checks until the index is written and
+  moves every ref in one `update-ref --stdin` transaction, so a refusal moves nothing. A write that
+  fails after changing something is recorded as "<action> (failed)", so Ctrl+Z takes it back; one
+  that changed nothing isn't, and leaves redo as it was. The spec says "under a private ref"; entries are
   files instead so recording stays ≤ 10 ms on big indexes (open for Max). Entries also keep git's
   merge files (`MERGE_HEAD`, `MERGE_MSG`, `MERGE_MODE`, `gitgud/merge.json`), so undo moves a
   merge into or out of progress exactly.
