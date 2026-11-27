@@ -216,6 +216,14 @@ pub fn lfs_locks_list(git: &GitCli, repo: &Repo) -> Result<Vec<LfsLock>, Error> 
     if repo.primary_host() == HostKind::Bitbucket || repo.primary_remote_url().is_none() {
         return Ok(Vec::new());
     }
+    // The server says which locks are ours: lock owners are host logins, which
+    // needn't match git's user.name.
+    let verify = ["lfs", "locks", "--verify", "--json"];
+    let (code, stdout, _) = git.run_status(repo.root(), &verify, None)?;
+    if code == 0 {
+        return parse_verified_locks_json(&stdout);
+    }
+    // Servers without the verify endpoint: matched by name, as before.
     let (code, stdout, stderr) = git.run_status(repo.root(), &["lfs", "locks", "--json"], None)?;
     if code != 0 {
         let msg = crate::cli::failure_message(&stdout, &stderr);
@@ -227,6 +235,35 @@ pub fn lfs_locks_list(git: &GitCli, repo: &Repo) -> Result<Vec<LfsLock>, Error> 
 
     let me = read_user_name(git, repo.root());
     parse_locks_json(&stdout, me.as_deref())
+}
+
+/// Parses `git lfs locks --verify --json` output (`{"ours": [...], "theirs": [...]}`).
+///
+/// # Errors
+/// [`Error::Read`] if JSON is invalid.
+pub fn parse_verified_locks_json(json_str: &str) -> Result<Vec<LfsLock>, Error> {
+    #[derive(Deserialize)]
+    struct Verified {
+        #[serde(default)]
+        ours: Option<Vec<RawLock>>,
+        #[serde(default)]
+        theirs: Option<Vec<RawLock>>,
+    }
+    let v: Verified = serde_json::from_str(json_str.trim())
+        .map_err(|e| Error::Read(format!("LFS locks JSON: {e}")))?;
+    let side = |locks: Option<Vec<RawLock>>, ours: bool| {
+        locks.unwrap_or_default().into_iter().map(move |r| LfsLock {
+            id: r.id.unwrap_or_default(),
+            path: r.path.replace('\\', "/"),
+            owner: r
+                .owner
+                .and_then(|o| o.name)
+                .unwrap_or_else(|| "unknown".into()),
+            locked_at: r.locked_at.unwrap_or_default(),
+            ours,
+        })
+    };
+    Ok(side(v.ours, true).chain(side(v.theirs, false)).collect())
 }
 
 /// Parses `git lfs locks --json` output into [`LfsLock`] values.
@@ -475,6 +512,26 @@ mod tests {
         assert_eq!(locks[0].path, "Assets/Art/Hero.png");
         assert!(locks[0].ours);
         assert!(!locks[1].ours);
+    }
+
+    #[test]
+    fn the_server_says_which_locks_are_ours() {
+        let raw = r#"{
+          "ours": [{"id":"11","path":"Assets\\Hero.png","owner":{"name":"mdemol-j2"},"locked_at":"2026-01-01T00:00:00Z"}],
+          "theirs": [{"id":"12","path":"Assets/Sfx.wav","owner":{"name":"bob"},"locked_at":"2026-01-02T00:00:00Z"}]
+        }"#;
+        let locks = parse_verified_locks_json(raw).unwrap();
+        assert_eq!(locks.len(), 2);
+        assert_eq!(
+            (locks[0].path.as_str(), locks[0].ours),
+            ("Assets/Hero.png", true)
+        );
+        assert_eq!((locks[1].owner.as_str(), locks[1].ours), ("bob", false));
+        assert!(
+            parse_verified_locks_json(r#"{"ours":null,"theirs":[]}"#)
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
