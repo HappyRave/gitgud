@@ -204,10 +204,7 @@ fn read_guids(
 impl Meta {
     /// The `guid:` line alone, without parsing the whole file.
     pub fn guid_only(text: &str) -> Option<String> {
-        text.lines()
-            .find_map(|l| l.strip_prefix("guid:"))
-            .map(|g| g.trim().to_ascii_lowercase())
-            .filter(|g| !g.is_empty())
+        crate::unity::meta_guid(text)
     }
 }
 

@@ -701,16 +701,17 @@ pub(crate) fn read_meta_guid(path: &Path) -> Option<String> {
         .take(1024)
         .read_to_end(&mut head)
         .ok()?;
-    let content = String::from_utf8_lossy(&head);
-    for line in content.lines().take(12) {
-        if let Some(rest) = line.trim().strip_prefix("guid:") {
-            let g = rest.trim().to_ascii_lowercase();
-            if g.len() == 32 && g.bytes().all(|b| b.is_ascii_hexdigit()) {
-                return Some(g);
-            }
-        }
-    }
-    None
+    meta_guid(&String::from_utf8_lossy(&head))
+}
+
+/// The GUID of a `.meta` file's text: its `guid:` line among the first lines,
+/// 32 hex digits, lowercased. The one reading of it for the work tree's index
+/// and for any version's files, so both agree on an odd `.meta`.
+pub(crate) fn meta_guid(text: &str) -> Option<String> {
+    text.lines().take(12).find_map(|line| {
+        let g = line.trim().strip_prefix("guid:")?.trim().to_ascii_lowercase();
+        (g.len() == 32 && g.bytes().all(|b| b.is_ascii_hexdigit())).then_some(g)
+    })
 }
 
 #[cfg(test)]
