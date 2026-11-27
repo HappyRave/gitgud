@@ -43,6 +43,33 @@ fn branch(name: &str) -> Head {
 }
 
 #[test]
+fn status_of_some_paths_and_the_dirty_check_agree_with_the_full_status() {
+    let repo = committed();
+    let r = repo::open(repo.path()).unwrap();
+    assert!(!r.is_dirty().unwrap());
+
+    repo.write("a.txt", "changed\n")
+        .write("dir/b.txt", "changed\n")
+        .write("new [1].txt", "untracked, with a glob character\n");
+    assert!(r.is_dirty().unwrap());
+    let some = r
+        .status_of(&["a.txt".into(), "new [1].txt".into(), "gone.txt".into()])
+        .unwrap();
+    let full = status(&repo);
+    let wanted: Vec<Entry> = full
+        .entries
+        .into_iter()
+        .filter(|e| e.path != "dir/b.txt")
+        .collect();
+    assert_eq!(some.entries, wanted);
+
+    repo.git(&["add", "a.txt"]);
+    repo.git(&["checkout", "--", "dir/b.txt"]);
+    std::fs::remove_file(repo.path().join("new [1].txt")).unwrap();
+    assert!(r.is_dirty().unwrap(), "a staged change alone is dirty");
+}
+
+#[test]
 fn clean_repo_has_no_entries() {
     let repo = committed();
     let s = status(&repo);

@@ -167,7 +167,7 @@ impl Session {
     pub fn open(&self, path: impl AsRef<Path>) -> Result<Opened, Error> {
         let started = Instant::now();
         let repo = self.reuse_or_open(path)?;
-        let dirty = !repo.status()?.entries.is_empty();
+        let dirty = repo.is_dirty()?;
         let graph = Graph::build(&repo, dirty)?;
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let locks = self
@@ -256,7 +256,7 @@ impl Session {
         } else {
             open.repo.clone()
         };
-        let dirty = !repo.status()?.entries.is_empty();
+        let dirty = repo.is_dirty()?;
         if open.graph.is_current(&repo, dirty)? {
             if reload {
                 let updated = OpenRepo {
@@ -1259,7 +1259,7 @@ impl Session {
     /// [`Error::UnknownRepo`], [`Error::Read`], or git's error.
     pub fn stage(&self, id: u32, paths: &[String]) -> Result<Opened, Error> {
         let open = self.get(id)?;
-        let status = open.repo.status()?;
+        let status = open.repo.status_of(&with_meta_partners(paths))?;
         let (expanded, paired) = unity::expand_meta_pairs(&status, paths);
         let action = label_paths_meta("Stage", paths, &expanded, &paired);
         self.write(id, &action, |repo, git| repo.stage(git, &expanded))
@@ -1271,7 +1271,7 @@ impl Session {
     /// [`Error::UnknownRepo`], [`Error::Read`], or git's error.
     pub fn unstage(&self, id: u32, paths: &[String]) -> Result<Opened, Error> {
         let open = self.get(id)?;
-        let status = open.repo.status()?;
+        let status = open.repo.status_of(&with_meta_partners(paths))?;
         let (expanded, paired) = unity::expand_meta_pairs(&status, paths);
         let action = label_paths_meta("Unstage", paths, &expanded, &paired);
         self.write(id, &action, |repo, git| repo.unstage(git, &expanded))
@@ -1283,7 +1283,7 @@ impl Session {
     /// [`Error::UnknownRepo`], [`Error::Read`], or git's error.
     pub fn discard(&self, id: u32, paths: &[String]) -> Result<Opened, Error> {
         let open = self.get(id)?;
-        let status = open.repo.status()?;
+        let status = open.repo.status_of(&with_meta_partners(paths))?;
         let (expanded, paired) = unity::expand_meta_pairs(&status, paths);
         let action = label_paths_meta("Discard", paths, &expanded, &paired);
         self.write_destructive(id, &action, &expanded, |repo, git| {
@@ -2741,6 +2741,20 @@ impl Session {
     fn watchers(&self) -> MutexGuard<'_, HashMap<u32, RepoWatcher>> {
         self.watchers.lock().expect("watcher lock poisoned")
     }
+}
+
+/// `paths` and the `.meta` partner of each (or the asset of a `.meta`): all
+/// [`unity::expand_meta_pairs`] needs the status of.
+fn with_meta_partners(paths: &[String]) -> Vec<String> {
+    let mut out = Vec::with_capacity(paths.len() * 2);
+    for p in paths {
+        out.push(p.clone());
+        out.push(match p.strip_suffix(".meta") {
+            Some(asset) => asset.to_owned(),
+            None => format!("{p}.meta"),
+        });
+    }
+    out
 }
 
 fn label_paths_meta(

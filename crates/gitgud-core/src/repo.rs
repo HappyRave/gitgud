@@ -150,16 +150,55 @@ impl Repo {
         })
     }
 
-    fn entries(&self) -> Result<Vec<Entry>, Error> {
-        let repo = self.gix();
-        let iter = repo
+    /// As [`Repo::status`], for `paths` only (literal paths, not patterns): a
+    /// status of the whole work tree is the slow part of a click on one file.
+    ///
+    /// # Errors
+    /// As [`Repo::status`].
+    pub fn status_of(&self, paths: &[String]) -> Result<Status, Error> {
+        let specs = paths
+            .iter()
+            .map(|p| gix::bstr::BString::from(format!(":(literal){p}")))
+            .collect();
+        Ok(Status {
+            root: self.root().to_owned(),
+            head: self.head()?,
+            entries: self.entries_in(specs)?,
+        })
+    }
+
+    /// Whether anything is staged, changed or untracked; stops at the first change.
+    ///
+    /// # Errors
+    /// As [`Repo::status`].
+    pub fn is_dirty(&self) -> Result<bool, Error> {
+        for item in self.status_items(Vec::new())? {
+            match item.map_err(read_err)? {
+                Item::TreeIndex(_) => return Ok(true),
+                Item::IndexWorktree(item) if item.summary().is_some() => return Ok(true),
+                Item::IndexWorktree(_) => {}
+            }
+        }
+        Ok(false)
+    }
+
+    fn status_items(&self, specs: Vec<gix::bstr::BString>) -> Result<gix::status::Iter, Error> {
+        self.gix()
             .status(gix::progress::Discard)
             .map_err(read_err)?
             .untracked_files(UntrackedFiles::Files)
             .index_worktree_rewrites(None)
             .tree_index_track_renames(TrackRenames::Disabled)
-            .into_iter(None)
-            .map_err(read_err)?;
+            .into_iter(specs)
+            .map_err(read_err)
+    }
+
+    fn entries(&self) -> Result<Vec<Entry>, Error> {
+        self.entries_in(Vec::new())
+    }
+
+    fn entries_in(&self, specs: Vec<gix::bstr::BString>) -> Result<Vec<Entry>, Error> {
+        let iter = self.status_items(specs)?;
 
         let mut by_path: BTreeMap<String, Entry> = BTreeMap::new();
         for item in iter {
