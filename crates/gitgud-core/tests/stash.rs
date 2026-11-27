@@ -7,6 +7,35 @@ fn read(repo: &TestRepo, path: &str) -> Option<String> {
 }
 
 #[test]
+fn a_stash_shows_the_same_entry_apply_acts_on_when_one_cant_be_read() {
+    let repo = TestRepo::init();
+    repo.write("a.txt", "base\n").commit_all("init");
+    for name in ["oldest", "middle", "newest"] {
+        repo.write("a.txt", &format!("{name}\n"));
+        repo.git(&["stash", "push", "-q", "-m", name]);
+    }
+    // stash@{1}'s line names an object that isn't there.
+    let log = repo.path().join(".git/logs/refs/stash");
+    let text = std::fs::read_to_string(&log).unwrap();
+    let mut lines: Vec<String> = text.lines().map(str::to_owned).collect();
+    let mut parts: Vec<String> = lines[1].split(' ').map(str::to_owned).collect();
+    parts[1] = "f".repeat(40);
+    lines[1] = parts.join(" ");
+    std::fs::write(&log, lines.join("\n") + "\n").unwrap();
+    let r = gitgud_core::repo::open(repo.path()).unwrap();
+
+    let listed: Vec<(usize, String)> = r
+        .stashes()
+        .unwrap()
+        .into_iter()
+        .map(|e| (e.index, e.message))
+        .collect();
+    assert_eq!(listed, [(0, "newest".into()), (2, "oldest".into())]);
+    let detail = r.stash_detail(2).unwrap();
+    assert!(detail.subject.contains("oldest"), "{}", detail.subject);
+}
+
+#[test]
 fn stash_save_inspect_apply_pop_drop_and_undo_all() {
     let repo = TestRepo::init();
     repo.write("a.txt", "base\n").commit_all("init");

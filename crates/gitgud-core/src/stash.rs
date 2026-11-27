@@ -89,7 +89,7 @@ impl Repo {
         let entry = self
             .stashes()?
             .into_iter()
-            .nth(index)
+            .find(|e| e.index == index)
             .ok_or_else(|| Error::Refused(format!("stash@{{{index}}} does not exist")))?;
         let repo = self.gix();
         let oid = ObjectId::from_hex(entry.id.as_bytes()).map_err(read_err)?;
@@ -185,7 +185,7 @@ impl Repo {
         let entry = self
             .stashes()?
             .into_iter()
-            .nth(index)
+            .find(|e| e.index == index)
             .ok_or_else(|| Error::Refused(format!("stash@{{{index}}} does not exist")))?;
         let repo = self.gix();
         let oid = ObjectId::from_hex(entry.id.as_bytes()).map_err(read_err)?;
