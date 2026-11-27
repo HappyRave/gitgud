@@ -562,9 +562,9 @@ impl OpLog {
             return Err(refused());
         }
         if let (Some(tree), false) = (&expected.worktree, paths.is_empty()) {
-            let now = Snapshots::for_repo(repo).take(repo, git)?;
-            for path in paths {
-                if blob_in(repo, &now, path)? != blob_in(repo, tree, path)? {
+            let now = worktree_blobs(repo, git, paths)?;
+            for (path, now) in paths.iter().zip(now) {
+                if now != blob_in(repo, tree, path)? {
                     return Err(refused());
                 }
             }
@@ -781,6 +781,46 @@ fn label_with_subject(verb: &str, message: &str) -> String {
 }
 
 /// The blob `path` has in snapshot `tree`, `None` when the file wasn't there.
+/// The blob id each of `paths` would get in a snapshot (through git's clean
+/// filters, as `add` does), `None` where the file is gone: one `hash-object`
+/// for the files an undo checks, not a snapshot of the whole work tree.
+fn worktree_blobs(
+    repo: &Repo,
+    git: &GitCli,
+    paths: &[String],
+) -> Result<Vec<Option<String>>, Error> {
+    let present: Vec<&str> = paths
+        .iter()
+        .filter(|p| repo.root().join(p).is_file())
+        .map(String::as_str)
+        .collect();
+    let mut ids = if present.is_empty() {
+        Vec::new()
+    } else {
+        let mut list = present.join("\n");
+        list.push('\n');
+        git.run(
+            repo.root(),
+            &["hash-object", "--stdin-paths"],
+            Some(list.as_bytes()),
+        )?
+        .lines()
+        .map(str::to_owned)
+        .collect()
+    }
+    .into_iter();
+    Ok(paths
+        .iter()
+        .map(|p| {
+            if present.contains(&p.as_str()) {
+                ids.next()
+            } else {
+                None
+            }
+        })
+        .collect())
+}
+
 fn blob_in(repo: &Repo, tree: &str, path: &str) -> Result<Option<String>, Error> {
     let gix = repo.gix();
     let id = gix::ObjectId::from_hex(tree.as_bytes()).map_err(read_err)?;
@@ -791,8 +831,6 @@ fn blob_in(repo: &Repo, tree: &str, path: &str) -> Result<Option<String>, Error>
         .map(|e| e.object_id().to_string()))
 }
 
-/// Puts `paths` in the work tree back as snapshot `tree` had them: rewritten
-/// through git (so eol and filters apply), or deleted where the tree has none.
 /// git's own `.git/index.lock`, held while an undo or redo moves anything, so a
 /// git running at the same time fails instead of racing us. Dropped without
 /// [`IndexLock::commit`], it leaves the index as it was.
@@ -969,6 +1007,8 @@ fn restore_stash_log(repo: &Repo, to: &State) -> Result<(), Error> {
     }
 }
 
+/// Puts `paths` in the work tree back as snapshot `tree` had them: rewritten
+/// through git (so eol and filters apply), or deleted where the tree has none.
 fn restore_files(repo: &Repo, git: &GitCli, tree: &str, paths: &[String]) -> Result<(), Error> {
     let mut present = Vec::new();
     for path in paths {

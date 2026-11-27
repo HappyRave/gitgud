@@ -164,6 +164,20 @@ fn refuses_to_undo_a_discard_once_the_file_was_edited_again() {
 }
 
 #[test]
+fn undoing_a_discard_checks_its_files_without_snapshotting_the_work_tree() {
+    let (repo, session, id) = setup();
+    repo.write("a.txt", "first edit\n");
+    discard(&session, id, &["a.txt"]);
+    let snapshots = || repo.git(&["rev-list", "--count", "refs/gitgud/snapshots"]);
+    let before = snapshots();
+
+    session.undo(id).unwrap();
+
+    assert_eq!(read(&repo, "a.txt").unwrap(), "first edit\n");
+    assert_eq!(snapshots(), before, "no new snapshot");
+}
+
+#[test]
 fn snapshots_leave_the_real_index_alone_and_skip_ignored_files() {
     let (repo, session, id) = setup();
     repo.write("a.txt", "edit\n")
