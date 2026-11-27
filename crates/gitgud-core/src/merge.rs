@@ -233,11 +233,7 @@ impl Repo {
             return Ok(None);
         };
         let now: Vec<String> = self.conflicted_paths()?;
-        let started: Option<Started> = fs::read(self.state_file())
-            .ok()
-            .map(|b| serde_json::from_slice::<Started>(&b).map_err(read_err))
-            .transpose()?
-            .filter(|s| s.merge_head == merge_head);
+        let started = self.merge_started(&merge_head)?;
         let mut conflicts = match &started {
             Some(s) => s.conflicts.clone(),
             None => self.classify(git, &now)?,
@@ -246,10 +242,14 @@ impl Repo {
             c.resolved = !now.contains(&c.path);
         }
         let (theirs, unity_verify) = match started {
-            Some(s) => (Some(s.theirs), s.unity_verify),
+            Some(s) => (Some(s.theirs).filter(|t| !t.is_empty()), s.unity_verify),
             None => (None, Vec::new()),
         };
-        let msg = fs::read_to_string(self.git_dir().join("MERGE_MSG")).unwrap_or_default();
+        let msg = match fs::read_to_string(self.git_dir().join("MERGE_MSG")) {
+            Ok(msg) => msg,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(e) => return Err(read_err(e)),
+        };
         let message = msg
             .lines()
             .filter(|l| !l.starts_with('#'))
@@ -288,10 +288,7 @@ impl Repo {
             )));
         }
         if let Some(merge_head) = self.merge_head()?
-            && let Some(started) = fs::read(self.state_file())
-                .ok()
-                .and_then(|b| serde_json::from_slice::<Started>(&b).ok())
-                .filter(|s| s.merge_head == merge_head)
+            && let Some(started) = self.merge_started(&merge_head)?
         {
             let unconfirmed: usize = started
                 .unity_verify
@@ -319,16 +316,15 @@ impl Repo {
             return Err(Error::Refused("no merge is in progress".into()));
         };
         let now = self.conflicted_paths()?;
-        let mut started = fs::read(self.state_file())
-            .ok()
-            .and_then(|b| serde_json::from_slice::<Started>(&b).ok())
-            .filter(|s| s.merge_head == merge_head)
-            .unwrap_or(Started {
+        let mut started = match self.merge_started(&merge_head)? {
+            Some(started) => started,
+            None => Started {
                 merge_head: merge_head.clone(),
                 theirs: String::new(),
                 conflicts: self.classify(git, &now)?,
                 unity_verify: Vec::new(),
-            });
+            },
+        };
 
         let mut merged_count = 0usize;
         let unity_paths: Vec<String> = started
@@ -361,6 +357,23 @@ impl Repo {
         )
         .map_err(read_err)?;
         Ok(merged_count)
+    }
+
+    /// What gitgud recorded about the merge in progress (`.git/gitgud/merge.json`),
+    /// `None` when it didn't start this merge.
+    ///
+    /// # Errors
+    /// [`Error::Read`] when the record exists but can't be read: the Smart Merge
+    /// items it holds must not be skipped silently.
+    fn merge_started(&self, merge_head: &str) -> Result<Option<Started>, Error> {
+        match fs::read(self.state_file()) {
+            Ok(bytes) => Ok(
+                Some(serde_json::from_slice::<Started>(&bytes).map_err(read_err)?)
+                    .filter(|s| s.merge_head == merge_head),
+            ),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(read_err(e)),
+        }
     }
 
     /// Marks Smart Merge verification items confirmed or unconfirmed on `path`.

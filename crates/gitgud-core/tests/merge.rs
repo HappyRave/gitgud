@@ -524,6 +524,19 @@ fn commit_merge_waits_for_every_file_then_makes_a_merge_commit() {
 }
 
 #[test]
+fn an_unreadable_merge_record_stops_the_commit_instead_of_skipping_its_checks() {
+    let (repo, session, id) = diverged();
+    session.merge(id, "other").unwrap();
+    session.resolve_side(id, "a.txt", Side::Yours).unwrap();
+    std::fs::write(repo.path().join(".git/gitgud/merge.json"), "{ not json").unwrap();
+    let before = head(&repo);
+
+    assert!(session.merge_commit(id, "Merge").is_err());
+    assert_eq!(head(&repo), before);
+    assert!(merging(&repo));
+}
+
+#[test]
 fn abort_goes_back_and_ctrl_z_puts_the_merge_back_in_progress() {
     let (repo, session, id) = diverged();
     let before = head(&repo);
