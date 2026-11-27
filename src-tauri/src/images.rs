@@ -34,7 +34,7 @@ pub fn respond_timed(
     let _turn = Turn::take();
     let started = Instant::now();
     let mut steps = Steps::default();
-    let answer = read(session, method, uri, body, &mut steps);
+    let answer = guarded(|| read(session, method, uri, body, &mut steps));
     let timing = format!(
         "queue;dur={:.1}, read;dur={:.1}, shrink;dur={:.1}, total;dur={:.1}",
         ms(started - arrived),
@@ -64,6 +64,24 @@ pub fn respond_timed(
             .body(message.into_bytes()),
     }
     .expect("static headers are valid")
+}
+
+type Answer = Result<(Vec<u8>, &'static str), (StatusCode, String)>;
+
+/// `read`, answering 500 when it panics: a decoder that panics on a malformed
+/// file must still answer, or the viewer waits forever.
+fn guarded(read: impl FnOnce() -> Answer) -> Answer {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(read)).unwrap_or_else(|panic| {
+        let reason = panic
+            .downcast_ref::<&str>()
+            .map(|s| (*s).to_owned())
+            .or_else(|| panic.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "unknown panic".to_owned());
+        Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("gitgud failed reading this file: {reason}"),
+        ))
+    })
 }
 
 #[cfg(test)]
@@ -288,6 +306,14 @@ mod tests {
 
     fn body(r: &Response<Vec<u8>>) -> String {
         String::from_utf8_lossy(r.body()).into_owned()
+    }
+
+    #[test]
+    fn a_reader_that_panics_still_answers() {
+        let answer = guarded(|| panic!("bad TGA header"));
+        let (status, message) = answer.unwrap_err();
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(message.contains("bad TGA header"), "{message}");
     }
 
     #[test]
