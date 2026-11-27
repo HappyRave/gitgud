@@ -377,7 +377,7 @@ impl Repo {
     }
 }
 
-fn worktree_has_non_pointer(root: &Path, path: &str) -> bool {
+pub(crate) fn worktree_has_non_pointer(root: &Path, path: &str) -> bool {
     let Ok(mut file) = std::fs::File::open(root.join(path)) else {
         return false;
     };

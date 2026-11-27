@@ -2441,8 +2441,29 @@ impl Session {
         path: &str,
         version: &crate::image::Version,
     ) -> Result<crate::video::VideoInfo, Error> {
-        let bytes = self.file_bytes(id, path, version)?;
-        crate::video::read_video(&bytes).map_err(|e| Error::Refused(format!("{path}: {e}")))
+        let refused = |e: String| Error::Refused(format!("{path}: {e}"));
+        let repo = self.get(id)?.repo.clone();
+        // A file on disk is read by its boxes, never whole: the work tree's copy,
+        // or the LFS object a pointer names once it's in the store.
+        let on_disk = match version {
+            crate::image::Version::Worktree => {
+                crate::worktree::worktree_has_non_pointer(repo.root(), path)
+                    .then(|| repo.root().join(path))
+            }
+            _ => None,
+        };
+        if let Some(file) = on_disk {
+            return crate::video::read_video_file(&file).map_err(refused);
+        }
+        let stored = repo.file_at(path, version)?;
+        if let Some((oid, _)) = crate::lfs::parse_lfs_pointer(&stored)
+            && crate::lfs::lfs_is_hydrated(&repo, &oid)
+        {
+            let object = crate::lfs::lfs_object_path(&repo, &oid);
+            return crate::video::read_video_file(&object).map_err(refused);
+        }
+        let bytes = self.resolve_stored(id, &repo, path, stored)?;
+        crate::video::read_video(&bytes).map_err(refused)
     }
 
     /// Sound file `path` at `version` decoded to WAV, for formats the webview can't play.

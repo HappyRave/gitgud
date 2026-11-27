@@ -35,7 +35,56 @@ pub fn read_video(bytes: &[u8]) -> Result<VideoInfo, String> {
     let moov = boxes(bytes)
         .find(|(t, _)| t == b"moov")
         .map(|(_, b)| b)
-        .ok_or("not an MP4 / MOV file this viewer can read (no moov box)")?;
+        .ok_or(NO_MOOV)?;
+    read_moov(moov, bytes.len() as u64)
+}
+
+const NO_MOOV: &str = "not an MP4 / MOV file this viewer can read (no moov box)";
+/// The largest `moov` box read: a movie's index, megabytes at most in practice.
+const MAX_MOOV: u64 = 256 << 20;
+
+/// As [`read_video`], from a file on disk: only the top-level box headers and the
+/// `moov` box are read, not the media data (gigabytes for a long video).
+///
+/// # Errors
+/// As [`read_video`], or when the file can't be read.
+pub fn read_video_file(path: &std::path::Path) -> Result<VideoInfo, String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    let len = file.metadata().map_err(|e| e.to_string())?.len();
+    let mut pos = 0u64;
+    while pos + 8 <= len {
+        file.seek(SeekFrom::Start(pos)).map_err(|e| e.to_string())?;
+        let mut head = [0u8; 16];
+        file.read_exact(&mut head[..8]).map_err(|e| e.to_string())?;
+        let (size, header) = match u32::from_be_bytes([head[0], head[1], head[2], head[3]]) {
+            0 => (len - pos, 8),
+            1 => {
+                file.read_exact(&mut head[8..]).map_err(|e| e.to_string())?;
+                let large = u64::from_be_bytes(head[8..16].try_into().map_err(|_| NO_MOOV)?);
+                (large, 16)
+            }
+            n => (u64::from(n), 8),
+        };
+        if size < header || pos + size > len {
+            return Err(NO_MOOV.into());
+        }
+        if &head[4..8] == b"moov" {
+            let body_len = size - header;
+            if body_len > MAX_MOOV {
+                return Err("its movie index is too big to read".into());
+            }
+            let mut moov = vec![0u8; usize::try_from(body_len).map_err(|e| e.to_string())?];
+            file.read_exact(&mut moov).map_err(|e| e.to_string())?;
+            return read_moov(&moov, len);
+        }
+        pos += size;
+    }
+    Err(NO_MOOV.into())
+}
+
+/// The tracks in `moov`, the bitrate over the whole file's `file_len` bytes.
+fn read_moov(moov: &[u8], file_len: u64) -> Result<VideoInfo, String> {
     let mut movie_duration = 0.0;
     let mut tracks = Vec::new();
     for (t, body) in boxes(moov) {
@@ -71,7 +120,7 @@ pub fn read_video(bytes: &[u8]) -> Result<VideoInfo, String> {
         },
         fps,
         frames: (video.samples > 0).then_some(video.samples),
-        bitrate: (seconds > 0.0).then(|| bytes.len() as f64 * 8.0 / seconds),
+        bitrate: (seconds > 0.0).then(|| file_len as f64 * 8.0 / seconds),
         audio_codec: tracks
             .iter()
             .find(|t| &t.handler == b"soun")
@@ -238,6 +287,29 @@ pub fn tiny_mp4(codec: &[u8; 4], width: u32, height: u32, fps: u32, seconds: u32
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_a_file_by_its_boxes_past_the_media_data() {
+        let movie = tiny_mp4(b"avc1", 1280, 720, 25, 4);
+        let media = vec![7u8; 3 << 20];
+        let mut file = Vec::new();
+        // A 64-bit sized mdat before the movie index, as recorders write it.
+        file.extend_from_slice(&1u32.to_be_bytes());
+        file.extend_from_slice(b"mdat");
+        file.extend_from_slice(&(16 + media.len() as u64).to_be_bytes());
+        file.extend_from_slice(&media);
+        file.extend_from_slice(&movie);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("clip.mp4");
+        std::fs::write(&path, &file).unwrap();
+
+        let v = read_video_file(&path).unwrap();
+
+        assert_eq!(v, read_video(&file).unwrap());
+        assert_eq!((v.width, v.height), (1280, 720));
+        std::fs::write(&path, &file[..16 + media.len() + 20]).unwrap();
+        assert!(read_video_file(&path).is_err(), "cut short");
+    }
 
     #[test]
     fn reads_codec_size_fps_and_bitrate() {
