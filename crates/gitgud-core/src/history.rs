@@ -3,7 +3,7 @@ use std::fs;
 
 use serde::{Deserialize, Serialize};
 
-use crate::cli::{GitCli, command_error, failure_message};
+use crate::cli::GitCli;
 use crate::graph::Ghost;
 use crate::rebase::RebaseOutcome;
 use crate::repo::{Error, Repo, read_err};
@@ -250,33 +250,19 @@ impl Repo {
                 continue;
             }
             number += 1;
-            let merge_base = format!("--merge-base={}^", step.id);
-            let args = [
-                "merge-tree",
-                "--write-tree",
-                "--name-only",
-                "--no-messages",
-                "-z",
-                merge_base.as_str(),
-                tree.as_str(),
-                step.id.as_str(),
-            ];
-            let (code, out, err) = git.run_status(root, &args, None)?;
-            let mut records = out.split('\0').filter(|p| !p.is_empty());
-            let next = records.next().unwrap_or_default().to_owned();
-            let outcome = match (code, conflicted) {
-                (0, None) => Outcome::Clean,
-                (0, Some(step)) => Outcome::AfterConflict { step },
-                (1, _) => {
+            let merged = self.merge_tree(git, Some(&format!("{}^", step.id)), &tree, &step.id)?;
+            let outcome = match (merged.conflicts.is_empty(), conflicted) {
+                (true, None) => Outcome::Clean,
+                (true, Some(step)) => Outcome::AfterConflict { step },
+                (false, _) => {
                     conflicted.get_or_insert(number);
                     Outcome::Conflict {
-                        paths: records.map(str::to_owned).collect(),
-                        tree: next.clone(),
+                        paths: merged.conflicts,
+                        tree: merged.tree.clone(),
                     }
                 }
-                _ => return Err(command_error(&args, failure_message(&out, &err))),
             };
-            tree = next;
+            tree = merged.tree;
             predicted.push(StepPrediction {
                 id: step.id.clone(),
                 step: Some(number),

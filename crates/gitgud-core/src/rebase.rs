@@ -110,36 +110,22 @@ impl Repo {
             .trim()
             .to_owned();
         for (i, commit) in commits.iter().enumerate() {
-            let base = format!("--merge-base={commit}^");
-            let args = [
-                "merge-tree",
-                "--write-tree",
-                "--name-only",
-                "--no-messages",
-                "-z",
-                base.as_str(),
-                tree.as_str(),
-                commit.as_str(),
-            ];
-            let (code, out, err) = git.run_status(root, &args, None)?;
-            let mut records = out.split('\0').filter(|p| !p.is_empty());
-            match code {
-                0 => tree = records.next().unwrap_or_default().to_owned(),
-                1 => {
-                    let subject = git.run(root, &["log", "-1", "--format=%s", commit], None)?;
-                    return Ok(RebasePlan {
-                        commits: commits.len(),
-                        behind,
-                        conflict: Some(StepConflict {
-                            step: i + 1,
-                            short_id: commit[..7].to_owned(),
-                            subject: subject.trim().to_owned(),
-                            paths: records.skip(1).map(str::to_owned).collect(),
-                        }),
-                    });
-                }
-                _ => return Err(command_error(&args, failure_message(&out, &err))),
+            let step = self.merge_tree(git, Some(&format!("{commit}^")), &tree, commit)?;
+            if step.conflicts.is_empty() {
+                tree = step.tree;
+                continue;
             }
+            let subject = git.run(root, &["log", "-1", "--format=%s", commit], None)?;
+            return Ok(RebasePlan {
+                commits: commits.len(),
+                behind,
+                conflict: Some(StepConflict {
+                    step: i + 1,
+                    short_id: commit[..7].to_owned(),
+                    subject: subject.trim().to_owned(),
+                    paths: step.conflicts,
+                }),
+            });
         }
         Ok(RebasePlan {
             commits: commits.len(),

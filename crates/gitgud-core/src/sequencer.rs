@@ -287,28 +287,7 @@ impl Repo {
         ours: &str,
         theirs: &str,
     ) -> Result<Vec<String>, Error> {
-        let base_arg = format!("--merge-base={base}");
-        let args = [
-            "merge-tree",
-            "--write-tree",
-            "--name-only",
-            "--no-messages",
-            "-z",
-            base_arg.as_str(),
-            ours,
-            theirs,
-        ];
-        let (code, out, err) = git.run_status(self.root(), &args, None)?;
-        match code {
-            0 => Ok(Vec::new()),
-            1 => Ok(out
-                .split('\0')
-                .skip(1)
-                .filter(|p| !p.is_empty())
-                .map(str::to_owned)
-                .collect()),
-            _ => Err(command_error(&args, failure_message(&out, &err))),
-        }
+        Ok(self.merge_tree(git, Some(base), ours, theirs)?.conflicts)
     }
 
     fn commit_summary(&self, hex: &str) -> Result<(String, String), Error> {

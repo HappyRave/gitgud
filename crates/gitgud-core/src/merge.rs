@@ -127,6 +127,12 @@ struct Started {
     unity_verify: Vec<UnityMergeFile>,
 }
 
+/// See [`Repo::merge_tree`].
+pub(crate) struct MergeTree {
+    pub(crate) tree: String,
+    pub(crate) conflicts: Vec<String>,
+}
+
 impl Repo {
     /// Files that merging `branch` into HEAD would leave conflicted, without
     /// touching anything (`git merge-tree`).
@@ -134,25 +140,45 @@ impl Repo {
     /// # Errors
     /// [`Error::Command`] when git can't compute the merge.
     pub fn predict_merge(&self, git: &GitCli, branch: &str) -> Result<Vec<String>, Error> {
-        let args = [
+        Ok(self.merge_tree(git, None, "HEAD", branch)?.conflicts)
+    }
+
+    /// What `git merge-tree --write-tree` makes of merging `theirs` into `ours`
+    /// over `base` (else their merge base): the merged tree (conflicted files with
+    /// markers) and the conflicted paths, none when clean. Writes only objects.
+    ///
+    /// # Errors
+    /// [`Error::Command`] when git can't compute the merge.
+    pub(crate) fn merge_tree(
+        &self,
+        git: &GitCli,
+        base: Option<&str>,
+        ours: &str,
+        theirs: &str,
+    ) -> Result<MergeTree, Error> {
+        let base_arg = base.map(|b| format!("--merge-base={b}"));
+        let mut args = vec![
             "merge-tree",
             "--write-tree",
             "--name-only",
             "--no-messages",
             "-z",
-            "HEAD",
-            branch,
         ];
+        args.extend(base_arg.as_deref());
+        args.extend([ours, theirs]);
         let (code, out, err) = git.run_status(self.root(), &args, None)?;
+        // First record is the tree id; then the conflicted paths.
+        let mut records = out.split('\0').filter(|p| !p.is_empty()).map(str::to_owned);
+        let tree = records.next().unwrap_or_default();
         match code {
-            0 => Ok(Vec::new()),
-            // First record is the tree id; then the conflicted paths.
-            1 => Ok(out
-                .split('\0')
-                .skip(1)
-                .filter(|p| !p.is_empty())
-                .map(str::to_owned)
-                .collect()),
+            0 => Ok(MergeTree {
+                tree,
+                conflicts: Vec::new(),
+            }),
+            1 => Ok(MergeTree {
+                tree,
+                conflicts: records.collect(),
+            }),
             _ => Err(command_error(&args, failure_message(&out, &err))),
         }
     }
