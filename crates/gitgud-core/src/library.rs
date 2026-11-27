@@ -158,6 +158,7 @@ struct UndoSnapshot {
     repos: Vec<LibraryRepo>,
 }
 
+#[derive(Clone)]
 struct StoreInner {
     state: LibraryState,
     undo_stack: Vec<UndoSnapshot>,
@@ -215,6 +216,7 @@ impl LibraryStore {
     /// [`Error::Read`] when writing fails.
     pub fn add_repos(&self, entries: &[AddRepoEntry]) -> Result<LibrarySnapshot, Error> {
         let mut guard = self.lock()?;
+        let saved = guard.clone();
         if entries.is_empty() {
             return Ok(make_snapshot(&guard));
         }
@@ -228,7 +230,7 @@ impl LibraryStore {
                 format!("Add {added} repositories")
             };
             push_undo(&mut guard, label, before);
-            save_atomic(&self.file, &guard.state)?;
+            self.save(&mut guard, saved)?;
         }
         Ok(make_snapshot(&guard))
     }
@@ -239,6 +241,7 @@ impl LibraryStore {
     /// [`Error::Refused`] when `id` is unknown, [`Error::Read`] when writing fails.
     pub fn remove_repo(&self, id: &str) -> Result<LibrarySnapshot, Error> {
         let mut guard = self.lock()?;
+        let saved = guard.clone();
         let Some(pos) = guard.state.repos.iter().position(|r| r.id == id) else {
             return Err(Error::Refused("repository is not in the library".into()));
         };
@@ -246,7 +249,7 @@ impl LibraryStore {
         let before = capture_undo("", &guard.state);
         drop_repo_at(&mut guard, pos);
         push_undo(&mut guard, format!("Remove {removed_name}"), before);
-        save_atomic(&self.file, &guard.state)?;
+        self.save(&mut guard, saved)?;
         Ok(make_snapshot(&guard))
     }
 
@@ -332,6 +335,7 @@ impl LibraryStore {
         remove_ids: &[String],
     ) -> Result<LibrarySnapshot, Error> {
         let mut guard = self.lock()?;
+        let saved = guard.clone();
         let before = capture_undo("", &guard.state);
         let mut removed = 0usize;
         for id in remove_ids {
@@ -352,7 +356,7 @@ impl LibraryStore {
             (a, r) => format!("Rescan: add {a}, remove {r}"),
         };
         push_undo(&mut guard, label, before);
-        save_atomic(&self.file, &guard.state)?;
+        self.save(&mut guard, saved)?;
         Ok(make_snapshot(&guard))
     }
 
@@ -365,6 +369,7 @@ impl LibraryStore {
         let canonical = display_path(opened.root());
         let key = path_key(&canonical);
         let mut guard = self.lock()?;
+        let saved = guard.clone();
         if guard
             .state
             .repos
@@ -399,7 +404,7 @@ impl LibraryStore {
         }
         let label = format!("Locate {}", guard.state.repos[idx].name);
         push_undo(&mut guard, label, before);
-        save_atomic(&self.file, &guard.state)?;
+        self.save(&mut guard, saved)?;
         Ok(make_snapshot(&guard))
     }
 
@@ -414,6 +419,7 @@ impl LibraryStore {
         order: usize,
     ) -> Result<LibrarySnapshot, Error> {
         let mut guard = self.lock()?;
+        let saved = guard.clone();
         if let Some(ref fid) = folder_id
             && !guard.state.folders.iter().any(|f| &f.id == fid)
         {
@@ -430,7 +436,7 @@ impl LibraryStore {
         guard.state.repos[pos].folder_id = folder_id.clone();
         reorder_repos_in_folder(&mut guard.state.repos, folder_id.as_deref(), id, order);
         push_undo(&mut guard, format!("Move {name}"), before);
-        save_atomic(&self.file, &guard.state)?;
+        self.save(&mut guard, saved)?;
         Ok(make_snapshot(&guard))
     }
 
@@ -440,6 +446,7 @@ impl LibraryStore {
     /// [`Error::Refused`] if `id` is unknown.
     pub fn pin_repo(&self, id: &str, pinned: bool) -> Result<LibrarySnapshot, Error> {
         let mut guard = self.lock()?;
+        let saved = guard.clone();
         let Some(pos) = guard.state.repos.iter().position(|r| r.id == id) else {
             return Err(Error::Refused("repository is not in the library".into()));
         };
@@ -455,7 +462,7 @@ impl LibraryStore {
             format!("Unpin {name}")
         };
         push_undo(&mut guard, label, before);
-        save_atomic(&self.file, &guard.state)?;
+        self.save(&mut guard, saved)?;
         Ok(make_snapshot(&guard))
     }
 
@@ -466,6 +473,7 @@ impl LibraryStore {
     pub fn touch_repo(&self, path: &str) -> Result<(), Error> {
         let key = path_key(&display_path(Path::new(path)));
         let mut guard = self.lock()?;
+        let saved = guard.clone();
         if let Some(repo) = guard
             .state
             .repos
@@ -473,7 +481,7 @@ impl LibraryStore {
             .find(|r| path_key(&r.path) == key)
         {
             repo.last_opened = Some(now_secs());
-            save_atomic(&self.file, &guard.state)?;
+            self.save(&mut guard, saved)?;
         }
         Ok(())
     }
@@ -492,6 +500,7 @@ impl LibraryStore {
             return Err(Error::Refused("folder name can't be empty".into()));
         }
         let mut guard = self.lock()?;
+        let saved = guard.clone();
         if let Some(ref pid) = parent_id
             && !guard.state.folders.iter().any(|f| &f.id == pid)
         {
@@ -514,7 +523,7 @@ impl LibraryStore {
             order,
         });
         push_undo(&mut guard, format!("Create folder {trimmed}"), before);
-        save_atomic(&self.file, &guard.state)?;
+        self.save(&mut guard, saved)?;
         Ok(make_snapshot(&guard))
     }
 
@@ -528,6 +537,7 @@ impl LibraryStore {
             return Err(Error::Refused("folder name can't be empty".into()));
         }
         let mut guard = self.lock()?;
+        let saved = guard.clone();
         let Some(pos) = guard.state.folders.iter().position(|f| f.id == id) else {
             return Err(Error::Refused("folder does not exist".into()));
         };
@@ -538,7 +548,7 @@ impl LibraryStore {
         let old = guard.state.folders[pos].name.clone();
         guard.state.folders[pos].name = trimmed.to_owned();
         push_undo(&mut guard, format!("Rename {old} to {trimmed}"), before);
-        save_atomic(&self.file, &guard.state)?;
+        self.save(&mut guard, saved)?;
         Ok(make_snapshot(&guard))
     }
 
@@ -548,6 +558,7 @@ impl LibraryStore {
     /// [`Error::Refused`] if `id` doesn't exist.
     pub fn delete_folder(&self, id: &str) -> Result<LibrarySnapshot, Error> {
         let mut guard = self.lock()?;
+        let saved = guard.clone();
         let Some(pos) = guard.state.folders.iter().position(|f| f.id == id) else {
             return Err(Error::Refused("folder does not exist".into()));
         };
@@ -568,7 +579,7 @@ impl LibraryStore {
             format!("Delete folder {}", removed.name),
             before,
         );
-        save_atomic(&self.file, &guard.state)?;
+        self.save(&mut guard, saved)?;
         Ok(make_snapshot(&guard))
     }
 
@@ -583,6 +594,7 @@ impl LibraryStore {
         order: usize,
     ) -> Result<LibrarySnapshot, Error> {
         let mut guard = self.lock()?;
+        let saved = guard.clone();
         if parent_id.as_deref() == Some(id) {
             return Err(Error::Refused("cannot move a folder inside itself".into()));
         }
@@ -604,7 +616,7 @@ impl LibraryStore {
         guard.state.folders[pos].parent_id = parent_id.clone();
         reorder_folders_in_parent(&mut guard.state.folders, parent_id.as_deref(), id, order);
         push_undo(&mut guard, format!("Move folder {name}"), before);
-        save_atomic(&self.file, &guard.state)?;
+        self.save(&mut guard, saved)?;
         Ok(make_snapshot(&guard))
     }
 
@@ -614,8 +626,9 @@ impl LibraryStore {
     /// [`Error::Read`] when writing fails.
     pub fn save_tabs(&self, tabs: OpenTabState) -> Result<LibrarySnapshot, Error> {
         let mut guard = self.lock()?;
+        let saved = guard.clone();
         guard.state.tabs = tabs;
-        save_atomic(&self.file, &guard.state)?;
+        self.save(&mut guard, saved)?;
         Ok(make_snapshot(&guard))
     }
 
@@ -625,6 +638,7 @@ impl LibraryStore {
     /// [`Error::Refused`] when there is nothing to undo.
     pub fn undo(&self) -> Result<LibrarySnapshot, Error> {
         let mut guard = self.lock()?;
+        let saved = guard.clone();
         let Some(entry) = guard.undo_stack.pop() else {
             return Err(Error::Refused("nothing to undo in Library".into()));
         };
@@ -636,7 +650,7 @@ impl LibraryStore {
         guard.redo_stack.push(redo_entry);
         guard.state.folders = entry.folders;
         guard.state.repos = entry.repos;
-        save_atomic(&self.file, &guard.state)?;
+        self.save(&mut guard, saved)?;
         Ok(make_snapshot(&guard))
     }
 
@@ -646,6 +660,7 @@ impl LibraryStore {
     /// [`Error::Refused`] when there is nothing to redo.
     pub fn redo(&self) -> Result<LibrarySnapshot, Error> {
         let mut guard = self.lock()?;
+        let saved = guard.clone();
         let Some(entry) = guard.redo_stack.pop() else {
             return Err(Error::Refused("nothing to redo in Library".into()));
         };
@@ -657,7 +672,7 @@ impl LibraryStore {
         guard.undo_stack.push(undo_entry);
         guard.state.folders = entry.folders;
         guard.state.repos = entry.repos;
-        save_atomic(&self.file, &guard.state)?;
+        self.save(&mut guard, saved)?;
         Ok(make_snapshot(&guard))
     }
 
@@ -729,6 +744,7 @@ impl LibraryStore {
         let by_key: BTreeMap<String, &RepoSummary> =
             summaries.iter().map(|s| (path_key(&s.path), s)).collect();
         let mut guard = self.lock()?;
+        let saved = guard.clone();
         let mut updated = false;
         for repo in &mut guard.state.repos {
             if let Some(summary) = by_key.get(&path_key(&repo.path)) {
@@ -737,7 +753,7 @@ impl LibraryStore {
             }
         }
         if updated {
-            save_atomic(&self.file, &guard.state)?;
+            self.save(&mut guard, saved)?;
         }
         Ok(summaries)
     }
@@ -754,6 +770,7 @@ impl LibraryStore {
     ) -> Result<(), Error> {
         let key = path_key(&display_path(Path::new(repo_path)));
         let mut guard = self.lock()?;
+        let saved = guard.clone();
         let Some(repo) = guard
             .state
             .repos
@@ -769,7 +786,7 @@ impl LibraryStore {
         summary.locks_held = locks_held;
         summary.locks_checked_at = checked_at;
         repo.cached = Some(summary);
-        save_atomic(&self.file, &guard.state)?;
+        self.save(&mut guard, saved)?;
         Ok(())
     }
 
@@ -777,6 +794,13 @@ impl LibraryStore {
         self.inner
             .lock()
             .map_err(|_| Error::Read("library lock poisoned".into()))
+    }
+
+    /// Writes the Library; when that fails, puts back `saved` (state and undo
+    /// stacks as the lock found them), so memory never holds a change the file
+    /// doesn't and a later save can't persist what the user was told failed.
+    fn save(&self, guard: &mut StoreInner, saved: StoreInner) -> Result<(), Error> {
+        save_atomic(&self.file, &guard.state).inspect_err(|_| *guard = saved)
     }
 }
 

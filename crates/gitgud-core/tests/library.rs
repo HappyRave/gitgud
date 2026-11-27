@@ -29,6 +29,36 @@ fn folder_id(store: &LibraryStore, name: &str) -> String {
 }
 
 #[test]
+fn a_change_that_cant_be_saved_is_not_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("library.json");
+    let store = LibraryStore::load(file.clone()).unwrap();
+    let repos = [TestRepo::init(), TestRepo::init()];
+    // A folder where the file goes: every save fails.
+    std::fs::create_dir(&file).unwrap();
+    let entry = |r: &TestRepo| AddRepoEntry {
+        path: r.path().to_string_lossy().into_owned(),
+        folder_path: None,
+        name: None,
+    };
+    assert!(store.add_repos(&[entry(&repos[0])]).is_err());
+    assert!(
+        store.existing_paths().unwrap().is_empty(),
+        "not in memory either"
+    );
+    assert!(store.snapshot().unwrap().undo_action.is_none());
+
+    std::fs::remove_dir(&file).unwrap();
+    store.add_repos(&[entry(&repos[1])]).unwrap();
+    let reloaded = LibraryStore::load(file).unwrap();
+    assert_eq!(
+        reloaded.existing_paths().unwrap().len(),
+        1,
+        "only the saved one"
+    );
+}
+
+#[test]
 fn a_library_file_left_broken_by_a_crash_loads_its_backup() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("library.json");
