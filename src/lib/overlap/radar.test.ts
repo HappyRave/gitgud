@@ -9,6 +9,7 @@ function file(path: string, over: Partial<OverlapFile> = {}): OverlapFile {
     path,
     risk: "wontMerge",
     on: "origin/PartyGame",
+    trunk: false,
     authors: ["JG"],
     commits: 1,
     newest: NOW - 40 * 60,
@@ -55,12 +56,26 @@ describe("words", () => {
     expect(headline({ ...lobby, newest: NOW - 20 }, NOW)).toContain("just now");
     expect(advice(lobby)).toMatch(/^JG changed it and you're editing it/);
     expect(advice({ ...lobby, dirty: false })).toContain("a commit you haven't pushed");
+    const onMain = { ...lobby, on: "origin/main", trunk: true };
+    expect(advice(onMain)).toBe(
+      "JG changed it on origin/main and you're editing it. Git can't merge it line by line: merge origin/main in now, while your part is small.",
+    );
+    expect(advice({ ...onMain, dirty: false })).toContain("so does a commit of yours");
   });
 
   it("counts for the strip, won't-merge first", () => {
     expect(stripLabel(radar)).toEqual({ text: "1 file won't merge with origin/PartyGame", risk: "wontMerge" });
     expect(stripLabel({ ...radar, files: [code, other] })).toEqual({
       text: "2 files also changed on origin/PartyGame",
+      risk: "mayConflict",
+    });
+    const main = file("Assets/Main.cs", { on: "origin/main", trunk: true, risk: "mayConflict" });
+    expect(stripLabel({ against: ["origin/PartyGame", "origin/main"], files: [lobby, main] })).toEqual({
+      text: "1 file won't merge with origin/PartyGame · 1 file also changed on origin/main",
+      risk: "wontMerge",
+    });
+    expect(stripLabel({ against: ["origin/Adventure", "origin/main"], files: [main] })).toEqual({
+      text: "1 file also changed on origin/main",
       risk: "mayConflict",
     });
     expect(stripLabel({ ...radar, files: [] })).toBeNull();

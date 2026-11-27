@@ -2268,6 +2268,7 @@
               {pullAfterCommit}
               onpull={() => startPull("auto", false)}
               oncommitpull={commitThenPull}
+              onmerge={(b) => (mergeAsk = { rev: b, label: b })}
               onlaunchfail={(message) => (error = message)}
               bind:selected={selectedFile}
               onstage={(paths) => write((id) => stage(id, paths), undefined, `Staging ${files(paths)}…`)}
@@ -2295,6 +2296,10 @@
             startPull("auto", false);
           }}
           oncommitpull={commitThenPull}
+          onmerge={(b) => {
+            headsUp = [];
+            mergeAsk = { rev: b, label: b };
+          }}
           onsee={seeTheirChange}
           ondismiss={() => (headsUp = [])}
         />

@@ -3236,6 +3236,7 @@ describe("overlap radar (R11-B)", () => {
     path: "a.txt",
     risk: "wontMerge",
     on: "origin/main",
+    trunk: false,
     authors: ["JG"],
     commits: 1,
     newest: Math.floor(Date.now() / 1000) - 40 * 60,
@@ -3243,6 +3244,27 @@ describe("overlap radar (R11-B)", () => {
     dirty: true,
   };
   const radar = (files = [SCENE]) => ({ against: ["origin/main"], files });
+
+  it("names the main branch for its files and offers a merge, not a pull, for them", async () => {
+    const calls = app({
+      launch_path: () => "C:/work/repo",
+      repo_status: () => ({ ...STATUS, entries: [{ path: "a.txt", kind: "tracked", index: "modified", worktree: null }] }),
+      overlap: () => ({ against: ["origin/Adventure", "origin/main"], files: [{ ...SCENE, trunk: true }] }),
+      predict_merge: () => [],
+    });
+    render(Page);
+    const banner = await screen.findByRole("status", { name: "Changed on origin/main" }, RADAR_WAIT);
+    expect(banner).toHaveTextContent("1 file changed on origin/main this week.");
+    expect(screen.queryByText(/changed on origin\/Adventure/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Pull now" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Commit, then pull" })).not.toBeInTheDocument();
+
+    const toast = await screen.findByRole("alert", { name: "Overlap heads-up" });
+    expect(toast).toHaveTextContent("merge origin/main in now");
+    await fireEvent.click(within(banner).getByRole("button", { name: "Merge origin/main…" }));
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    await vi.waitFor(() => expect(calls.find((c) => c.cmd === "predict_merge")?.args).toMatchObject({ branch: "origin/main" }));
+  }, 15_000);
   const RADAR_WAIT = { timeout: 4000 };
 
   it("gives one heads-up per origin commit, marks the row, and commits then pulls", async () => {

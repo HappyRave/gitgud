@@ -61,21 +61,28 @@ export function headline(f: OverlapFile, now = Date.now() / 1000): string {
 /** Why it matters and what to do, for the toast and the notification. */
 export function advice(f: OverlapFile): string {
   const by = f.authors.join(", ");
+  if (f.trunk) {
+    return `${by} changed it on ${f.on} and ${f.dirty ? "you're editing it" : "so does a commit of yours"}. Git can't merge it line by line: merge ${f.on} in now, while your part is small.`;
+  }
   return f.dirty
     ? `${by} changed it and you're editing it. Git can't merge it line by line: commit and pull now, while your part is small.`
     : `${by} changed it and so does a commit you haven't pushed. Git can't merge it line by line: pull now, before more piles on.`;
 }
 
-/** The strip's count, worst risk first. */
+/** The strip's count per remote branch (upstream first), worst risk first in each. */
 export function stripLabel(overlap: Overlap | null): { text: string; risk: Risk } | null {
   const files = overlap?.files ?? [];
   if (!files.length) {
     return null;
   }
-  const wont = files.filter((f) => f.risk === "wontMerge").length;
-  const n = files.length;
   const many = (k: number) => (k === 1 ? "file" : "files");
-  return wont
-    ? { text: `${wont} ${many(wont)} won't merge with ${overlap!.against[0]}`, risk: "wontMerge" }
-    : { text: `${n} ${many(n)} also changed on ${overlap!.against[0]}`, risk: files[0].risk };
+  const parts = (overlap?.against ?? []).flatMap((on) => {
+    const mine = files.filter((f) => f.on === on);
+    const wont = mine.filter((f) => f.risk === "wontMerge").length;
+    if (!mine.length) {
+      return [];
+    }
+    return wont ? [`${wont} ${many(wont)} won't merge with ${on}`] : [`${mine.length} ${many(mine.length)} also changed on ${on}`];
+  });
+  return { text: parts.join(" · "), risk: files[0].risk };
 }

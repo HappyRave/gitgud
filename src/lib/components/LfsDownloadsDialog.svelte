@@ -10,7 +10,20 @@
     type Progress,
   } from "$lib/api";
   import { formatBytes } from "$lib/appStats.svelte";
-  import { applyEffect, sameState, shares, withScene, withoutKept, withoutScene } from "$lib/lfs/partial";
+  import { SvelteSet } from "svelte/reactivity";
+  import {
+    applyEffect,
+    byFolder,
+    childrenOf,
+    sameState,
+    segments,
+    under,
+    withScene,
+    withoutKept,
+    withoutScene,
+    type Segment,
+  } from "$lib/lfs/partial";
+  import type { SkippedFile } from "$lib/api";
   import Dialog from "./Dialog.svelte";
 
   let {
@@ -34,7 +47,13 @@
   let seq = 0;
 
   const effect = $derived(plan ? applyEffect(plan) : null);
-  const bar = $derived(plan ? shares(plan) : [0, 0, 0, 0]);
+  const bar = $derived(plan ? segments(plan, formatBytes) : []);
+  /** The bar segment under the pointer, for its hover box. */
+  let hovered = $state<{ seg: Segment; at: number } | null>(null);
+  const folderFiles = $derived(plan ? byFolder(plan.skippedFiles) : new Map<string, SkippedFile[]>());
+  /** Expanded rows of the not-used list, by path. */
+  const open = new SvelteSet<string>();
+  const toggle = (path: string) => (open.has(path) ? open.delete(path) : open.add(path));
   const changed = $derived(!!plan && !!draft && (!plan.partial || !sameState(plan.state, draft)));
   const sceneChoices = $derived(
     plan && draft ? plan.allScenes.filter((s) => !draft!.scenes.includes(s) && !plan!.buildScenes.includes(s)) : [],
@@ -108,6 +127,34 @@
   }
 </script>
 
+{#snippet tree(files: SkippedFile[], base: string, depth: number)}
+  {#each childrenOf(files, base) as n (n.path)}
+    <div class="li" style:padding-left="{10 + depth * 14}px">
+      {#if n.folder}
+        <button
+          type="button"
+          class="caret"
+          aria-label="{open.has(n.path) ? 'Collapse' : 'Expand'} {n.path}"
+          aria-expanded={open.has(n.path)}
+          onclick={() => toggle(n.path)}
+        >
+          {open.has(n.path) ? "▾" : "▸"}
+        </button>
+      {:else}
+        <span class="cloud" title={n.onDiskBytes ? "On disk now" : "Not downloaded"}>{n.onDiskBytes ? "" : "☁"}</span>
+      {/if}
+      <span class="nm" class:mono={!n.folder} title={n.path}>{n.name}{n.folder ? "/" : ""}</span>
+      <span class="sz">{formatBytes(n.bytes)}{n.folder ? ` · ${n.files.toLocaleString()} files` : ""}</span>
+      {#if plan?.partial}
+        <button type="button" class="sm" disabled={!!working} aria-label="Download {n.path}" onclick={() => download(n.path)}>Download</button>
+      {/if}
+    </div>
+    {#if n.folder && open.has(n.path)}
+      {@render tree(under(files, n.path), n.path, depth + 1)}
+    {/if}
+  {/each}
+{/snippet}
+
 <Dialog title="LFS downloads · {repoName}" width={860} oncancel={() => !working && oncancel()}>
   {#if !plan}
     <p class="muted">{error ?? "Reading the scenes and what they use…"}</p>
@@ -115,17 +162,42 @@
     <section class="sum" aria-label="Summary">
       <div class="big">
         <b>{formatBytes(plan.used.bytes + plan.always.bytes + plan.kept.bytes)}</b>
-        <span class="muted">of {formatBytes(plan.total.bytes)} will be on disk · {formatBytes(plan.skipped.bytes)} not used by these scenes</span>
+        <span class="muted">
+          of {formatBytes(plan.total.bytes)} on disk{changed ? " after Apply" : ""} · {formatBytes(plan.skipped.bytes)} not used by these scenes
+        </span>
         {#if planning}<span class="muted">· updating…</span>{/if}
       </div>
-      <div class="bar" aria-hidden="true">
-        <i class="used" style:width="{bar[0]}%"></i><i class="always" style:width="{bar[1]}%"></i><i class="kept" style:width="{bar[2]}%"></i>
+      <div class="barwrap">
+        <div class="bar">
+          {#each bar as seg, i (seg.kind)}
+            {#if seg.pct > 0}
+              {@const start = bar.slice(0, i).reduce((n, s) => n + s.pct, 0)}
+              <i
+                class={seg.kind}
+                style:width="{seg.pct}%"
+                role="img"
+                aria-label={seg.label}
+                onmouseenter={() => (hovered = { seg, at: Math.min(85, Math.max(15, start + seg.pct / 2)) })}
+                onmouseleave={() => (hovered = null)}
+              ></i>
+            {/if}
+          {/each}
+        </div>
+        {#if hovered}
+          <div class="tip" role="tooltip" style:left="{hovered.at}%">
+            <b><i class={hovered.seg.kind}></i>{hovered.seg.label}</b>
+            <span class="mono">{formatBytes(hovered.seg.bytes)} · {hovered.seg.files.toLocaleString()} files</span>
+            <p>{hovered.seg.about}</p>
+          </div>
+        {/if}
       </div>
       <div class="legend">
         <span><i class="used"></i>used by the scenes · {formatBytes(plan.used.bytes)}</span>
         <span><i class="always"></i>always kept · {formatBytes(plan.always.bytes)}</span>
         {#if plan.kept.files}<span><i class="kept"></i>kept by you · {formatBytes(plan.kept.bytes)}</span>{/if}
-        <span><i></i>not downloaded · {formatBytes(plan.skipped.bytes)}</span>
+        <span>
+          <i class="skipped"></i>not used · {formatBytes(plan.skipped.bytes)}{#if plan.skippedOnDisk.bytes}, {formatBytes(plan.skippedOnDisk.bytes)} of it on disk now: Apply removes it{:else}, not downloaded{/if}
+        </span>
         <span class="muted">now on disk: {formatBytes(plan.onDisk.bytes)}</span>
       </div>
     </section>
@@ -173,17 +245,23 @@
       </div>
 
       <div class="col">
-        <h3>Not downloaded, by folder · {plan.skipped.files.toLocaleString()} files</h3>
+        <h3>Not used by these scenes, by folder · {plan.skipped.files.toLocaleString()} files</h3>
         <div class="folders">
           {#each plan.skippedFolders as f (f.folder)}
+            {@const files = folderFiles.get(f.folder) ?? []}
             <div class="li">
-              <span class="cloud" aria-hidden="true">☁</span>
+              <button type="button" class="caret" aria-label="{open.has(f.folder) ? 'Collapse' : 'Expand'} {f.folder}" aria-expanded={open.has(f.folder)} onclick={() => toggle(f.folder)}>
+                {open.has(f.folder) ? "▾" : "▸"}
+              </button>
               <span class="nm" title={f.folder}>{f.folder}</span>
-              <span class="sz">{formatBytes(f.skipped.bytes)} of {formatBytes(f.total.bytes)}</span>
+              <span class="sz" title="Not used, of every LFS file in the folder">{formatBytes(f.skipped.bytes)} of {formatBytes(f.total.bytes)}</span>
               {#if plan.partial}
                 <button type="button" class="sm" disabled={!!working} onclick={() => download(f.folder)}>Download</button>
               {/if}
             </div>
+            {#if open.has(f.folder)}
+              {@render tree(files, f.folder, 1)}
+            {/if}
           {:else}
             <p class="muted">Everything is used.</p>
           {/each}
@@ -246,6 +324,64 @@
   }
   .kept {
     background: var(--l4);
+  }
+  .bar .skipped {
+    background: transparent;
+  }
+  .bar i:hover {
+    filter: brightness(1.25);
+  }
+  .bar .skipped:hover {
+    background: var(--line);
+  }
+  .barwrap {
+    position: relative;
+  }
+  .tip {
+    position: absolute;
+    top: 14px;
+    z-index: 5;
+    transform: translateX(-50%);
+    width: 280px;
+    display: grid;
+    gap: 2px;
+    padding: 7px 9px;
+    border-radius: 6px;
+    border: 1px solid var(--line);
+    background: var(--panel);
+    box-shadow: 0 6px 20px #0006;
+    font-size: 11.5px;
+    pointer-events: none;
+  }
+  .tip b i {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+    margin-right: 5px;
+  }
+  .tip .mono {
+    color: var(--muted);
+  }
+  .tip p {
+    margin: 2px 0 0;
+    color: var(--muted);
+  }
+  .caret {
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .caret:hover {
+    color: var(--fg);
+  }
+  .tip .skipped {
+    background: var(--hover);
+    box-shadow: inset 0 0 0 1px var(--line);
   }
   .legend {
     display: flex;

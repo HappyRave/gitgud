@@ -124,6 +124,18 @@ fn downloads_what_the_build_scenes_use_and_what_unity_always_loads() {
     // Old.unity, Old.png, Unused.png.
     assert_eq!(plan.skipped.files, 3);
     assert_eq!(plan.on_disk.files, 0);
+    assert_eq!(plan.skipped_on_disk.files, 0);
+    let mut skipped: Vec<&str> = plan.skipped_files.iter().map(|f| f.path.as_str()).collect();
+    skipped.sort_unstable();
+    assert_eq!(
+        skipped,
+        [
+            "Assets/Old.png",
+            "Assets/Pack/Unused.png",
+            "Assets/Scenes/Old.unity"
+        ]
+    );
+    assert!(plan.skipped_files.iter().all(|f| !f.on_disk));
     assert_eq!(
         plan.fetched_to_read, 2,
         "Main.unity and Ship.prefab are read to follow them"
@@ -154,6 +166,20 @@ fn downloads_what_the_build_scenes_use_and_what_unity_always_loads() {
     assert!(is_pointer(&clone, "Assets/Pack/Unused.png"));
     assert!(is_pointer(&clone, "Assets/Old.png"));
     assert_eq!(clone.git(&["status", "--porcelain"]).trim(), "");
+}
+
+#[test]
+fn a_whole_repo_plans_to_free_what_the_scenes_dont_use() {
+    let (_origin, _bare, _clone, session, id) = partial_clone();
+    session.lfs_partial_apply(id, None, |_| {}).unwrap();
+
+    let plan = session
+        .lfs_partial_plan(id, Some(PartialState::build()))
+        .unwrap();
+    assert_eq!(plan.on_disk.files, 9);
+    assert_eq!(plan.skipped_on_disk, plan.skipped);
+    assert_eq!(plan.skipped_files.len(), 3);
+    assert!(plan.skipped_files.iter().all(|f| f.on_disk && f.bytes > 0));
 }
 
 #[test]

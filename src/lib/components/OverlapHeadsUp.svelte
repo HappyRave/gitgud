@@ -7,6 +7,7 @@
     busy = false,
     onpull,
     oncommitpull,
+    onmerge,
     onsee,
     ondismiss,
   }: {
@@ -15,6 +16,8 @@
     busy?: boolean;
     onpull: () => void;
     oncommitpull: () => void;
+    /** For a file changed on the main branch, which a pull won't bring. */
+    onmerge: (branch: string) => void;
     onsee: (file: OverlapFile) => void;
     ondismiss: () => void;
   } = $props();
@@ -34,7 +37,9 @@
     <p class="more">and {files.length - 1} more {files.length === 2 ? "file" : "files"} that won't merge</p>
   {/if}
   <div class="acts">
-    {#if file.dirty}
+    {#if file.trunk}
+      <button class="pri" disabled={busy} onclick={() => onmerge(file.on)}>Merge {file.on}…</button>
+    {:else if file.dirty}
       <button class="pri" disabled={busy} onclick={oncommitpull}>Commit, then pull</button>
     {:else}
       <button class="pri" disabled={busy} onclick={onpull}>Pull now</button>

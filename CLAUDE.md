@@ -334,12 +334,17 @@ replaying at most 255 rows (spike 4.3).
   refused while Unity is open), so Sourcetree and the terminal follow the same choice. Downloads are
   added to `kept`, since git-lfs would turn a downloaded file outside the include list back into a
   pointer when it next changes. Not in the op log: every file it touches can be downloaded again.
+  The plan also lists every skipped file (`skipped_files`, with `on_disk`) and `skipped_on_disk`, so the
+  dialog says what Apply removes, explains each bar segment on hover and expands folders down to files
+  (`$lib/lfs/partial.ts`: `segments`, `byFolder`, `childrenOf`).
   `clone_repo(.., skip_lfs)` clones pointers first (`GIT_LFS_SKIP_SMUDGE`), then applies the build's
   scenes. Real projects: `GITGUD_LFS_CORPUS=<repo>` runs the ignored `plans_a_real_project`.
 - **Overlap radar** (R11-B; `overlap.rs`, `$lib/overlap/radar.ts`, `OverlapMark` / `OverlapHeadsUp`):
   `overlap` intersects your work (working copy + `diff <merge-base> HEAD`) with `log <merge-base>..<target>`
   for the upstream, then the main branch (`origin/HEAD`, else main / master) when it differs, limited to
-  its last 7 days; `.meta` folds into its asset. Risk: won't merge (`check-attr` filter=lfs or merge
+  its last 7 days, unless the repo's local `gitgud.overlapMain=false` (Settings › Overlap radar, per
+  repo); `.meta` folds into its asset. Main-branch files carry `trunk`: the banner, strip and heads-up
+  name them by their own branch and offer "Merge origin/main…" (the merge dialog), never a pull. Risk: won't merge (`check-attr` filter=lfs or merge
   unset / binary, binary bytes, deleted on one side), else `git merge-file` over base / theirs / the work
   tree's file in git form, written to `.git/gitgud/overlap/`. Plain git over the remote-tracking refs, so
   it is only as fresh as the last fetch: `RepoView` reads it 1.5 s after each status read, and the active

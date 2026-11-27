@@ -164,6 +164,53 @@ fn a_feature_branch_also_hears_about_recent_main_changes() {
         "main's changes older than a week aren't news"
     );
     assert_eq!(got.files[0].on, "origin/main");
+    assert!(got.files[0].trunk);
+}
+
+#[test]
+fn the_main_check_can_be_turned_off_per_repo() {
+    let (_dir, jg, max) = team();
+    max.git(&["checkout", "-q", "-b", "Feature"]);
+    max.git(&["push", "-q", "-u", "origin", "Feature"]);
+    max.write("Assets/Lobby.unity", "scene by Max\n");
+    jg.write("Assets/Lobby.unity", "scene by JG\n");
+    commit_now(jg.path(), "JG - lobby today");
+    jg.git(&["push", "-q", "origin", "main"]);
+    max.git(&["fetch", "-q", "origin"]);
+
+    let session = Session::default();
+    let id = session.open(max.path()).unwrap().id;
+    assert!(session.overlap_main_check(id).unwrap(), "on by default");
+
+    session.set_overlap_main_check(id, false).unwrap();
+    assert!(!session.overlap_main_check(id).unwrap());
+    assert_eq!(
+        max.git(&["config", "--local", "gitgud.overlapMain"]).trim(),
+        "false"
+    );
+    let got = session.overlap(id).unwrap().unwrap();
+    assert_eq!(got.against, ["origin/Feature"]);
+    assert!(got.files.is_empty());
+
+    session.set_overlap_main_check(id, true).unwrap();
+    session.set_overlap_main_check(id, true).unwrap();
+    assert!(session.overlap_main_check(id).unwrap());
+    assert_eq!(session.overlap(id).unwrap().unwrap().files.len(), 1);
+}
+
+#[test]
+fn upstream_changes_are_not_trunk() {
+    let (_dir, jg, max) = team();
+    jg.write("Assets/Lobby.unity", "scene by JG\n");
+    commit_now(jg.path(), "JG - lobby");
+    jg.git(&["push", "-q", "origin", "main"]);
+    max.write("Assets/Lobby.unity", "scene by Max\n");
+    max.git(&["fetch", "-q", "origin"]);
+
+    let session = Session::default();
+    let id = session.open(max.path()).unwrap().id;
+    let got = session.overlap(id).unwrap().unwrap();
+    assert!(!got.files[0].trunk);
 }
 
 /// Times the radar on a real repo as last fetched:

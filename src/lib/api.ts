@@ -944,6 +944,13 @@ export interface Share {
   files: number;
 }
 
+export interface SkippedFile {
+  path: string;
+  bytes: number;
+  /** Downloaded now: applying turns it back into a pointer. */
+  onDisk: boolean;
+}
+
 export interface LfsPlan {
   /** A partial state is saved for the repo. */
   partial: boolean;
@@ -956,7 +963,11 @@ export interface LfsPlan {
   always: Share;
   kept: Share;
   skipped: Share;
+  /** The part of `skipped` downloaded now: what applying frees. */
+  skippedOnDisk: Share;
   skippedFolders: { folder: string; skipped: Share; total: Share }[];
+  /** Every skipped file, to browse inside `skippedFolders`. */
+  skippedFiles: SkippedFile[];
   onDisk: Share;
   missing: string[];
   fetchedToRead: number;
@@ -1020,6 +1031,8 @@ export interface OverlapFile {
   risk: Risk;
   /** The remote branch it changed on, e.g. `origin/PartyGame`. */
   on: string;
+  /** `on` is the main branch, not the upstream: a pull won't bring it, a merge will. */
+  trunk: boolean;
   /** Newest first. */
   authors: string[];
   commits: number;
@@ -1426,6 +1439,8 @@ export interface Commands {
   compare_unity_diff: { args: { id: number; from: ComparePoint; to: ComparePoint; path: string }; result: UnityYamlDiff };
   take_version: { args: { id: number; rev: string; path: string }; result: Opened };
   overlap: { args: { id: number }; result: Overlap | null };
+  overlap_main_check: { args: { id: number }; result: boolean };
+  set_overlap_main_check: { args: { id: number; on: boolean }; result: null };
   notify: { args: { title: string; body: string }; result: null };
   lfs_fetch_object: { args: { id: number; oid: string; size: number; path?: string | null }; result: boolean };
   ai_providers: { args: Record<string, never>; result: AiProviderStatus };
@@ -1822,6 +1837,9 @@ export const compareUnityDiff = (id: number, from: ComparePoint, to: ComparePoin
 export const takeVersion = (id: number, rev: string, path: string) => call("take_version", { id, rev, path });
 /** Files changed both in your work and on the upstream as last fetched; null: nothing to compare with. */
 export const overlap = (id: number) => call("overlap", { id });
+/** Whether the overlap radar also checks the main branch in this repo (default on). */
+export const overlapMainCheck = (id: number) => call("overlap_main_check", { id });
+export const setOverlapMainCheck = (id: number, on: boolean) => call("set_overlap_main_check", { id, on });
 /** A Windows notification. */
 export const notify = (title: string, body: string) => call("notify", { title, body });
 export const lfsFetchObject = (id: number, oid: string, size: number, path: string | null = null) =>

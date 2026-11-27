@@ -1455,6 +1455,24 @@ impl Session {
         overlap::overlap(&*self.git()?, &open.repo)
     }
 
+    /// Whether the overlap radar also checks the main branch in repo `id` (default on).
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`], or git failures.
+    pub fn overlap_main_check(&self, id: u32) -> Result<bool, Error> {
+        let open = self.get(id)?;
+        overlap::main_check(&*self.git()?, &open.repo)
+    }
+
+    /// Turns the overlap radar's main-branch check on or off for repo `id`, in its local config.
+    ///
+    /// # Errors
+    /// [`Error::UnknownRepo`], or git failures.
+    pub fn set_overlap_main_check(&self, id: u32, on: bool) -> Result<(), Error> {
+        let open = self.get(id)?;
+        overlap::set_main_check(&*self.git()?, &open.repo, on)
+    }
+
     /// Lists tags in repo `id`, newest first.
     ///
     /// # Errors

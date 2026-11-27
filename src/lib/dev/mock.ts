@@ -1119,6 +1119,8 @@ export function installMock(scenario: string) {
       throw "not in the mock";
     },
     take_version: () => opened(),
+    overlap_main_check: () => true,
+    set_overlap_main_check: () => null,
     overlap: () => ({
       against: ["origin/main"],
       files: [
@@ -1126,6 +1128,7 @@ export function installMock(scenario: string) {
           path: "Assets/Art/Trees/Maps/TreeBillBoards_albedo.png",
           risk: "wontMerge",
           on: "origin/main",
+          trunk: false,
           authors: ["JG"],
           commits: 2,
           newest: now - 40 * 60,
@@ -1136,6 +1139,7 @@ export function installMock(scenario: string) {
           path: "Assets/Scripts/Boat/Engine.cs",
           risk: "mayConflict",
           on: "origin/main",
+          trunk: false,
           authors: ["Jean Paul", "MM"],
           commits: 3,
           newest: now - 2 * 3600,
@@ -1207,11 +1211,19 @@ function mockLfsPlan(state: PartialState, partial: boolean): LfsPlan {
     always: share(0.68, 275),
     kept: share(keptGib, kept.length * 120),
     skipped: share(33.64 - wanted, 5825),
+    skippedOnDisk: mockLfsOnDisk === null ? share(0, 0) : share(33.64 - wanted, 5825),
     skippedFolders: MOCK_LFS_FOLDERS.filter(([f]) => !state.kept.includes(f)).map(([folder, s, t]) => ({
       folder,
       skipped: share(s, 400),
       total: share(t, 500),
     })),
+    skippedFiles: MOCK_LFS_FOLDERS.filter(([f]) => !state.kept.includes(f)).flatMap(([folder, s]) =>
+      ["Textures/Albedo.png", "Textures/Normal.png", "Models/Mesh.fbx", "Audio/Loop.wav"].map((name, i) => ({
+        path: `${folder}/${name}`,
+        bytes: Math.round((s * GIB) / (i + 2)),
+        onDisk: mockLfsOnDisk !== null,
+      })),
+    ),
     onDisk: { bytes: mockLfsOnDisk ?? Math.round(wanted * GIB), files: 0 },
     missing: [],
     fetchedToRead: 0,

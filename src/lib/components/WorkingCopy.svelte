@@ -35,6 +35,7 @@
     pullAfterCommit = false,
     onpull,
     oncommitpull,
+    onmerge,
     onlaunchfail,
     selected = $bindable(null),
     onstage,
@@ -69,6 +70,8 @@
     onpull?: () => void;
     /** Arms a pull after the next commit and focuses the message. */
     oncommitpull?: () => void;
+    /** Opens the merge dialog for the main branch, e.g. `origin/main`. */
+    onmerge?: (branch: string) => void;
     /** A file menu's Explorer / terminal / editor action failed. */
     onlaunchfail?: (message: string) => void;
     /** The file whose diff is shown. */
@@ -157,8 +160,11 @@
   }
 
   /** Overlaps worth pulling for: the ones git may not merge by itself. */
-  const risky = $derived((overlap?.files ?? []).filter((f) => f.risk !== "merges"));
+  const risky = $derived((overlap?.files ?? []).filter((f) => f.risk !== "merges" && !f.trunk));
   const riskyDirty = $derived(risky.some((f) => f.dirty));
+  /** The same on the main branch: a pull won't bring these, a merge will. */
+  const riskyTrunk = $derived((overlap?.files ?? []).filter((f) => f.risk !== "merges" && f.trunk));
+  const plural = (n: number) => (n === 1 ? "file" : "files");
 
   function onKeydown(event: KeyboardEvent) {
     // Only with nothing focused or focus in this pane: the graph and sidebar have their own arrows.
@@ -305,9 +311,9 @@
       <span>
         {#if pullAfterCommit}
           <b>Pulls after this commit</b> to merge {risky.length === 1 ? risky[0].path.slice(risky[0].path.lastIndexOf("/") + 1) : `${risky.length} files`}
-          with {overlap.against[0]}.
+          with {risky[0].on}.
         {:else}
-          <b>{risky.length} {risky.length === 1 ? "file" : "files"} changed on {overlap.against[0]} since you started.</b>
+          <b>{risky.length} {plural(risky.length)} changed on {risky[0].on} since you started.</b>
           Pull first, while the merge is small.
         {/if}
       </span>
@@ -318,6 +324,16 @@
           <button class="sm pri" disabled={busy} onclick={onpull}>Pull now</button>
         {/if}
       {/if}
+    </div>
+  {/if}
+  {#if riskyTrunk.length && onmerge}
+    {@const trunk = riskyTrunk[0].on}
+    <div class="overlap" role="status" aria-label="Changed on {trunk}">
+      <span>
+        <b>{riskyTrunk.length} {plural(riskyTrunk.length)} changed on {trunk} this week.</b>
+        Merge it in while the merge is small.
+      </span>
+      <button class="sm pri" disabled={busy} onclick={() => onmerge(trunk)}>Merge {trunk}…</button>
     </div>
   {/if}
   <CommitBox bind:this={commitBox} {repoId} staged={stagedCount} {branch} {busy} {oncommit} {ondraft} />

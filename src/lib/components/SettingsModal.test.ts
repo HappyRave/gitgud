@@ -84,6 +84,33 @@ describe("SettingsModal", () => {
     localStorage.removeItem("gitgud.overlap.notify");
   });
 
+  it("turns the radar's main-branch check off and on for the active repo, on by default", async () => {
+    const calls = mockCommands({
+      config_get_identity: () => ({ userName: "Max", userEmail: "max@example.com" }),
+      tool_diagnostics: () => ({ gitPath: "C:/Git/git.exe", gitVersion: "2.56.1", lfsVersion: null }),
+      has_commit_graph: () => true,
+      cache_stats: () => stats(),
+      overlap_main_check: () => true,
+      set_overlap_main_check: () => null,
+    });
+    render(SettingsModal, { activeRepoId: 7, activeRepoName: "escape1", onclose: vi.fn() });
+    const box = (await screen.findByLabelText("Also check the main branch's last week in escape1")) as HTMLInputElement;
+    expect(box.checked).toBe(true);
+    await fireEvent.click(box);
+    await vi.waitFor(() => expect(calls.find((c) => c.cmd === "set_overlap_main_check")?.args).toEqual({ id: 7, on: false }));
+    expect(box.checked).toBe(false);
+  });
+
+  it("hides the main-branch check without a repo", async () => {
+    mockCommands({
+      config_get_identity: () => ({ userName: "Max", userEmail: "max@example.com" }),
+      tool_diagnostics: () => ({ gitPath: "C:/Git/git.exe", gitVersion: "2.56.1", lfsVersion: null }),
+    });
+    render(SettingsModal, { onclose: () => {} });
+    await screen.findByLabelText(/Windows notification when a file you're changing/);
+    expect(screen.queryByLabelText(/Also check the main branch/)).not.toBeInTheDocument();
+  });
+
   it("picks the terminal and editor, says which aren't installed, and takes a custom program", async () => {
     mockCommands({
       config_get_identity: () => ({ userName: "Max", userEmail: "max@example.com" }),
@@ -121,6 +148,7 @@ describe("SettingsModal", () => {
       config_set_identity: () => null,
       tool_diagnostics: () => ({ gitPath: "C:/Git/git.exe", gitVersion: "2.56.1", lfsVersion: "git-lfs/3.6.0" }),
       has_commit_graph: () => false,
+      overlap_main_check: () => true,
       write_commit_graph: () => {
         graph = 4096;
         return null;
@@ -171,6 +199,7 @@ describe("SettingsModal", () => {
       config_get_identity: () => ({ userName: "Max", userEmail: "max@example.com" }),
       tool_diagnostics: () => ({ gitPath: "C:/Git/git.exe", gitVersion: "2.56.1", lfsVersion: null }),
       has_commit_graph: () => true,
+      overlap_main_check: () => true,
       cache_stats: () => stats({ metaFiles: 20654, commitScans: 3, modelInfos: 12, guidIndexBytes: 2 * 1024 * 1024, commitGraphBytes: 512 }),
       clear_unity_caches: () => stats(),
     });
@@ -213,6 +242,7 @@ describe("SettingsModal", () => {
       config_get_identity: () => ({ userName: "Max", userEmail: "max@example.com" }),
       tool_diagnostics: () => ({ gitPath: "C:/Git/git.exe", gitVersion: "2.56.1", lfsVersion: null }),
       has_commit_graph: () => true,
+      overlap_main_check: () => true,
       cache_stats: () => stats({ previewModels: 2, previewTextures: 112, previewBytes: 48 * 1024 * 1024 }),
       clear_preview_cache: () => stats(),
     });
@@ -233,6 +263,7 @@ describe("SettingsModal", () => {
       config_get_identity: () => ({ userName: "Max", userEmail: "max@example.com" }),
       tool_diagnostics: () => ({ gitPath: "C:/Git/git.exe", gitVersion: "2.56.1", lfsVersion: "git-lfs/3.6.0" }),
       has_commit_graph: () => true,
+      overlap_main_check: () => true,
       ai_providers: () => ({ cliAvailable: ["claude", "codex"], configuredEnvKey: false }),
       lfs_cache_stats: () =>
         pruned

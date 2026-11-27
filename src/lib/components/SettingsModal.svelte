@@ -15,7 +15,9 @@
     type LaunchTools,
     lfsCacheStats,
     lfsPrune,
+    overlapMainCheck,
     recentTimings,
+    setOverlapMainCheck,
     refreshIndex,
     toolDiagnostics,
     unityApplyRepoSetup,
@@ -64,6 +66,20 @@
   } = $props();
 
   let activeSection = $state("sec-identity");
+  /** The overlap radar's main-branch check in the active repo; null until read. */
+  let mainCheck = $state<boolean | null>(null);
+
+  async function setMainCheck(on: boolean) {
+    if (activeRepoId == null) {
+      return;
+    }
+    try {
+      await setOverlapMainCheck(activeRepoId, on);
+      mainCheck = on;
+    } catch (err) {
+      error = String(err);
+    }
+  }
   let scope = $state<"global" | "local">("global");
   let userName = $state("");
   let userEmail = $state("");
@@ -296,6 +312,10 @@
       .then((t) => (timings = t))
       .catch(() => (timings = []));
     if (activeRepoId != null) {
+      overlapMainCheck(activeRepoId).then(
+        (on) => (mainCheck = on),
+        (err) => (error = String(err)),
+      );
       hasCommitGraph(activeRepoId).then(
         (built) => (commitGraph = built),
         () => (commitGraph = null),
@@ -528,6 +548,13 @@
               />
               <span>Windows notification when a file you're changing won't merge with the remote, while gitgud is in the background</span>
             </label>
+            {#if activeRepoId != null && mainCheck != null}
+              <label class="chk">
+                <input type="checkbox" checked={mainCheck} onchange={(e) => setMainCheck(e.currentTarget.checked)} />
+                <span>Also check the main branch's last week in {activeRepoName ?? "this repository"}</span>
+              </label>
+              <p class="hint">Your upstream is always checked. Saved in this repository's local git config.</p>
+            {/if}
           </div>
         </section>
 

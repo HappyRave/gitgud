@@ -32,6 +32,8 @@ pub struct OverlapFile {
     pub risk: Risk,
     /// The remote branch it changed on, e.g. `origin/PartyGame`.
     pub on: String,
+    /// `on` is the main branch, not your upstream: pulling won't bring it, merging it will.
+    pub trunk: bool,
     /// Authors of those commits, newest first, each once.
     pub authors: Vec<String>,
     pub commits: u32,
@@ -65,7 +67,7 @@ struct Theirs {
 /// # Errors
 /// Git or read failures.
 pub fn overlap(git: &GitCli, repo: &Repo) -> Result<Option<Overlap>, Error> {
-    let targets = targets(git, repo);
+    let targets = targets(git, repo)?;
     if targets.is_empty() {
         return Ok(None);
     }
@@ -109,6 +111,7 @@ pub fn overlap(git: &GitCli, repo: &Repo) -> Result<Option<Overlap>, Error> {
                 path: asset,
                 risk,
                 on: target.clone(),
+                trunk: *trunk,
                 authors: Vec::new(),
                 commits: 0,
                 newest: t.newest,
@@ -138,8 +141,56 @@ pub fn overlap(git: &GitCli, repo: &Repo) -> Result<Option<Overlap>, Error> {
     }))
 }
 
-/// The upstream, then the main branch (flagged `true`) when it's another branch.
-fn targets(git: &GitCli, repo: &Repo) -> Vec<(String, bool)> {
+/// The repo-local config key that turns the main-branch check off (default on).
+const MAIN_CHECK_KEY: &str = "gitgud.overlapMain";
+
+/// Whether the radar also checks the main branch's last week in this repo.
+///
+/// # Errors
+/// Git failures, or a value git can't read as a bool.
+pub fn main_check(git: &GitCli, repo: &Repo) -> Result<bool, Error> {
+    let out = git.run(
+        repo.root(),
+        &[
+            "config",
+            "--type=bool",
+            "--default=true",
+            "--get",
+            MAIN_CHECK_KEY,
+        ],
+        None,
+    )?;
+    Ok(out.trim() != "false")
+}
+
+/// Turns the main-branch check on (removes the key) or off, in the repo's local config.
+///
+/// # Errors
+/// Git failures.
+pub fn set_main_check(git: &GitCli, repo: &Repo, on: bool) -> Result<(), Error> {
+    if !on {
+        git.run(
+            repo.root(),
+            &["config", "--local", MAIN_CHECK_KEY, "false"],
+            None,
+        )?;
+        return Ok(());
+    }
+    let args = ["config", "--local", "--unset-all", MAIN_CHECK_KEY];
+    let (code, out, err) = git.run_status(repo.root(), &args, None)?;
+    // 5: the key wasn't set.
+    if code != 0 && code != 5 {
+        return Err(crate::cli::command_error(
+            &args,
+            crate::cli::failure_message(&out, &err),
+        ));
+    }
+    Ok(())
+}
+
+/// The upstream, then the main branch (flagged `true`) when it's another branch and the
+/// repo hasn't turned that check off.
+fn targets(git: &GitCli, repo: &Repo) -> Result<Vec<(String, bool)>, Error> {
     let run = |args: &[&str]| {
         git.run(repo.root(), args, None)
             .ok()
@@ -155,6 +206,9 @@ fn targets(git: &GitCli, repo: &Repo) -> Vec<(String, bool)> {
     ]) {
         out.push((up, false));
     }
+    if !main_check(git, repo)? {
+        return Ok(out);
+    }
     let trunk = run(&["symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"]).or_else(|| {
         ["origin/main", "origin/master"]
             .into_iter()
@@ -166,7 +220,7 @@ fn targets(git: &GitCli, repo: &Repo) -> Vec<(String, bool)> {
     {
         out.push((trunk, true));
     }
-    out
+    Ok(out)
 }
 
 fn merge_base(git: &GitCli, repo: &Repo, target: &str) -> Result<Option<String>, Error> {

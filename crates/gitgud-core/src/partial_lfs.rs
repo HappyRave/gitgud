@@ -48,6 +48,16 @@ impl Share {
     }
 }
 
+/// An LFS file the plan doesn't download.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkippedFile {
+    pub path: String,
+    pub bytes: u64,
+    /// Downloaded in the work tree now (applying turns it back into a pointer).
+    pub on_disk: bool,
+}
+
 /// A folder holding LFS files the plan doesn't download.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -78,8 +88,12 @@ pub struct LfsPlan {
     /// Kept on request, beyond the above.
     pub kept: Share,
     pub skipped: Share,
+    /// The part of `skipped` downloaded in the work tree now: what applying frees.
+    pub skipped_on_disk: Share,
     /// Largest first.
     pub skipped_folders: Vec<SkippedFolder>,
+    /// Every skipped file, by path, for browsing inside [`Self::skipped_folders`].
+    pub skipped_files: Vec<SkippedFile>,
     /// Downloaded in the work tree now.
     pub on_disk: Share,
     /// Chosen scenes or kept paths that aren't in the repo.
@@ -494,7 +508,9 @@ pub fn plan(
         always: Share::default(),
         kept: Share::default(),
         skipped: Share::default(),
+        skipped_on_disk: Share::default(),
         skipped_folders: Vec::new(),
+        skipped_files: Vec::new(),
         on_disk: Share::default(),
         missing,
         fetched_to_read: walk.fetched,
@@ -517,6 +533,14 @@ pub fn plan(
             p.kept.add(f.size);
         } else {
             p.skipped.add(f.size);
+            if f.checkout {
+                p.skipped_on_disk.add(f.size);
+            }
+            p.skipped_files.push(SkippedFile {
+                path: f.name.clone(),
+                bytes: f.size,
+                on_disk: f.checkout,
+            });
             entry.0.add(f.size);
             continue;
         }

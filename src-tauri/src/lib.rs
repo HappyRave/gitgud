@@ -1868,6 +1868,26 @@ async fn overlap(session: State<'_, Session>, id: u32) -> Result<Option<Overlap>
     session.overlap(id)
 }
 
+#[tauri::command]
+async fn overlap_main_check(session: State<'_, Session>, id: u32) -> Result<bool, Error> {
+    session.overlap_main_check(id)
+}
+
+/// Also tells the repo's view to read the radar again (`.git/config` isn't watched).
+#[tauri::command]
+async fn set_overlap_main_check<R: Runtime>(
+    app: AppHandle<R>,
+    session: State<'_, Session>,
+    id: u32,
+    on: bool,
+) -> Result<(), Error> {
+    session.set_overlap_main_check(id, on)?;
+    if let Err(e) = app.emit(REPO_CHANGED, id) {
+        eprintln!("gitgud: cannot emit {REPO_CHANGED}: {e}");
+    }
+    Ok(())
+}
+
 /// A Windows notification, for the overlap radar's heads-up while gitgud is in the background.
 #[tauri::command]
 async fn notify<R: Runtime>(app: AppHandle<R>, title: String, body: String) -> Result<(), String> {
@@ -2195,6 +2215,8 @@ fn app_with_library<R: Runtime>(builder: Builder<R>, library: Option<LibraryStor
             lfs_prune,
             lfs_partial_plan,
             overlap,
+            overlap_main_check,
+            set_overlap_main_check,
             notify,
             launch_tools,
             reveal_path,
@@ -4017,6 +4039,30 @@ mod tests {
             std::fs::read_to_string(repo.path().join("a.txt")).unwrap(),
             "feature\n"
         );
+    }
+
+    #[test]
+    fn overlap_main_check_toggles_through_ipc_and_tells_the_view() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+        use tauri::Listener;
+
+        let ipc = Ipc::new();
+        let repo = history();
+        let id = open(&ipc, &repo)["id"].clone();
+        let (tx, rx) = mpsc::channel();
+        ipc.app.listen_any(REPO_CHANGED, move |event| {
+            let _ = tx.send(event.payload().to_owned());
+        });
+        let args = json!({ "id": id });
+        assert_eq!(ipc.call("overlap_main_check", args.clone()).unwrap(), true);
+        ipc.call("set_overlap_main_check", json!({ "id": id, "on": false }))
+            .unwrap();
+        assert_eq!(ipc.call("overlap_main_check", args).unwrap(), false);
+        let payload = rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("repo-changed");
+        assert_eq!(payload, id.to_string());
     }
 
     #[test]
