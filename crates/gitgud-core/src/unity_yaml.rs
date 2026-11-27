@@ -425,11 +425,7 @@ impl UnityScene {
     }
 
     fn prefab_instance_path(&self, doc: &UnityDoc) -> String {
-        let overridden_name = doc
-            .props
-            .get("override:m_Name")
-            .map(|p| p.value.as_str())
-            .filter(|s| !s.is_empty());
+        let overridden_name = doc.name_hint.as_deref();
         let parent_path = doc
             .transform_parent_ref
             .as_deref()
@@ -1077,94 +1073,55 @@ fn parse_single_doc(
     let mut transform_parent_ref: Option<String> = None;
     let mut script_guid: Option<String> = None;
 
+    // Open path segments with the indent of their lines: `key`, or `[n]` for a
+    // list item, whose lines sit one deeper than its `- `.
     let mut stack: Vec<(usize, String)> = Vec::new();
     let mut seq_counters: HashMap<String, usize> = HashMap::new();
+    // The PrefabInstance `m_Modifications` entry being read, with its `- ` indent.
+    let mut modification: Option<(usize, Modification)> = None;
 
-    // Active PrefabInstance `m_Modifications` list entry state.
-    let mut active_mod_indent: Option<usize> = None;
-    let mut mod_path: Option<String> = None;
-    let mut mod_val: Option<(String, usize)> = None;
-    let mut mod_obj_ref: Option<(String, usize)> = None;
-
-    let flush_mod = |props: &mut BTreeMap<String, UnityProp>,
-                     m_path: &mut Option<String>,
-                     m_val: &mut Option<(String, usize)>,
-                     m_ref: &mut Option<(String, usize)>| {
-        let Some(p_path) = m_path.take() else {
-            *m_val = None;
-            *m_ref = None;
-            return;
-        };
-        let obj = m_ref.take();
-        let val = m_val.take();
-        let (final_val, line_idx, key_name) = match (val, obj) {
-            (Some((v, vline)), Some((oref, oline))) if !is_zero_ref(&oref) => {
-                if v.is_empty() {
-                    (oref, oline, "objectReference")
-                } else {
-                    (format!("{v} / {oref}"), vline, "value")
-                }
-            }
-            (Some((v, vline)), _) => (v, vline, "value"),
-            (None, Some((oref, oline))) => (oref, oline, "objectReference"),
-            (None, None) => return,
-        };
-        props.insert(
-            format!("override:{p_path}"),
-            UnityProp {
-                value: final_val,
-                line_idx,
-                indent: 6,
-                key: key_name.to_owned(),
-                is_mod_override: true,
-            },
-        );
-    };
-
-    for (offset, raw) in lines.iter().enumerate().skip(1) {
-        let line_idx = start_line + offset;
-        let line = raw.as_str();
+    let mut next = 1;
+    while next < lines.len() {
+        let line_idx = start_line + next;
+        let line = lines[next].as_str();
+        next += 1;
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
         }
         let indent = line.len() - line.trim_start().len();
         if indent == 0 && trimmed.ends_with(':') && !trimmed.contains(' ') {
-            flush_mod(&mut props, &mut mod_path, &mut mod_val, &mut mod_obj_ref);
-            active_mod_indent = None;
+            if let Some((_, m)) = modification.take() {
+                m.flush(&mut props, &mut name_hint);
+            }
             root_type = trimmed.trim_end_matches(':').to_owned();
             stack.clear();
             continue;
         }
+        let is_seq_item = trimmed.starts_with("- ");
+        let body = if is_seq_item {
+            trimmed[2..].trim()
+        } else {
+            trimmed
+        };
 
-        if let Some(mod_ind) = active_mod_indent {
-            if indent < mod_ind || (indent == mod_ind && !trimmed.starts_with('-')) {
-                flush_mod(&mut props, &mut mod_path, &mut mod_val, &mut mod_obj_ref);
-                active_mod_indent = None;
-            } else if trimmed.starts_with("- ") {
-                flush_mod(&mut props, &mut mod_path, &mut mod_val, &mut mod_obj_ref);
-                let after_dash = trimmed.trim_start_matches("- ").trim();
-                if let Some((k, v)) = after_dash.split_once(':') {
-                    match k.trim() {
-                        "propertyPath" => mod_path = Some(v.trim().to_owned()),
-                        "value" => mod_val = Some((v.trim().to_owned(), line_idx)),
-                        "objectReference" => mod_obj_ref = Some((v.trim().to_owned(), line_idx)),
-                        _ => {}
-                    }
+        if let Some((mod_indent, mut m)) = modification.take() {
+            if indent > mod_indent || (indent == mod_indent && is_seq_item) {
+                if indent == mod_indent {
+                    m.flush(&mut props, &mut name_hint);
+                    m = Modification::default();
                 }
-                continue;
-            } else if let Some((k, v)) = trimmed.split_once(':') {
-                match k.trim() {
-                    "propertyPath" => mod_path = Some(v.trim().to_owned()),
-                    "value" => mod_val = Some((v.trim().to_owned(), line_idx)),
-                    "objectReference" => mod_obj_ref = Some((v.trim().to_owned(), line_idx)),
-                    _ => {}
+                if let Some((k, v)) = body.split_once(':') {
+                    let at = if is_seq_item { indent + 2 } else { indent };
+                    let value = continued(lines, &mut next, at, v.trim());
+                    m.feed(k.trim(), value, line_idx);
                 }
+                modification = Some((mod_indent, m));
                 continue;
             }
+            m.flush(&mut props, &mut name_hint);
         }
 
-        let is_seq_item = trimmed.starts_with("- ");
         while stack.last().is_some_and(|(ind, _)| {
             if is_seq_item {
                 *ind > indent
@@ -1174,85 +1131,55 @@ fn parse_single_doc(
         }) {
             stack.pop();
         }
-        let body = if is_seq_item {
-            trimmed.trim_start_matches("- ").trim()
-        } else {
-            trimmed
-        };
 
-        if class_id == 1001 && stack.iter().any(|(_, seg)| seg == "m_Modifications") && is_seq_item
+        if class_id == 1001 && is_seq_item && stack.iter().any(|(_, seg)| seg == "m_Modifications")
         {
-            active_mod_indent = Some(indent);
+            let mut m = Modification::default();
             if let Some((k, v)) = body.split_once(':') {
-                match k.trim() {
-                    "propertyPath" => mod_path = Some(v.trim().to_owned()),
-                    "value" => mod_val = Some((v.trim().to_owned(), line_idx)),
-                    "objectReference" => mod_obj_ref = Some((v.trim().to_owned(), line_idx)),
-                    _ => {}
-                }
+                let value = continued(lines, &mut next, indent + 2, v.trim());
+                m.feed(k.trim(), value, line_idx);
             }
+            modification = Some((indent, m));
             continue;
         }
 
-        if is_seq_item
-            && !body.is_empty()
-            && (body.starts_with('{') || body.starts_with('[') || !body.contains(':'))
-        {
-            let parent_prefix = stack
-                .iter()
-                .map(|(_, s)| s.as_str())
-                .collect::<Vec<_>>()
-                .join(".");
-            let c = seq_counters.entry(parent_prefix.clone()).or_insert(0);
-            let idx = *c;
-            *c += 1;
-            let full_key = if parent_prefix.is_empty() {
-                format!("[{idx}]")
-            } else {
-                format!("{parent_prefix}[{idx}]")
-            };
-            props.insert(
-                full_key,
-                UnityProp {
-                    value: body.to_owned(),
-                    line_idx,
-                    indent,
-                    key: format!("[{idx}]"),
-                    is_mod_override: false,
-                },
-            );
-            continue;
+        if is_seq_item {
+            let prefix = join_path(&stack);
+            let counter = seq_counters.entry(prefix.clone()).or_insert(0);
+            let n = *counter;
+            *counter += 1;
+            if body.starts_with('{') || body.starts_with('[') || !body.contains(':') {
+                let value = continued(lines, &mut next, indent, body);
+                props.insert(
+                    format!("{prefix}[{n}]"),
+                    UnityProp {
+                        value,
+                        line_idx,
+                        indent,
+                        key: format!("[{n}]"),
+                        is_mod_override: false,
+                    },
+                );
+                continue;
+            }
+            stack.push((indent + 1, format!("[{n}]")));
         }
+        // A list item's keys sit after its `- `.
+        let indent = if is_seq_item { indent + 2 } else { indent };
 
         if let Some((k, v)) = body.split_once(':') {
             let key = k.trim();
             let val = v.trim();
-            let parent_prefix = stack
-                .iter()
-                .map(|(_, s)| s.as_str())
-                .collect::<Vec<_>>()
-                .join(".");
-            let seq_tag = if is_seq_item {
-                let c = seq_counters.entry(parent_prefix.clone()).or_insert(0);
-                let idx = *c;
-                *c += 1;
-                Some(idx)
-            } else {
-                None
-            };
-
+            let parent_prefix = join_path(&stack);
             if val.is_empty() {
-                let seg = match seq_tag {
-                    Some(idx) => format!("{key}[{idx}]"),
-                    None => key.to_owned(),
-                };
-                stack.push((indent, seg));
+                stack.push((indent, key.to_owned()));
             } else {
-                let full_key = match (parent_prefix.is_empty(), seq_tag) {
-                    (true, None) => key.to_owned(),
-                    (true, Some(idx)) => format!("{key}[{idx}]"),
-                    (false, None) => format!("{parent_prefix}.{key}"),
-                    (false, Some(idx)) => format!("{parent_prefix}[{idx}].{key}"),
+                let val = continued(lines, &mut next, indent, val);
+                let val = val.as_str();
+                let full_key = if parent_prefix.is_empty() {
+                    key.to_owned()
+                } else {
+                    format!("{parent_prefix}.{key}")
                 };
 
                 if key == "m_Name" && name_hint.is_none() {
@@ -1291,7 +1218,9 @@ fn parse_single_doc(
             }
         }
     }
-    flush_mod(&mut props, &mut mod_path, &mut mod_val, &mut mod_obj_ref);
+    if let Some((_, m)) = modification {
+        m.flush(&mut props, &mut name_hint);
+    }
 
     UnityDoc {
         file_id: file_id.to_owned(),
@@ -1307,6 +1236,118 @@ fn parse_single_doc(
         transform_parent_ref,
         script_guid,
     }
+}
+
+/// One `m_Modifications` entry of a PrefabInstance, filled as its lines come.
+#[derive(Default)]
+struct Modification {
+    target: Option<String>,
+    path: Option<String>,
+    value: Option<(String, usize)>,
+    object: Option<(String, usize)>,
+}
+
+impl Modification {
+    fn feed(&mut self, key: &str, value: String, line_idx: usize) {
+        match key {
+            "target" => self.target = parse_inline_ref(&value).map(|(fid, _)| fid),
+            "propertyPath" => self.path = Some(value),
+            "value" => self.value = Some((value, line_idx)),
+            "objectReference" => self.object = Some((value, line_idx)),
+            _ => {}
+        }
+    }
+
+    /// Adds the entry as `override:<propertyPath> @<target fileID>`: one prefab
+    /// instance overrides the same property on many of its objects. The first
+    /// `m_Name` override names the instance.
+    fn flush(self, props: &mut BTreeMap<String, UnityProp>, name_hint: &mut Option<String>) {
+        let Some(path) = self.path else {
+            return;
+        };
+        let (value, line_idx, key) = match (self.value, self.object) {
+            (Some((v, vline)), Some((o, oline))) if !is_zero_ref(&o) => {
+                if v.is_empty() {
+                    (o, oline, "objectReference")
+                } else {
+                    (format!("{v} / {o}"), vline, "value")
+                }
+            }
+            (Some((v, line)), _) => (v, line, "value"),
+            (None, Some((o, line))) => (o, line, "objectReference"),
+            (None, None) => return,
+        };
+        if path == "m_Name" && name_hint.is_none() && !value.is_empty() {
+            *name_hint = Some(value.clone());
+        }
+        let target = self.target.as_deref().unwrap_or("?");
+        props.insert(
+            format!("override:{path} @{target}"),
+            UnityProp {
+                value,
+                line_idx,
+                indent: 6,
+                key: key.to_owned(),
+                is_mod_override: true,
+            },
+        );
+    }
+}
+
+/// `stack`'s segments as a property path: `a.b[2].c`.
+fn join_path(stack: &[(usize, String)]) -> String {
+    let mut out = String::new();
+    for (_, seg) in stack {
+        if !out.is_empty() && !seg.starts_with('[') {
+            out.push('.');
+        }
+        out.push_str(seg);
+    }
+    out
+}
+
+/// `head`, the value on a key's line, with the rest of it when it wraps: lines
+/// deeper than `indent`, or up to the closing quote when `head` opens one (Unity
+/// wraps long strings and flow mappings). Folded as YAML does: a line break is a
+/// space, a blank line a newline.
+fn continued(lines: &[String], next: &mut usize, indent: usize, head: &str) -> String {
+    if head.is_empty() {
+        return String::new();
+    }
+    let quote = head.chars().next().filter(|c| *c == '\'' || *c == '"');
+    let mut open = quote.is_some_and(|q| crate::unity_merge::tree::still_open(&head[1..], q, true));
+    let mut value = head.to_owned();
+    while *next < lines.len() {
+        let line = &lines[*next];
+        let text = line.trim();
+        if !open {
+            let deeper = |l: &String| l.len() - l.trim_start().len() > indent;
+            let goes_on = if text.is_empty() {
+                lines[*next..]
+                    .iter()
+                    .find(|l| !l.trim().is_empty())
+                    .is_some_and(deeper)
+            } else {
+                deeper(line)
+            };
+            if !goes_on {
+                break;
+            }
+        }
+        *next += 1;
+        if text.is_empty() {
+            value.push('\n');
+        } else {
+            if !value.ends_with('\n') {
+                value.push(' ');
+            }
+            value.push_str(text);
+        }
+        if let Some(q) = quote {
+            open = crate::unity_merge::tree::still_open(&value[1..], q, true);
+        }
+    }
+    value
 }
 
 fn is_zero_ref(s: &str) -> bool {
@@ -1529,11 +1570,84 @@ MonoBehaviour:
 "
         );
         let scene = UnityScene::parse(&yaml);
-        assert_eq!(scene.docs["50"].props["override:m_Name"].value, "Boss");
+        assert_eq!(scene.docs["50"].props["override:m_Name @1"].value, "Boss");
 
         let issues = check_file_integrity("Assets/Arena.unity", &yaml, &guids);
         assert!(issues.iter().any(|i| i.kind == "duplicateFileId"));
         assert!(issues.iter().any(|i| i.kind == "missingFileId"));
         assert!(issues.iter().any(|i| i.kind == "missingGuid"));
+    }
+
+    fn changed_props(before: &str, after: &str) -> Vec<(String, Option<String>, Option<String>)> {
+        let guids = GuidIndex::build(tempfile::tempdir().unwrap().path());
+        diff_unity_yaml("a.asset", Some(before), Some(after), &guids)
+            .objects
+            .into_iter()
+            .flat_map(|o| o.properties)
+            .map(|p| (p.property, p.before, p.after))
+            .collect()
+    }
+
+    #[test]
+    fn every_record_of_a_list_keeps_its_own_fields() {
+        let doc = |first: &str, second: &str| {
+            format!(
+                "--- !u!114 &1\nMonoBehaviour:\n  waves:\n  - name: a\n    count: {first}\n    \
+                 spawns:\n    - {{fileID: 5}}\n  - name: b\n    count: {second}\n"
+            )
+        };
+        assert_eq!(
+            changed_props(&doc("1", "2"), &doc("7", "2")),
+            vec![("waves[0].count".into(), Some("1".into()), Some("7".into()))]
+        );
+        let scene = UnityScene::parse(&doc("1", "2"));
+        let props = &scene.docs["1"].props;
+        assert_eq!(props["waves[1].count"].value, "2");
+        assert_eq!(props["waves[0].spawns[0]"].value, "{fileID: 5}");
+    }
+
+    #[test]
+    fn overrides_of_one_property_on_different_objects_stay_apart() {
+        let doc = |first: &str| {
+            format!(
+                "--- !u!1001 &50\nPrefabInstance:\n  m_Modification:\n    m_Modifications:\n    \
+                 - target: {{fileID: 1, guid: aa, type: 3}}\n      propertyPath: m_IsActive\n      \
+                 value: {first}\n      objectReference: {{fileID: 0}}\n    \
+                 - target: {{fileID: 2, guid: aa, type: 3}}\n      propertyPath: m_IsActive\n      \
+                 value: 1\n      objectReference: {{fileID: 0}}\n"
+            )
+        };
+        assert_eq!(
+            changed_props(&doc("1"), &doc("0")),
+            vec![(
+                "override:m_IsActive @1".into(),
+                Some("1".into()),
+                Some("0".into())
+            )]
+        );
+    }
+
+    #[test]
+    fn wrapped_strings_are_read_whole() {
+        let doc = |tail: &str| {
+            format!(
+                "--- !u!114 &1\nMonoBehaviour:\n  m_text: 'A long line that Unity wraps\n    \
+                 onto {tail}'\n  m_fontSize: 12\n  m_plain: first part\n    second part\n"
+            )
+        };
+        assert_eq!(
+            changed_props(&doc("two lines"), &doc("three lines")),
+            vec![(
+                "m_text".into(),
+                Some("'A long line that Unity wraps onto two lines'".into()),
+                Some("'A long line that Unity wraps onto three lines'".into())
+            )]
+        );
+        let scene = UnityScene::parse(&doc("x"));
+        assert_eq!(scene.docs["1"].props["m_fontSize"].value, "12");
+        assert_eq!(
+            scene.docs["1"].props["m_plain"].value,
+            "first part second part"
+        );
     }
 }

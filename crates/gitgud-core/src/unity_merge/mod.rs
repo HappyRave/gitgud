@@ -4,7 +4,7 @@ mod inputs;
 mod objects;
 #[cfg(test)]
 mod tests;
-mod tree;
+pub(crate) mod tree;
 
 use std::collections::HashMap;
 

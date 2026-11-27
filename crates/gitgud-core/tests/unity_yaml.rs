@@ -260,7 +260,7 @@ MonoBehaviour:
     );
     assert_eq!(
         wdiff.objects[0].properties[0].property,
-        "override:m_LocalPosition.x"
+        "override:m_LocalPosition.x @100002"
     );
 
     repo.git(&["checkout", "--", "Assets/Scenes/BossArena.unity"]);

@@ -369,7 +369,7 @@ impl Parser<'_> {
 }
 
 /// Whether a quoted scalar is still open after `text`, read from inside the quotes.
-fn still_open(text: &str, quote: char, inside: bool) -> bool {
+pub(crate) fn still_open(text: &str, quote: char, inside: bool) -> bool {
     let mut inside = inside;
     let mut chars = text.chars().peekable();
     while let Some(c) = chars.next() {
