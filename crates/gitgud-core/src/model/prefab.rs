@@ -757,9 +757,11 @@ impl<'a, 'g> PrefabBuilder<'a, 'g> {
                 return Ok(());
             };
             let m = self.material(md.reference.clone(), &owner)?;
+            // Slots between the old count and this one are empty, not copies of it.
+            let empty = self.material(None, "")?;
             let mats = &mut tree.nodes[r].out.materials;
             if mats.len() <= slot {
-                mats.resize(slot + 1, m);
+                mats.resize(slot + 1, empty);
             }
             mats[slot] = m;
         } else if p == "m_Materials.Array.size"
@@ -903,6 +905,13 @@ impl<'a, 'g> PrefabBuilder<'a, 'g> {
                 m.smoothness = 0.5;
                 m
             }
+            // No guid: an empty slot ({fileID: 0}), or a material stored in this
+            // file, which has no asset to look up.
+            Some(r) if r.guid.is_none() => Material::missing(if id(&r.file_id) == 0 {
+                "(none)"
+            } else {
+                "(material in this file)"
+            }),
             Some(r) => {
                 let guid = r.guid.clone().unwrap_or_default();
                 match self.guids.path(&guid)? {
@@ -1368,6 +1377,30 @@ mod tests {
         assert_eq!(named(&scene, "Odd").1.mesh, Some(MeshRef::Missing));
         assert_eq!(scene.missing.len(), 4, "{:?}", scene.missing);
         assert!(scene.missing[3].contains("éééé…ééé"), "{:?}", scene.missing);
+    }
+
+    #[test]
+    fn a_material_set_past_the_end_leaves_the_slots_between_empty() {
+        let repo = project();
+        let text = [
+            HEADER.to_owned(),
+            format!("--- !u!1001 &7000\nPrefabInstance:\n  m_Modification:\n    m_TransformParent: {{fileID: 0}}\n    m_Modifications:\n    - target: {{fileID: 2301, guid: {BOAT}, type: 3}}\n      propertyPath: m_Materials.Array.data[3]\n      value: \n      objectReference: {{fileID: 2100000, guid: {NAVY}, type: 2}}\n  m_SourcePrefab: {{fileID: 100100000, guid: {BOAT}, type: 3}}\n"),
+        ]
+        .concat();
+        repo.write("Assets/Gap.prefab", &text).commit_all("gap");
+        let (scene, mats) = build(&repo, "Assets/Gap.prefab");
+        let (_, hull) = named(&scene, "Hull");
+        let names: Vec<&str> = hull
+            .materials
+            .iter()
+            .map(|&m| mats[m].name.as_str())
+            .collect();
+        assert_eq!(names, ["Red", "(none)", "(none)", "Navy"]);
+        assert!(
+            !scene.missing.iter().any(|m| m.contains("m_Materials")),
+            "{:?}",
+            scene.missing
+        );
     }
 
     #[test]
