@@ -260,6 +260,40 @@ fn wait_for_proposal_returns_on_verdict_and_times_out_when_pending() {
     assert_eq!(done.proposal.comments[0].text, "please rename");
 }
 
+#[test]
+fn risk_flags_name_binaries_and_lfs_pointers_from_the_file_head() {
+    let repo = TestRepo::init();
+    repo.write(
+        ".gitattributes",
+        "*.png filter=lfs diff=lfs merge=lfs -text\n",
+    )
+    .write("a.txt", "a\n")
+    .commit_all("base");
+    let mut big = vec![0u8; 20_000];
+    big[10_000] = b'x';
+    std::fs::write(repo.path().join("blob.bin"), &big).unwrap();
+    repo.write(
+        "tex.png",
+        "version https://git-lfs.github.com/spec/v1\noid sha256:aa\nsize 9\n",
+    );
+    let git = GitCli::new(&locate().unwrap());
+    let opened = repo::open(repo.path()).unwrap();
+
+    let flags = agent_status(&opened, &git).unwrap().risk_flags;
+    let find = |kind: &str, path: &str| flags.iter().find(|f| f.kind == kind && f.path == path);
+    assert!(
+        find("binaryFile", "blob.bin")
+            .unwrap()
+            .detail
+            .contains("20000 bytes")
+    );
+    assert!(find("lfsPointer", "tex.png").is_some(), "{flags:?}");
+    assert!(
+        !flags.iter().any(|f| f.kind == "unlockedLfs"),
+        "no lock server: nothing called unlocked"
+    );
+}
+
 fn propose(opened: &gitgud_core::repo::Repo, git: &GitCli, path: &str) -> String {
     create_proposal(
         opened,

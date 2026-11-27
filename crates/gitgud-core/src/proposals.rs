@@ -870,19 +870,27 @@ fn compute_risk_flags(
     }
 
     let lfs_info = lfs::lfs_info(git, repo).ok();
-    let held_locks: HashSet<String> = lfs_info
+    // Asking the server is a network round trip: only when a changed file is in
+    // LFS. When it can't answer, no file is called unlocked.
+    let held_locks: Option<HashSet<String>> = lfs_info
         .as_ref()
-        .filter(|info| info.supports_locks)
+        .filter(|info| {
+            info.supports_locks
+                && status.entries.iter().any(|e| {
+                    in_scope(&e.path) && lfs_pattern_matches(&e.path, &info.tracked_patterns)
+                })
+        })
         .and_then(|_| lfs::lfs_locks_list(git, repo).ok())
-        .map(|list| list.into_iter().map(|l| l.path).collect())
-        .unwrap_or_default();
+        .map(|list| list.into_iter().map(|l| l.path).collect());
 
     for entry in &status.entries {
         if !in_scope(&entry.path) {
             continue;
         }
         let full = repo.root().join(&entry.path);
-        let disk_bytes = fs::read(&full).ok();
+        // The head tells binary from text and a pointer from content: textures can
+        // be hundreds of MB.
+        let disk_bytes = read_head(&full);
         if entry.worktree == Some(crate::repo::Change::Deleted)
             || entry.index == Some(crate::repo::Change::Deleted)
         {
@@ -891,19 +899,19 @@ fn compute_risk_flags(
                 path: entry.path.clone(),
                 detail: format!("Deletes existing file {}", entry.path),
             });
-        } else if let Some(bytes) = &disk_bytes
+        } else if let Some((bytes, len)) = &disk_bytes
             && is_binary(bytes)
         {
             flags.push(RiskFlag {
                 kind: "binaryFile".into(),
                 path: entry.path.clone(),
-                detail: format!("Binary file changed ({} bytes)", bytes.len()),
+                detail: format!("Binary file changed ({len} bytes)"),
             });
         }
         if let Some(info) = &lfs_info
             && lfs_pattern_matches(&entry.path, &info.tracked_patterns)
         {
-            if let Some(bytes) = &disk_bytes
+            if let Some((bytes, _)) = &disk_bytes
                 && lfs::is_lfs_pointer(bytes)
             {
                 flags.push(RiskFlag {
@@ -912,7 +920,10 @@ fn compute_risk_flags(
                     detail: format!("Worktree file {} is an unhydrated LFS pointer", entry.path),
                 });
             }
-            if info.supports_locks && !held_locks.contains(&entry.path) {
+            if held_locks
+                .as_ref()
+                .is_some_and(|held| !held.contains(&entry.path))
+            {
                 flags.push(RiskFlag {
                     kind: "unlockedLfs".into(),
                     path: entry.path.clone(),
@@ -923,6 +934,16 @@ fn compute_risk_flags(
     }
 
     flags
+}
+
+/// The first 8 KiB of `path` and its full size, `None` when it can't be read.
+fn read_head(path: &Path) -> Option<(Vec<u8>, u64)> {
+    use std::io::Read;
+    let file = fs::File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    let mut head = Vec::with_capacity(8192);
+    file.take(8192).read_to_end(&mut head).ok()?;
+    Some((head, len))
 }
 
 fn lfs_pattern_matches(path: &str, patterns: &[String]) -> bool {
