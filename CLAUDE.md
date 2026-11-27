@@ -474,7 +474,9 @@ Every feature is tested at each layer it touches:
   tests can check with `tasklist` that nothing survived.
 - **Commands** (`src-tauri`): tests go through Tauri's real IPC path (`tauri::test`, the `Ipc`
   helper in `lib.rs`) with JSON args as the webview sends them, on `TestRepo`s. Commands are `async`
-  so they stay off the main thread. `build.rs` hands the Windows manifest to the linker for every
+  so they stay off the main thread; network and other long work (fetch / pull / push, clone, LFS,
+  compare, overlap, AI drafts, blame...) runs through `blocking`, on tauri's blocking pool, so it
+  never holds an async worker other commands wait on. `build.rs` hands the Windows manifest to the linker for every
   target; without it, test binaries die with `STATUS_ENTRYPOINT_NOT_FOUND`.
 - **Frontend** (vitest + jsdom + Testing Library): `$lib/test/ipc.ts`'s `mockCommands` answers
   commands from typed handlers. An unmocked command fails the test. Add every new command to

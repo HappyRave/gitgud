@@ -45,6 +45,18 @@ use tauri::{AppHandle, Builder, Emitter, Manager, Runtime, State};
 mod images;
 mod updater;
 
+/// Runs `f` on tauri's blocking pool. Network and other long git work goes here,
+/// so it never holds one of the few async workers every other command waits on;
+/// a panic in `f` comes back as an error instead of a request that never answers.
+async fn blocking<R: Runtime, T: Send + 'static>(
+    app: AppHandle<R>,
+    f: impl FnOnce(&AppHandle<R>) -> Result<T, Error> + Send + 'static,
+) -> Result<T, Error> {
+    tauri::async_runtime::spawn_blocking(move || f(&app))
+        .await
+        .map_err(|e| Error::Read(format!("a background task failed: {e}")))?
+}
+
 #[derive(Default)]
 struct ActiveClone(Mutex<Option<Cancel>>);
 
@@ -240,8 +252,12 @@ async fn refresh_repo(session: State<'_, Session>, id: u32) -> Result<Opened, Er
 }
 
 #[tauri::command]
-async fn stage(session: State<'_, Session>, id: u32, paths: Vec<String>) -> Result<Opened, Error> {
-    session.stage(id, &paths)
+async fn stage<R: Runtime>(
+    app: AppHandle<R>,
+    id: u32,
+    paths: Vec<String>,
+) -> Result<Opened, Error> {
+    blocking(app, move |app| app.state::<Session>().stage(id, &paths)).await
 }
 
 #[tauri::command]
@@ -254,8 +270,8 @@ async fn unstage(
 }
 
 #[tauri::command]
-async fn commit(
-    session: State<'_, Session>,
+async fn commit<R: Runtime>(
+    app: AppHandle<R>,
     id: u32,
     message: String,
     amend: Option<bool>,
@@ -267,7 +283,10 @@ async fn commit(
         signoff: signoff.unwrap_or(false),
         no_verify: no_verify.unwrap_or(false),
     };
-    session.commit_with(id, &message, options)
+    blocking(app, move |app| {
+        app.state::<Session>().commit_with(id, &message, options)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -585,14 +604,13 @@ fn emit_task_progress<R: Runtime>(
 }
 
 #[tauri::command]
-async fn fetch<R: Runtime>(
-    app: AppHandle<R>,
-    session: State<'_, Session>,
-    id: u32,
-) -> Result<Opened, Error> {
-    session.fetch(id, |progress| {
-        emit_task_progress(&app, id, "fetch", progress)
+async fn fetch<R: Runtime>(app: AppHandle<R>, id: u32) -> Result<Opened, Error> {
+    blocking(app, move |app| {
+        app.state::<Session>().fetch(id, |progress| {
+            emit_task_progress(app, id, "fetch", progress)
+        })
     })
+    .await
 }
 
 /// Returns whether a fetch was running.
@@ -610,14 +628,17 @@ async fn cancel_task(session: State<'_, Session>, id: u32) -> Result<bool, Error
 #[tauri::command]
 async fn pull<R: Runtime>(
     app: AppHandle<R>,
-    session: State<'_, Session>,
     id: u32,
     strategy: PullStrategy,
     remember: Option<bool>,
 ) -> Result<PullResult, Error> {
-    session.pull(id, strategy, remember.unwrap_or(false), |progress| {
-        emit_task_progress(&app, id, "pull", progress);
+    blocking(app, move |app| {
+        app.state::<Session>()
+            .pull(id, strategy, remember.unwrap_or(false), |progress| {
+                emit_task_progress(app, id, "pull", progress);
+            })
     })
+    .await
 }
 
 #[tauri::command]
@@ -633,7 +654,6 @@ async fn push_info(
 #[allow(clippy::too_many_arguments)]
 async fn push<R: Runtime>(
     app: AppHandle<R>,
-    session: State<'_, Session>,
     id: u32,
     remote: String,
     branch: String,
@@ -641,16 +661,19 @@ async fn push<R: Runtime>(
     set_upstream: bool,
     force_with_lease: bool,
 ) -> Result<Opened, Error> {
-    let target = remote_branch.as_deref().unwrap_or(&branch);
-    session.push(
-        id,
-        &remote,
-        &branch,
-        target,
-        set_upstream,
-        force_with_lease,
-        |progress| emit_task_progress(&app, id, "push", progress),
-    )
+    blocking(app, move |app| {
+        let target = remote_branch.as_deref().unwrap_or(&branch);
+        app.state::<Session>().push(
+            id,
+            &remote,
+            &branch,
+            target,
+            set_upstream,
+            force_with_lease,
+            |progress| emit_task_progress(app, id, "push", progress),
+        )
+    })
+    .await
 }
 
 #[tauri::command]
@@ -791,13 +814,18 @@ async fn git_set_choice(
 }
 
 #[tauri::command]
-async fn git_latest(session: State<'_, Session>) -> Result<git_tools::LatestGit, Error> {
-    git_tools::latest_git(&*session.git()?)
+async fn git_latest<R: Runtime>(app: AppHandle<R>) -> Result<git_tools::LatestGit, Error> {
+    blocking(app, |app| {
+        git_tools::latest_git(&*app.state::<Session>().git()?)
+    })
+    .await
 }
 
 #[tauri::command]
-async fn git_update_system() -> Result<git_tools::SystemUpdate, Error> {
-    git_tools::update_system_git()
+async fn git_update_system<R: Runtime>(
+    app: AppHandle<R>,
+) -> Result<git_tools::SystemUpdate, Error> {
+    blocking(app, |_| git_tools::update_system_git()).await
 }
 
 #[tauri::command]
@@ -811,11 +839,11 @@ async fn git_config_compare() -> Result<Vec<git_tools::ConfigRow>, Error> {
 }
 
 #[tauri::command]
-async fn git_check_remote(
-    session: State<'_, Session>,
+async fn git_check_remote<R: Runtime>(
+    app: AppHandle<R>,
     id: u32,
 ) -> Result<git_tools::RemoteCheck, Error> {
-    session.check_remote(id)
+    blocking(app, move |app| app.state::<Session>().check_remote(id)).await
 }
 
 #[tauri::command]
@@ -1060,15 +1088,31 @@ struct FetchManyProgress {
 #[allow(clippy::too_many_arguments)]
 async fn clone_repo<R: Runtime>(
     app: AppHandle<R>,
-    session: State<'_, Session>,
-    library: State<'_, LibraryStore>,
-    active: State<'_, ActiveClone>,
     url: String,
     dest: String,
     folder_path: Option<String>,
     long_paths: bool,
     lfs_partial: Option<bool>,
 ) -> Result<String, Error> {
+    blocking(app, move |app| {
+        clone_into_library(app, &url, &dest, folder_path, long_paths, lfs_partial)
+    })
+    .await
+}
+
+fn clone_into_library<R: Runtime>(
+    app: &AppHandle<R>,
+    url: &str,
+    dest: &str,
+    folder_path: Option<String>,
+    long_paths: bool,
+    lfs_partial: Option<bool>,
+) -> Result<String, Error> {
+    let (session, library, active) = (
+        app.state::<Session>(),
+        app.state::<LibraryStore>(),
+        app.state::<ActiveClone>(),
+    );
     let lfs_partial = lfs_partial.unwrap_or(false);
     let cancel = {
         let mut g = active
@@ -1086,8 +1130,8 @@ async fn clone_repo<R: Runtime>(
     let git = &*session.git()?;
     let cloned = core_clone_repo(
         git,
-        &url,
-        Path::new(&dest),
+        url,
+        Path::new(dest),
         long_paths,
         lfs_partial,
         &cancel,
@@ -1098,11 +1142,17 @@ async fn clone_repo<R: Runtime>(
         },
     )?;
     let path_str = display_path(&cloned);
-    let _ = library.add_repos(&[AddRepoEntry {
-        path: path_str.clone(),
-        folder_path,
-        name: None,
-    }]);
+    library
+        .add_repos(&[AddRepoEntry {
+            path: path_str.clone(),
+            folder_path,
+            name: None,
+        }])
+        .map_err(|e| {
+            Error::Refused(format!(
+                "Cloned to {path_str}, but adding it to the Library failed: {e}"
+            ))
+        })?;
     if lfs_partial {
         // Pointers came down; now what the build's scenes use (R10-B).
         let repo = repo::open(&cloned)?;
@@ -1130,7 +1180,7 @@ async fn clone_repo<R: Runtime>(
             ))
         })?;
     }
-    let _ = library.refresh_summaries(std::slice::from_ref(&path_str));
+    library.refresh_summaries(std::slice::from_ref(&path_str))?;
     Ok(path_str)
 }
 
@@ -1151,14 +1201,21 @@ async fn cancel_clone(active: State<'_, ActiveClone>) -> Result<bool, Error> {
 #[tauri::command]
 async fn fetch_many<R: Runtime>(
     app: AppHandle<R>,
-    session: State<'_, Session>,
-    library: State<'_, LibraryStore>,
     paths: Vec<String>,
+) -> Result<Vec<RepoSummary>, Error> {
+    blocking(app, move |app| fetch_paths(app, &paths)).await
+}
+
+fn fetch_paths<R: Runtime>(
+    app: &AppHandle<R>,
+    paths: &[String],
 ) -> Result<Vec<RepoSummary>, Error> {
     let total = paths.len();
     if total == 0 {
         return Ok(Vec::new());
     }
+    let library = app.state::<LibraryStore>();
+    let session = app.state::<Session>();
     let git = &*session.git()?;
     let done = AtomicUsize::new(0);
     let next = AtomicUsize::new(0);
@@ -1195,7 +1252,7 @@ async fn fetch_many<R: Runtime>(
             });
         }
     });
-    library.refresh_summaries(&paths)
+    library.refresh_summaries(paths)
 }
 
 #[tauri::command]
@@ -1255,47 +1312,54 @@ async fn lfs_info(session: State<'_, Session>, id: u32) -> Result<LfsInfo, Error
 }
 
 #[tauri::command]
-async fn lfs_locks(
-    session: State<'_, Session>,
-    library: State<'_, LibraryStore>,
-    id: u32,
-) -> Result<Vec<LfsLock>, Error> {
-    let locks = session.lfs_locks(id)?;
-    if let Ok(open) = session.get(id) {
+async fn lfs_locks<R: Runtime>(app: AppHandle<R>, id: u32) -> Result<Vec<LfsLock>, Error> {
+    blocking(app, move |app| {
+        let session = app.state::<Session>();
+        let locks = session.lfs_locks(id)?;
+        let root = session.get(id)?.repo.root().to_string_lossy().into_owned();
         let ours_count = locks.iter().filter(|l| l.ours).count();
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX));
-        let _ =
-            library.update_cached_locks(&open.repo.root().to_string_lossy(), ours_count, Some(now));
-    }
-    Ok(locks)
+        app.state::<LibraryStore>()
+            .update_cached_locks(&root, ours_count, Some(now))?;
+        Ok(locks)
+    })
+    .await
 }
 
 #[tauri::command]
-async fn lfs_lock(session: State<'_, Session>, id: u32, path: String) -> Result<(), Error> {
-    session.lfs_lock(id, &path)
+async fn lfs_lock<R: Runtime>(app: AppHandle<R>, id: u32, path: String) -> Result<(), Error> {
+    blocking(app, move |app| app.state::<Session>().lfs_lock(id, &path)).await
 }
 
 #[tauri::command]
-async fn lfs_unlock(
-    session: State<'_, Session>,
+async fn lfs_unlock<R: Runtime>(
+    app: AppHandle<R>,
     id: u32,
     path: String,
     force: Option<bool>,
 ) -> Result<(), Error> {
-    session.lfs_unlock(id, &path, force.unwrap_or(false))
+    blocking(app, move |app| {
+        app.state::<Session>()
+            .lfs_unlock(id, &path, force.unwrap_or(false))
+    })
+    .await
 }
 
 #[tauri::command]
-async fn lfs_locks_in_push(
-    session: State<'_, Session>,
+async fn lfs_locks_in_push<R: Runtime>(
+    app: AppHandle<R>,
     id: u32,
     remote: String,
     remote_branch: String,
     branch: String,
 ) -> Result<Vec<LfsLock>, Error> {
-    session.lfs_locks_in_push(id, &remote, &remote_branch, &branch)
+    blocking(app, move |app| {
+        app.state::<Session>()
+            .lfs_locks_in_push(id, &remote, &remote_branch, &branch)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1320,53 +1384,65 @@ async fn delete_tag(session: State<'_, Session>, id: u32, name: String) -> Resul
 }
 
 #[tauri::command]
-async fn push_tag(
-    session: State<'_, Session>,
+async fn push_tag<R: Runtime>(
+    app: AppHandle<R>,
     id: u32,
     remote: String,
     name: String,
 ) -> Result<(), Error> {
-    session.push_tag(id, &remote, &name)
+    blocking(app, move |app| {
+        app.state::<Session>().push_tag(id, &remote, &name)
+    })
+    .await
 }
 
 #[tauri::command]
-async fn delete_remote_tag(
-    session: State<'_, Session>,
+async fn delete_remote_tag<R: Runtime>(
+    app: AppHandle<R>,
     id: u32,
     remote: String,
     name: String,
 ) -> Result<(), Error> {
-    session.delete_remote_tag(id, &remote, &name)
+    blocking(app, move |app| {
+        app.state::<Session>().delete_remote_tag(id, &remote, &name)
+    })
+    .await
 }
 
 #[tauri::command]
-async fn file_history(
-    session: State<'_, Session>,
+async fn file_history<R: Runtime>(
+    app: AppHandle<R>,
     id: u32,
     path: String,
     limit: Option<usize>,
 ) -> Result<Vec<FileCommit>, Error> {
-    session.file_history(id, &path, limit)
+    blocking(app, move |app| {
+        app.state::<Session>().file_history(id, &path, limit)
+    })
+    .await
 }
 
 #[tauri::command]
-async fn blame_file(
-    session: State<'_, Session>,
+async fn blame_file<R: Runtime>(
+    app: AppHandle<R>,
     id: u32,
     path: String,
     rev: Option<String>,
 ) -> Result<Vec<BlameLine>, Error> {
-    session.blame_file(id, &path, rev.as_deref())
+    blocking(app, move |app| {
+        app.state::<Session>().blame_file(id, &path, rev.as_deref())
+    })
+    .await
 }
 
 #[tauri::command]
-async fn op_log_stats(session: State<'_, Session>, id: u32) -> Result<OpLogStats, Error> {
-    session.op_log_stats(id)
+async fn op_log_stats<R: Runtime>(app: AppHandle<R>, id: u32) -> Result<OpLogStats, Error> {
+    blocking(app, move |app| app.state::<Session>().op_log_stats(id)).await
 }
 
 #[tauri::command]
-async fn op_log_prune(session: State<'_, Session>, id: u32) -> Result<OpLogStats, Error> {
-    session.op_log_prune(id)
+async fn op_log_prune<R: Runtime>(app: AppHandle<R>, id: u32) -> Result<OpLogStats, Error> {
+    blocking(app, move |app| app.state::<Session>().op_log_prune(id)).await
 }
 
 #[tauri::command]
@@ -1384,8 +1460,11 @@ async fn has_commit_graph(session: State<'_, Session>, id: u32) -> Result<bool, 
 }
 
 #[tauri::command]
-async fn write_commit_graph(session: State<'_, Session>, id: u32) -> Result<(), Error> {
-    session.write_commit_graph(id)
+async fn write_commit_graph<R: Runtime>(app: AppHandle<R>, id: u32) -> Result<(), Error> {
+    blocking(app, move |app| {
+        app.state::<Session>().write_commit_graph(id)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1758,12 +1837,15 @@ async fn lfs_cache_stats(session: State<'_, Session>, id: u32) -> Result<LfsCach
 }
 
 #[tauri::command]
-async fn lfs_partial_plan(
-    session: State<'_, Session>,
+async fn lfs_partial_plan<R: Runtime>(
+    app: AppHandle<R>,
     id: u32,
     state: Option<PartialState>,
 ) -> Result<LfsPlan, Error> {
-    session.lfs_partial_plan(id, state)
+    blocking(app, move |app| {
+        app.state::<Session>().lfs_partial_plan(id, state)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1820,14 +1902,17 @@ async fn open_in_editor(root: String, path: Option<String>, editor: Editor) -> R
 }
 
 #[tauri::command]
-async fn compare(
-    session: State<'_, Session>,
+async fn compare<R: Runtime>(
+    app: AppHandle<R>,
     id: u32,
     a: Point,
     b: Point,
     mode: CompareMode,
 ) -> Result<Comparison, Error> {
-    session.compare(id, &a, &b, mode)
+    blocking(app, move |app| {
+        app.state::<Session>().compare(id, &a, &b, mode)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1864,8 +1949,8 @@ async fn take_version(
 }
 
 #[tauri::command]
-async fn overlap(session: State<'_, Session>, id: u32) -> Result<Option<Overlap>, Error> {
-    session.overlap(id)
+async fn overlap<R: Runtime>(app: AppHandle<R>, id: u32) -> Result<Option<Overlap>, Error> {
+    blocking(app, move |app| app.state::<Session>().overlap(id)).await
 }
 
 #[tauri::command]
@@ -1903,41 +1988,51 @@ async fn notify<R: Runtime>(app: AppHandle<R>, title: String, body: String) -> R
 #[tauri::command]
 async fn lfs_partial_apply<R: Runtime>(
     app: AppHandle<R>,
-    session: State<'_, Session>,
     id: u32,
     state: Option<PartialState>,
 ) -> Result<LfsPlan, Error> {
-    session.lfs_partial_apply(id, state, |progress| {
-        emit_task_progress(&app, id, "lfs", progress);
+    blocking(app, move |app| {
+        app.state::<Session>()
+            .lfs_partial_apply(id, state, |progress| {
+                emit_task_progress(app, id, "lfs", progress);
+            })
     })
+    .await
 }
 
 #[tauri::command]
 async fn lfs_partial_download<R: Runtime>(
     app: AppHandle<R>,
-    session: State<'_, Session>,
     id: u32,
     paths: Vec<String>,
 ) -> Result<LfsPlan, Error> {
-    session.lfs_partial_download(id, &paths, |progress| {
-        emit_task_progress(&app, id, "lfs", progress);
+    blocking(app, move |app| {
+        app.state::<Session>()
+            .lfs_partial_download(id, &paths, |progress| {
+                emit_task_progress(app, id, "lfs", progress);
+            })
     })
+    .await
 }
 
 #[tauri::command]
-async fn lfs_prune(session: State<'_, Session>, id: u32) -> Result<LfsCacheStats, Error> {
-    session.lfs_prune(id)
+async fn lfs_prune<R: Runtime>(app: AppHandle<R>, id: u32) -> Result<LfsCacheStats, Error> {
+    blocking(app, move |app| app.state::<Session>().lfs_prune(id)).await
 }
 
 #[tauri::command]
-async fn lfs_fetch_object(
-    session: State<'_, Session>,
+async fn lfs_fetch_object<R: Runtime>(
+    app: AppHandle<R>,
     id: u32,
     oid: String,
     size: u64,
     path: Option<String>,
 ) -> Result<bool, Error> {
-    session.lfs_fetch_object(id, &oid, size, path.as_deref())
+    blocking(app, move |app| {
+        app.state::<Session>()
+            .lfs_fetch_object(id, &oid, size, path.as_deref())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1946,12 +2041,16 @@ async fn ai_providers(session: State<'_, Session>) -> Result<AiProviderStatus, E
 }
 
 #[tauri::command]
-async fn ai_draft_commit_message(
-    session: State<'_, Session>,
+async fn ai_draft_commit_message<R: Runtime>(
+    app: AppHandle<R>,
     id: u32,
     provider: Option<String>,
 ) -> Result<String, Error> {
-    session.ai_draft_commit_message(id, provider.as_deref())
+    blocking(app, move |app| {
+        app.state::<Session>()
+            .ai_draft_commit_message(id, provider.as_deref())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -2007,12 +2106,16 @@ async fn propose_from_worktree(
 }
 
 #[tauri::command]
-async fn background_refresh(
-    session: State<'_, Session>,
+async fn background_refresh<R: Runtime>(
+    app: AppHandle<R>,
     id: u32,
     min_age_secs: Option<u64>,
 ) -> Result<bool, Error> {
-    session.background_refresh(id, min_age_secs.unwrap_or(600))
+    blocking(app, move |app| {
+        app.state::<Session>()
+            .background_refresh(id, min_age_secs.unwrap_or(600))
+    })
+    .await
 }
 
 fn app_with_library<R: Runtime>(builder: Builder<R>, library: Option<LibraryStore>) -> Builder<R> {
@@ -2354,6 +2457,36 @@ mod tests {
     fn open(ipc: &Ipc, repo: &TestRepo) -> Value {
         ipc.call("open_repo", json!({ "path": repo.path() }))
             .unwrap()
+    }
+
+    #[test]
+    fn blocking_work_runs_off_the_async_workers_and_a_panic_comes_back_as_an_error() {
+        let ipc = Ipc::new();
+        let handle = ipc.app.handle().clone();
+        let on_worker = tauri::async_runtime::block_on(blocking(handle.clone(), |_| {
+            Ok(std::thread::current().name().map(str::to_owned))
+        }))
+        .unwrap();
+        assert_ne!(on_worker.as_deref(), Some("tokio-runtime-worker"));
+
+        let err = tauri::async_runtime::block_on(blocking(handle, |_| -> Result<(), Error> {
+            panic!("decoder blew up")
+        }))
+        .unwrap_err();
+        assert!(err.to_string().contains("background task failed"), "{err}");
+    }
+
+    #[test]
+    fn stage_and_commit_still_answer_over_ipc() {
+        let repo = history();
+        repo.write("a.txt", "c");
+        let ipc = Ipc::new();
+        let id = open(&ipc, &repo)["id"].clone();
+        ipc.call("stage", json!({ "id": id, "paths": ["a.txt"] }))
+            .unwrap();
+        ipc.call("commit", json!({ "id": id, "message": "third" }))
+            .unwrap();
+        assert_eq!(repo.git(&["log", "-1", "--format=%s"]).trim(), "third");
     }
 
     #[test]
