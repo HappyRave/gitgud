@@ -68,73 +68,97 @@ impl GitCli {
         on_progress: &mut dyn FnMut(Progress),
         cancel: &Cancel,
     ) -> Result<String, Error> {
-        let mut tree = ProcessTree::spawn(&mut self.command(cwd, args))
-            .map_err(|e| command_error(args, e.to_string()))?;
-        let mut stdout = tree.child.stdout.take().expect("stdout is piped");
-        let mut stderr = tree.child.stderr.take().expect("stderr is piped");
+        run_progress(self.command(cwd, args), args, on_progress, cancel)
+    }
 
-        let (tx, rx) = mpsc::channel::<String>();
-        let err_reader = std::thread::spawn(move || {
-            // Progress rewrites one line with \r; split on both line ends.
-            let mut buf = [0u8; 4096];
-            let mut line = Vec::new();
-            loop {
-                match stderr.read(&mut buf) {
-                    Ok(0) | Err(_) => break,
-                    Ok(n) => {
-                        for &b in &buf[..n] {
-                            if b == b'\r' || b == b'\n' {
-                                if !line.is_empty() {
-                                    let _ = tx.send(String::from_utf8_lossy(&line).into_owned());
-                                    line.clear();
-                                }
-                            } else {
-                                line.push(b);
+    /// As [`GitCli::run_background`], killed with every process it started when
+    /// `cancel` is set.
+    ///
+    /// # Errors
+    /// As [`GitCli::run_with_progress`].
+    pub fn run_background_cancellable(
+        &self,
+        cwd: &Path,
+        args: &[&str],
+        cancel: &Cancel,
+    ) -> Result<String, Error> {
+        let mut cmd = self.command(cwd, args);
+        crate::cli::non_interactive(&mut cmd);
+        run_progress(cmd, args, &mut |_| {}, cancel)
+    }
+}
+
+fn run_progress(
+    mut cmd: std::process::Command,
+    args: &[&str],
+    on_progress: &mut dyn FnMut(Progress),
+    cancel: &Cancel,
+) -> Result<String, Error> {
+    let mut tree = ProcessTree::spawn(&mut cmd).map_err(|e| command_error(args, e.to_string()))?;
+    let mut stdout = tree.child.stdout.take().expect("stdout is piped");
+    let mut stderr = tree.child.stderr.take().expect("stderr is piped");
+
+    let (tx, rx) = mpsc::channel::<String>();
+    let err_reader = std::thread::spawn(move || {
+        // Progress rewrites one line with \r; split on both line ends.
+        let mut buf = [0u8; 4096];
+        let mut line = Vec::new();
+        loop {
+            match stderr.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    for &b in &buf[..n] {
+                        if b == b'\r' || b == b'\n' {
+                            if !line.is_empty() {
+                                let _ = tx.send(String::from_utf8_lossy(&line).into_owned());
+                                line.clear();
                             }
+                        } else {
+                            line.push(b);
                         }
                     }
                 }
             }
-            if !line.is_empty() {
-                let _ = tx.send(String::from_utf8_lossy(&line).into_owned());
-            }
-        });
-        let out_reader = std::thread::spawn(move || {
-            let mut out = Vec::new();
-            let _ = stdout.read_to_end(&mut out);
-            out
-        });
+        }
+        if !line.is_empty() {
+            let _ = tx.send(String::from_utf8_lossy(&line).into_owned());
+        }
+    });
+    let out_reader = std::thread::spawn(move || {
+        let mut out = Vec::new();
+        let _ = stdout.read_to_end(&mut out);
+        out
+    });
 
-        let mut messages = Vec::new();
-        loop {
-            if cancel.is_cancelled() {
-                tree.kill();
-                let _ = tree.child.wait();
-                return Err(Error::Cancelled);
-            }
-            match rx.recv_timeout(POLL) {
-                Ok(line) => match parse_progress(&line) {
-                    Some(p) => on_progress(p),
-                    None => messages.push(line),
-                },
-                Err(RecvTimeoutError::Timeout) => {}
-                Err(RecvTimeoutError::Disconnected) => break,
-            }
+    let mut messages = Vec::new();
+    loop {
+        if cancel.is_cancelled() {
+            tree.kill();
+            let _ = tree.child.wait();
+            return Err(Error::Cancelled);
         }
-        let status = tree
-            .child
-            .wait()
-            .map_err(|e| command_error(args, e.to_string()))?;
-        let _ = err_reader.join();
-        let stdout = String::from_utf8_lossy(&out_reader.join().unwrap_or_default()).into_owned();
-        if status.success() {
-            return Ok(stdout);
+        match rx.recv_timeout(POLL) {
+            Ok(line) => match parse_progress(&line) {
+                Some(p) => on_progress(p),
+                None => messages.push(line),
+            },
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => break,
         }
-        Err(command_error(
-            args,
-            failure_message(&stdout, &messages.join("\n")),
-        ))
     }
+    let status = tree
+        .child
+        .wait()
+        .map_err(|e| command_error(args, e.to_string()))?;
+    let _ = err_reader.join();
+    let stdout = String::from_utf8_lossy(&out_reader.join().unwrap_or_default()).into_owned();
+    if status.success() {
+        return Ok(stdout);
+    }
+    Err(command_error(
+        args,
+        failure_message(&stdout, &messages.join("\n")),
+    ))
 }
 
 impl Repo {

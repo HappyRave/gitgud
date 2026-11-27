@@ -218,6 +218,33 @@ fn session_fetch_refreshes_and_one_runs_at_a_time() {
 }
 
 #[test]
+fn a_fetch_you_start_stops_a_hanging_background_fetch() {
+    let local = TestRepo::init();
+    local.write("a.txt", "a").commit_all("a");
+    let pids_file = hanging_remote(&local);
+    let session = Session::default();
+    let id = session.open(local.path()).unwrap().id;
+
+    std::thread::scope(|s| {
+        let background = s.spawn(|| session.background_refresh(id, 0));
+        wait_for(&pids_file, 2, || {
+            session.cancel(id);
+        });
+        // A second background tick doesn't start another fetch on top.
+        assert!(!session.background_refresh(id, 0).unwrap());
+
+        std::fs::remove_file(&pids_file).unwrap();
+        let yours = s.spawn(|| session.fetch(id, |_| {}));
+        assert!(!background.join().unwrap().unwrap(), "background gave way");
+        wait_for(&pids_file, 2, || {
+            session.cancel(id);
+        });
+        assert!(session.cancel(id));
+        assert!(matches!(yours.join().unwrap(), Err(Error::Cancelled)));
+    });
+}
+
+#[test]
 fn session_refuses_a_second_fetch_while_one_runs() {
     let local = TestRepo::init();
     local.write("a.txt", "a").commit_all("a");

@@ -335,6 +335,56 @@ fn a_failed_action_that_changed_something_can_be_undone() {
 }
 
 #[test]
+fn a_repo_open_twice_still_writes_one_at_a_time() {
+    let (repo, session, first) = setup();
+    let second = session.open(repo.path()).unwrap().id;
+    let (started, wait) = std::sync::mpsc::channel();
+    let (release, released) = std::sync::mpsc::channel::<()>();
+    let order = std::sync::Mutex::new(Vec::new());
+    let (session, order) = (&session, &order);
+
+    std::thread::scope(|s| {
+        s.spawn(move || {
+            session
+                .write(first, "slow", |_, _| {
+                    started.send(()).unwrap();
+                    released.recv().unwrap();
+                    order.lock().unwrap().push("first");
+                    Ok(())
+                })
+                .unwrap();
+        });
+        wait.recv().unwrap();
+        let other = s.spawn(move || {
+            session
+                .write(second, "quick", |_, _| {
+                    order.lock().unwrap().push("second");
+                    Ok(())
+                })
+                .unwrap();
+        });
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        release.send(()).unwrap();
+        other.join().unwrap();
+    });
+    assert_eq!(*order.lock().unwrap(), ["first", "second"]);
+}
+
+#[test]
+fn a_write_that_panics_doesnt_lock_the_repo_for_good() {
+    let (repo, session, id) = setup();
+    let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        session.write(id, "boom", |_, _| panic!("a bug"))
+    }));
+    assert!(panicked.is_err());
+    repo.write("a.txt", "changed\n");
+    session
+        .write(id, "Stage a.txt", |r, g| r.stage(g, &paths(&["a.txt"])))
+        .unwrap();
+    assert_eq!(cached(&repo), "a.txt");
+}
+
+#[test]
 fn the_log_survives_reopening_the_repo() {
     let (repo, session, id) = setup();
     repo.write("a.txt", "changed\n");

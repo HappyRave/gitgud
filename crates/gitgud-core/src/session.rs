@@ -56,7 +56,7 @@ pub struct Session {
     open: Mutex<HashMap<u32, OpenRepo>>,
     watchers: Mutex<HashMap<u32, RepoWatcher>>,
     /// The running network task of each repo, so it can be cancelled.
-    tasks: Mutex<HashMap<u32, Cancel>>,
+    tasks: Mutex<HashMap<u32, Task>>,
     /// The graph of each repo with its history plan drawn in.
     previews: Mutex<HashMap<u32, Arc<Graph>>>,
     /// Last silent background refresh timestamp per repo id.
@@ -85,8 +85,44 @@ pub struct OpenRepo {
     pub graph: Arc<Graph>,
     pub graph_version: u32,
     config_stamp: Option<(std::time::SystemTime, u64)>,
-    /// One write at a time per repo: the op log records before and after states.
+    locks: RepoLocks,
+}
+
+/// Locks for one repository on disk, shared by every id it is open under (a
+/// reloaded window opens its repos again).
+#[derive(Clone, Default)]
+struct RepoLocks {
+    /// One write at a time: the op log records before and after states.
     writing: Arc<Mutex<()>>,
+    /// One refresh at a time, so a slower one can't put back an older graph.
+    refreshing: Arc<Mutex<()>>,
+}
+
+/// A running network task: the background fetch gives way to one the user started.
+#[derive(Clone)]
+struct Task {
+    cancel: Cancel,
+    background: bool,
+}
+
+/// Removes a task from [`Session::tasks`] when it ends, panicking or not.
+struct TaskSlot<'a> {
+    tasks: &'a Mutex<HashMap<u32, Task>>,
+    id: u32,
+}
+
+impl Drop for TaskSlot<'_> {
+    fn drop(&mut self) {
+        lock(self.tasks).remove(&self.id);
+    }
+}
+
+/// `mutex`, also after a panic elsewhere poisoned it: what it guards is only
+/// "one at a time", which a panic doesn't break.
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 fn config_stamp(repo: &Repo) -> Option<(std::time::SystemTime, u64)> {
@@ -134,12 +170,18 @@ impl Session {
         let dirty = !repo.status()?.entries.is_empty();
         let graph = Graph::build(&repo, dirty)?;
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let locks = self
+            .lock()
+            .values()
+            .find(|o| o.repo.root() == repo.root())
+            .map(|o| o.locks.clone())
+            .unwrap_or_default();
         let open = OpenRepo {
             config_stamp: config_stamp(&repo),
             repo,
             graph: Arc::new(graph),
             graph_version: 0,
-            writing: Arc::default(),
+            locks,
         };
         let opened = opened(id, &open);
         warm_guid_index(&open.repo);
@@ -202,6 +244,9 @@ impl Session {
 
     fn refresh_inner(&self, id: u32, force_reload: bool) -> Result<Opened, Error> {
         let started = Instant::now();
+        let locks = self.get(id)?.locks;
+        let _one_refresh = lock(&locks.refreshing);
+        // Read after the lock: a refresh that just finished may have swapped it.
         let open = self.get(id)?;
         unity_yaml::forget_guid_index(&open.repo);
         let stamp = config_stamp(&open.repo);
@@ -219,11 +264,9 @@ impl Session {
                     graph: open.graph.clone(),
                     graph_version: open.graph_version,
                     config_stamp: stamp,
-                    writing: open.writing.clone(),
+                    locks: open.locks.clone(),
                 };
-                let res = opened(id, &updated);
-                self.lock().insert(id, updated);
-                return Ok(res);
+                return self.replace(id, updated);
             }
             return Ok(opened(id, &open));
         }
@@ -232,12 +275,20 @@ impl Session {
             repo: repo.clone(),
             graph: Arc::new(Graph::build(&repo, dirty)?),
             graph_version: open.graph_version + 1,
-            writing: open.writing.clone(),
+            locks: open.locks.clone(),
         };
-        let opened = opened(id, &fresh);
-        self.lock().insert(id, fresh);
+        let opened = self.replace(id, fresh)?;
         self.record_timing("refresh", started);
         Ok(opened)
+    }
+
+    /// Puts `updated` in place of repo `id`, unless it was closed meanwhile.
+    fn replace(&self, id: u32, updated: OpenRepo) -> Result<Opened, Error> {
+        let mut open = self.lock();
+        let slot = open.get_mut(&id).ok_or(Error::UnknownRepo(id))?;
+        let res = opened(id, &updated);
+        *slot = updated;
+        Ok(res)
     }
 
     /// # Errors
@@ -1103,26 +1154,52 @@ impl Session {
         id: u32,
         f: impl FnOnce(&Cancel) -> Result<T, Error>,
     ) -> Result<T, Error> {
-        let cancel = Cancel::default();
-        {
-            let mut tasks = self.tasks.lock().expect("task lock poisoned");
-            if tasks.contains_key(&id) {
-                return Err(Error::Refused(
-                    "a remote operation is already running".into(),
-                ));
+        let (_slot, cancel) = self.start_task(id, false)?;
+        f(&cancel)
+    }
+
+    /// Registers repo `id`'s network task. One the user starts cancels the
+    /// background fetch and waits for it to stop; anything else already running
+    /// refuses it.
+    fn start_task(&self, id: u32, background: bool) -> Result<(TaskSlot<'_>, Cancel), Error> {
+        let give_up = Instant::now() + Duration::from_secs(5);
+        loop {
+            let mut tasks = lock(&self.tasks);
+            match tasks.get(&id) {
+                None => {
+                    let cancel = Cancel::default();
+                    tasks.insert(
+                        id,
+                        Task {
+                            cancel: cancel.clone(),
+                            background,
+                        },
+                    );
+                    let slot = TaskSlot {
+                        tasks: &self.tasks,
+                        id,
+                    };
+                    return Ok((slot, cancel));
+                }
+                Some(running) if running.background && !background && Instant::now() < give_up => {
+                    running.cancel.cancel();
+                }
+                Some(_) => {
+                    return Err(Error::Refused(
+                        "a remote operation is already running".into(),
+                    ));
+                }
             }
-            tasks.insert(id, cancel.clone());
+            drop(tasks);
+            std::thread::sleep(Duration::from_millis(25));
         }
-        let result = f(&cancel);
-        self.tasks.lock().expect("task lock poisoned").remove(&id);
-        result
     }
 
     /// Cancels repo `id`'s running remote task. Returns whether one was running.
     pub fn cancel(&self, id: u32) -> bool {
-        match self.tasks.lock().expect("task lock poisoned").get(&id) {
-            Some(cancel) => {
-                cancel.cancel();
+        match lock(&self.tasks).get(&id) {
+            Some(task) => {
+                task.cancel.cancel();
                 true
             }
             None => false,
@@ -1361,32 +1438,26 @@ impl Session {
             return Ok(false);
         }
         {
-            let guard = self
-                .last_bg_refresh
-                .lock()
-                .expect("bg refresh lock poisoned");
-            if let Some(prev) = guard.get(&id)
+            let mut last = lock(&self.last_bg_refresh);
+            if let Some(prev) = last.get(&id)
                 && prev.elapsed() < Duration::from_secs(min_age_secs)
             {
                 return Ok(false);
             }
+            // Stamped before it runs, so a fetch that hangs isn't started again on top.
+            last.insert(id, Instant::now());
         }
-        if open.writing.try_lock().is_err() {
+        // Gives way to a fetch, pull or push the user starts (they cancel it).
+        let Ok((_slot, cancel)) = self.start_task(id, true) else {
             return Ok(false);
-        }
+        };
         let ok = git
-            .run_background(open.repo.root(), &["fetch", "--all", "--prune"])
+            .run_background_cancellable(open.repo.root(), &["fetch", "--all", "--prune"], &cancel)
             .is_ok();
-        self.last_bg_refresh
-            .lock()
-            .expect("bg refresh lock poisoned")
-            .insert(id, Instant::now());
         if ok {
-            let _ = self.refresh_inner(id, true);
-            Ok(true)
-        } else {
-            Ok(false)
+            self.refresh_inner(id, true)?;
         }
+        Ok(ok)
     }
 
     /// Compares two points of repo `id` (R12-B compare view).
@@ -2622,7 +2693,7 @@ impl Session {
     ) -> Result<T, Error> {
         let open = self.get(id)?;
         let git = self.git()?;
-        let _one_writer = open.writing.lock().expect("write lock poisoned");
+        let _one_writer = lock(&open.locks.writing);
         let _paused = self.watchers().get(&id).map(RepoWatcher::pause);
         f(&open, &git)
     }

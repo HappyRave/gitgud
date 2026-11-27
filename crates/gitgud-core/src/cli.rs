@@ -198,12 +198,7 @@ impl GitCli {
     /// As [`GitCli::run`].
     pub fn run_background(&self, cwd: &Path, args: &[&str]) -> Result<String, Error> {
         let mut cmd = self.command(cwd, args);
-        cmd.env("GCM_INTERACTIVE", "never")
-            .env("GIT_ASKPASS", "")
-            .env("SSH_ASKPASS", "");
-        if std::env::var_os("GIT_SSH_COMMAND").is_none() {
-            cmd.env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes");
-        }
+        non_interactive(&mut cmd);
         let fail = |message: String| command_error(args, message);
         let output = cmd.output().map_err(|e| fail(e.to_string()))?;
         let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
@@ -234,6 +229,16 @@ impl GitCli {
         }
         no_console_window(&mut cmd);
         cmd
+    }
+}
+
+/// No credential prompt or SSH question: a background run must fail, not wait.
+pub(crate) fn non_interactive(cmd: &mut Command) {
+    cmd.env("GCM_INTERACTIVE", "never")
+        .env("GIT_ASKPASS", "")
+        .env("SSH_ASKPASS", "");
+    if std::env::var_os("GIT_SSH_COMMAND").is_none() {
+        cmd.env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes");
     }
 }
 
