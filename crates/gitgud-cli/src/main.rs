@@ -2,18 +2,12 @@ mod mcp;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::time::Duration;
 
 use gitgud_core::cli::GitCli;
 use gitgud_core::git;
-use gitgud_core::graph::Graph;
-use gitgud_core::lfs;
-use gitgud_core::proposals::{
-    CreateProposalInput, agent_status, claude_stop_hook_snippet, create_proposal, get_proposal,
-    list_proposals, run_agent_hook, wait_for_proposal, withdraw_proposal, write_claude_stop_hook,
-};
+use gitgud_core::proposals::{claude_stop_hook_snippet, run_agent_hook, write_claude_stop_hook};
 use gitgud_core::repo;
-use gitgud_core::worktree::Side;
+use serde_json::{Value, json};
 
 fn main() -> ExitCode {
     match run() {
@@ -62,144 +56,83 @@ fn run() -> Result<(), String> {
         return handle_agent(&repo_path, rest, json_out);
     }
 
-    let opened = repo::open(&repo_path).map_err(|e| e.to_string())?;
-    let git_cli = GitCli::new(&git::locate().map_err(|e| e.to_string())?);
+    // The same tools the MCP server offers, with the CLI's flags as their arguments.
+    let (tool, args) = tool_call(sub, rest)?;
+    let ctx = mcp::Ctx::open(&repo_path)?;
+    let out = mcp::execute_tool(&ctx, tool, &args)?;
+    match text_of(tool, &out).filter(|_| !json_out) {
+        Some(text) => println!("{text}"),
+        None => println!(
+            "{}",
+            serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?
+        ),
+    }
+    Ok(())
+}
 
+/// The MCP tool and arguments for CLI command `sub` with flags `rest`.
+fn tool_call(sub: &str, rest: &[String]) -> Result<(&'static str, Value), String> {
+    let value_after = |idx: usize, what: &str| -> Result<String, String> {
+        rest.get(idx + 1).cloned().ok_or_else(|| what.to_owned())
+    };
     match sub {
-        "status" => {
-            let st = agent_status(&opened, &git_cli).map_err(|e| e.to_string())?;
-            if json_out {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&st).map_err(|e| e.to_string())?
-                );
-            } else {
-                println!("Root: {}", st.root);
-                for f in &st.files {
-                    println!("{} ({} hunks)", f.path, f.hunks.len());
-                    for h in &f.hunks {
-                        println!("  {} {:?} {}", h.id, h.side, h.preview);
-                    }
-                }
-                for rf in &st.risk_flags {
-                    println!("RISK [{}] {}: {}", rf.kind, rf.path, rf.detail);
-                }
-            }
-        }
+        "status" => Ok(("status", json!({}))),
         "diff" => {
             let mut staged = false;
-            let mut file_path: Option<String> = None;
+            let mut path: Option<String> = None;
             let mut idx = 0;
             while idx < rest.len() {
                 match rest[idx].as_str() {
                     "--staged" => staged = true,
                     "--path" => {
+                        path = Some(value_after(idx, "--path requires a file")?);
                         idx += 1;
-                        file_path = Some(rest.get(idx).ok_or("--path requires a file")?.clone());
                     }
-                    other if file_path.is_none() => file_path = Some(other.to_owned()),
+                    other if path.is_none() => path = Some(other.to_owned()),
                     other => return Err(format!("unexpected argument: {other}")),
                 }
                 idx += 1;
             }
-            let p = file_path.ok_or("diff requires <path>")?;
-            let side = if staged { Side::Staged } else { Side::Unstaged };
-            let d = opened
-                .worktree_file_diff(&p, side)
-                .map_err(|e| e.to_string())?;
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&d).map_err(|e| e.to_string())?
-            );
+            let path = path.ok_or("diff requires <path>")?;
+            Ok(("diff", json!({ "path": path, "staged": staged })))
         }
         "log" => {
-            let mut limit = 20usize;
+            let mut limit = 20u64;
             let mut idx = 0;
             while idx < rest.len() {
                 if rest[idx] == "-n" || rest[idx] == "--limit" {
+                    limit = value_after(idx, "-n requires an integer")?
+                        .parse()
+                        .map_err(|_| "-n requires an integer")?;
                     idx += 1;
-                    limit = rest
-                        .get(idx)
-                        .and_then(|s| s.parse().ok())
-                        .ok_or("-n requires an integer")?;
                 }
                 idx += 1;
             }
-            let g = Graph::build(&opened, false).map_err(|e| e.to_string())?;
-            let rows = g
-                .rows(&opened, 0, limit.min(g.len()))
-                .map_err(|e| e.to_string())?;
-            if json_out {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&rows).map_err(|e| e.to_string())?
-                );
-            } else {
-                for r in rows {
-                    println!("{} {} ({})", r.short_id, r.subject, r.author);
-                }
-            }
+            Ok(("log", json!({ "limit": limit })))
         }
         "show" => {
             let commit = rest.first().ok_or("show requires <commit>")?;
-            if let Some(p) = rest.get(1) {
-                let d = opened
-                    .commit_file_diff(commit, p)
-                    .map_err(|e| e.to_string())?;
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&d).map_err(|e| e.to_string())?
-                );
-            } else {
-                let d = opened.commit_detail(commit).map_err(|e| e.to_string())?;
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&d).map_err(|e| e.to_string())?
-                );
-            }
+            Ok(("show", json!({ "commit": commit, "path": rest.get(1) })))
         }
         "propose" => {
-            let mut input = CreateProposalInput::default();
+            let (mut message, mut why, mut agent) = (String::new(), None, None);
+            let (mut paths, mut hunks) = (Vec::new(), Vec::new());
             let mut idx = 0;
             while idx < rest.len() {
                 match rest[idx].as_str() {
-                    "-m" | "--message" => {
-                        idx += 1;
-                        input.message = rest.get(idx).ok_or("-m requires a message")?.clone();
-                    }
-                    "--why" => {
-                        idx += 1;
-                        input.why = Some(rest.get(idx).ok_or("--why requires text")?.clone());
-                    }
-                    "--agent" => {
-                        idx += 1;
-                        input.agent = Some(rest.get(idx).ok_or("--agent requires a name")?.clone());
-                    }
-                    "--path" => {
-                        idx += 1;
-                        input
-                            .paths
-                            .push(rest.get(idx).ok_or("--path requires a path")?.clone());
-                    }
-                    "--hunk" => {
-                        idx += 1;
-                        input
-                            .hunk_ids
-                            .push(rest.get(idx).ok_or("--hunk requires an id")?.clone());
-                    }
+                    "-m" | "--message" => message = value_after(idx, "-m requires a message")?,
+                    "--why" => why = Some(value_after(idx, "--why requires text")?),
+                    "--agent" => agent = Some(value_after(idx, "--agent requires a name")?),
+                    "--path" => paths.push(value_after(idx, "--path requires a path")?),
+                    "--hunk" => hunks.push(value_after(idx, "--hunk requires an id")?),
                     other => return Err(format!("unknown propose flag: {other}")),
                 }
-                idx += 1;
+                idx += 2;
             }
-            let summary = create_proposal(&opened, &git_cli, &input).map_err(|e| e.to_string())?;
-            if json_out {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&summary).map_err(|e| e.to_string())?
-                );
-            } else {
-                println!("Created proposal {} ({})", summary.id, summary.short_commit);
-            }
+            Ok((
+                "propose",
+                json!({ "message": message, "why": why, "agent": agent, "paths": paths, "hunkIds": hunks }),
+            ))
         }
         "proposal" => {
             let mut id: Option<String> = None;
@@ -210,11 +143,10 @@ fn run() -> Result<(), String> {
                 match rest[idx].as_str() {
                     "--wait" => wait = true,
                     "--timeout" => {
+                        timeout_secs = value_after(idx, "--timeout requires seconds")?
+                            .parse()
+                            .map_err(|_| "--timeout requires an integer number of seconds")?;
                         idx += 1;
-                        timeout_secs = rest
-                            .get(idx)
-                            .and_then(|s| s.parse().ok())
-                            .ok_or("--timeout requires an integer number of seconds")?;
                     }
                     other if id.is_none() => id = Some(other.to_owned()),
                     other => return Err(format!("unexpected proposal argument: {other}")),
@@ -222,72 +154,88 @@ fn run() -> Result<(), String> {
                 idx += 1;
             }
             if wait {
-                let pid = id.ok_or("proposal --wait requires <id>")?;
-                let res =
-                    wait_for_proposal(&opened, &pid, timeout_secs, Duration::from_millis(250))
-                        .map_err(|e| e.to_string())?;
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&res).map_err(|e| e.to_string())?
-                );
-            } else if let Some(pid) = id {
-                let p = get_proposal(&opened, &pid).map_err(|e| e.to_string())?;
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&p).map_err(|e| e.to_string())?
-                );
+                let id = id.ok_or("proposal --wait requires <id>")?;
+                Ok((
+                    "proposal_wait",
+                    json!({ "id": id, "timeoutSecs": timeout_secs }),
+                ))
             } else {
-                let list = list_proposals(&opened).map_err(|e| e.to_string())?;
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&list).map_err(|e| e.to_string())?
-                );
+                Ok(("proposal", json!({ "id": id })))
             }
         }
         "withdraw" => {
             let id = rest.first().ok_or("withdraw requires <id>")?;
-            let w = withdraw_proposal(&opened, &git_cli, id).map_err(|e| e.to_string())?;
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&w).map_err(|e| e.to_string())?
-            );
+            Ok(("withdraw", json!({ "id": id })))
         }
-        "locks" => {
-            let action = rest.first().map(String::as_str).unwrap_or("list");
-            match action {
-                "list" => {
-                    let list = lfs::lfs_locks_list(&git_cli, &opened).map_err(|e| e.to_string())?;
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&list).map_err(|e| e.to_string())?
-                    );
-                }
-                "lock" => {
-                    let p = rest.get(1).ok_or("locks lock requires <path>")?;
-                    lfs::lfs_lock(&git_cli, &opened, p).map_err(|e| e.to_string())?;
-                    if json_out {
-                        println!("{}", serde_json::json!({ "locked": p }));
-                    } else {
-                        println!("Locked {p}");
-                    }
-                }
-                "unlock" => {
-                    let p = rest.get(1).ok_or("locks unlock requires <path>")?;
-                    let force = rest.iter().any(|a| a == "--force");
-                    lfs::lfs_unlock(&git_cli, &opened, p, force).map_err(|e| e.to_string())?;
-                    if json_out {
-                        println!("{}", serde_json::json!({ "unlocked": p }));
-                    } else {
-                        println!("Unlocked {p}");
-                    }
-                }
-                other => return Err(format!("unknown locks subcommand: {other}")),
+        "locks" => match rest.first().map_or("list", String::as_str) {
+            "list" => Ok(("locks_list", json!({}))),
+            "lock" => {
+                let path = rest.get(1).ok_or("locks lock requires <path>")?;
+                Ok(("locks_lock", json!({ "path": path })))
             }
-        }
-        other => return Err(format!("unknown command: {other}")),
+            "unlock" => {
+                let path = rest.get(1).ok_or("locks unlock requires <path>")?;
+                let force = rest.iter().any(|a| a == "--force");
+                Ok(("locks_unlock", json!({ "path": path, "force": force })))
+            }
+            other => Err(format!("unknown locks subcommand: {other}")),
+        },
+        other => Err(format!("unknown command: {other}")),
     }
+}
 
-    Ok(())
+/// The plain-text answer of `tool` for a person, where it has one (else JSON).
+fn text_of(tool: &str, out: &Value) -> Option<String> {
+    let s = |v: &Value| v.as_str().unwrap_or_default().to_owned();
+    let list = |v: &Value| v.as_array().cloned().unwrap_or_default();
+    match tool {
+        "status" => {
+            let mut lines = vec![format!("Root: {}", s(&out["root"]))];
+            for f in list(&out["files"]) {
+                let hunks = list(&f["hunks"]);
+                lines.push(format!("{} ({} hunks)", s(&f["path"]), hunks.len()));
+                for h in hunks {
+                    lines.push(format!(
+                        "  {} {} {}",
+                        s(&h["id"]),
+                        s(&h["side"]),
+                        s(&h["preview"])
+                    ));
+                }
+            }
+            for r in list(&out["riskFlags"]) {
+                lines.push(format!(
+                    "RISK [{}] {}: {}",
+                    s(&r["kind"]),
+                    s(&r["path"]),
+                    s(&r["detail"])
+                ));
+            }
+            Some(lines.join("\n"))
+        }
+        "log" => Some(
+            list(out)
+                .iter()
+                .map(|r| {
+                    format!(
+                        "{} {} ({})",
+                        s(&r["shortId"]),
+                        s(&r["subject"]),
+                        s(&r["author"])
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+        ),
+        "propose" => Some(format!(
+            "Created proposal {} ({})",
+            s(&out["id"]),
+            s(&out["shortCommit"])
+        )),
+        "locks_lock" => Some(format!("Locked {}", s(&out["locked"]))),
+        "locks_unlock" => Some(format!("Unlocked {}", s(&out["unlocked"]))),
+        _ => None,
+    }
 }
 
 fn handle_agent(repo_root: &Path, args: &[String], json_out: bool) -> Result<(), String> {

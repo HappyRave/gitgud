@@ -27,11 +27,21 @@ struct JsonRpcReq {
 
 /// The repository a server answers for, opened once: re-opening it and locating
 /// git (a process) on every call made each tool call slow.
-struct Ctx {
+pub(crate) struct Ctx {
     repo: Repo,
     git: GitCli,
     /// The history graph `log` reads, built again only once refs or HEAD move.
     graph: Mutex<Option<Graph>>,
+}
+
+impl Ctx {
+    pub(crate) fn open(repo_root: &Path) -> Result<Self, String> {
+        Ok(Self {
+            repo: repo::open(repo_root).map_err(|e| e.to_string())?,
+            git: GitCli::new(&git::locate().map_err(|e| e.to_string())?),
+            graph: Mutex::new(None),
+        })
+    }
 }
 
 /// Runs a line-delimited JSON-RPC 2.0 MCP stdio server against `repo_root`.
@@ -39,11 +49,7 @@ struct Ctx {
 /// Each tool call runs on its own thread, so a `proposal_wait` that blocks for
 /// minutes doesn't stop `ping` or other calls from being answered.
 pub fn serve_stdio(repo_root: &Path) -> Result<(), String> {
-    let ctx = Arc::new(Ctx {
-        repo: repo::open(repo_root).map_err(|e| e.to_string())?,
-        git: GitCli::new(&git::locate().map_err(|e| e.to_string())?),
-        graph: Mutex::new(None),
-    });
+    let ctx = Arc::new(Ctx::open(repo_root)?);
     let out = Arc::new(Mutex::new(io::BufWriter::new(io::stdout())));
     let send = |out: &Mutex<io::BufWriter<io::Stdout>>, msg: &Value| -> Result<(), String> {
         let mut out = out
@@ -135,7 +141,8 @@ fn call_tool(ctx: &Ctx, name: &str, args: &Value) -> Value {
     }
 }
 
-fn execute_tool(ctx: &Ctx, name: &str, args: &Value) -> Result<Value, String> {
+/// Runs tool `name` with `args` (its MCP arguments); the CLI's commands come here too.
+pub(crate) fn execute_tool(ctx: &Ctx, name: &str, args: &Value) -> Result<Value, String> {
     let (opened, git_cli) = (&ctx.repo, &ctx.git);
     match name {
         "status" => {
