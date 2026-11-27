@@ -201,16 +201,7 @@ fn read(file: &Path) -> Option<Vec<u8>> {
 
 /// Writes through a temporary file, so a concurrent reader never sees half a file.
 fn write(file: &Path, bytes: &[u8]) {
-    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let tmp = file.with_extension(format!("{}-{n}.tmp", std::process::id()));
-    let done = file
-        .parent()
-        .map_or(Ok(()), fs::create_dir_all)
-        .and_then(|()| fs::write(&tmp, bytes))
-        .and_then(|()| fs::rename(&tmp, file));
-    if let Err(e) = done {
-        let _ = fs::remove_file(&tmp);
+    if let Err(e) = crate::atomic_file::write_atomic(file, bytes) {
         eprintln!("gitgud: cannot write cache file {}: {e}", file.display());
     }
 }

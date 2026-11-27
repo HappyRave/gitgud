@@ -1274,27 +1274,13 @@ fn backup_file(file: &Path) -> PathBuf {
 /// Writes `state` through a synced temporary file, after copying the current file
 /// to its backup.
 fn save_atomic(file: &Path, state: &LibraryState) -> Result<(), Error> {
-    use std::io::Write;
-    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    if let Some(parent) = file.parent() {
-        std::fs::create_dir_all(parent).map_err(read_err)?;
-    }
-    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    // Unique per writer: two gitgud windows share one library file.
-    let tmp = file.with_extension(format!("json.{}-{n}.tmp", std::process::id()));
     let data = serde_json::to_vec_pretty(state)
         .map_err(|e| Error::Read(format!("serialize library: {e}")))?;
-    let written = std::fs::File::create(&tmp)
-        .and_then(|mut f| f.write_all(&data).and_then(|()| f.sync_all()))
-        .and_then(|()| match std::fs::copy(file, backup_file(file)) {
-            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
-            _ => Ok(()),
-        })
-        .and_then(|()| std::fs::rename(&tmp, file));
-    if written.is_err() {
-        let _ = std::fs::remove_file(&tmp);
+    match std::fs::copy(file, backup_file(file)) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(read_err(e)),
+        _ => {}
     }
-    written.map_err(read_err)
+    crate::atomic_file::write_atomic(file, &data).map_err(read_err)
 }
 
 /// The Library in `file`, or in its backup when `file` was left broken (a crash

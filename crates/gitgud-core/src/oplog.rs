@@ -700,9 +700,8 @@ impl OpLog {
     }
 
     fn save(&self, entries: &[Entry]) -> Result<(), Error> {
-        let tmp = self.dir.join("log.json.tmp");
-        fs::write(&tmp, serde_json::to_vec(entries).map_err(read_err)?).map_err(read_err)?;
-        fs::rename(&tmp, self.dir.join("log.json")).map_err(read_err)
+        let json = serde_json::to_vec(entries).map_err(read_err)?;
+        crate::atomic_file::write_atomic(&self.dir.join("log.json"), &json).map_err(read_err)
     }
 }
 

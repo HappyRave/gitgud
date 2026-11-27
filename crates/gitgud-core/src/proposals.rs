@@ -1007,14 +1007,8 @@ fn summary_path(repo: &Repo, id: &str) -> PathBuf {
 }
 
 fn save_summary(repo: &Repo, summary: &ProposalSummary) -> Result<(), Error> {
-    let dir = proposals_dir(repo);
-    fs::create_dir_all(&dir).map_err(read_err)?;
-    let path = summary_path(repo, &summary.id);
-    let tmp = dir.join(format!("{}.tmp", summary.id));
-    let json = serde_json::to_string_pretty(summary).map_err(read_err)?;
-    fs::write(&tmp, json).map_err(read_err)?;
-    fs::rename(&tmp, &path).map_err(read_err)?;
-    Ok(())
+    let json = serde_json::to_vec_pretty(summary).map_err(read_err)?;
+    crate::atomic_file::write_atomic(&summary_path(repo, &summary.id), &json).map_err(read_err)
 }
 
 fn unique_proposal_id(repo: &Repo, now: i64) -> String {

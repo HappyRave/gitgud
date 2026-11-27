@@ -1,5 +1,6 @@
 pub mod ai;
 pub mod app_stats;
+mod atomic_file;
 pub mod audio;
 pub mod blame;
 pub mod branches;

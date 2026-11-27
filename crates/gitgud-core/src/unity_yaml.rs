@@ -140,12 +140,7 @@ impl GuidIndex {
             let guid = s.guid.as_deref().unwrap_or("-");
             let _ = writeln!(out, "{}\t{time}\t{guid}\t{path}", s.len);
         }
-        if let Some(dir) = file.parent() {
-            fs::create_dir_all(dir)?;
-        }
-        let tmp = file.with_extension("tmp");
-        fs::write(&tmp, out)?;
-        fs::rename(tmp, file)
+        crate::atomic_file::write_atomic(file, out.as_bytes())
     }
 
     /// The stamps [`Self::save`] wrote, to update from; `None` when there's no usable file.
