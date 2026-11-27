@@ -1,5 +1,4 @@
 use std::fs;
-use std::path::PathBuf;
 
 use gix::ObjectId;
 use serde::{Deserialize, Serialize};
@@ -129,10 +128,9 @@ impl Repo {
             return Ok(None);
         };
         let now = self.conflicted_paths()?;
-        let started: Option<Started> = fs::read(self.sequencer_file())
-            .ok()
-            .map(|b| serde_json::from_slice::<Started>(&b).map_err(read_err))
-            .transpose()?
+        let started = self
+            .sequencer_record()
+            .load::<Started>()?
             .filter(|s| s.kind == kind && s.head_oid == head_oid);
 
         let (short_id, subject, mut conflicts) = match started {
@@ -248,13 +246,7 @@ impl Repo {
             subject,
             conflicts: self.classify(git, &paths)?,
         };
-        fs::create_dir_all(self.sequencer_file().parent().expect("has parent"))
-            .map_err(read_err)?;
-        fs::write(
-            self.sequencer_file(),
-            serde_json::to_vec(&started).map_err(read_err)?,
-        )
-        .map_err(read_err)?;
+        self.sequencer_record().save(&started)?;
         Ok(SequencerOutcome::Conflicts)
     }
 
@@ -374,14 +366,11 @@ impl Repo {
         }
     }
 
-    fn sequencer_file(&self) -> PathBuf {
-        self.git_dir().join("gitgud").join("sequencer.json")
+    fn sequencer_record(&self) -> crate::state_file::StateFile {
+        crate::state_file::StateFile::new(self, "sequencer.json")
     }
 
     fn forget_sequencer(&self) -> Result<(), Error> {
-        match fs::remove_file(self.sequencer_file()) {
-            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(read_err(e)),
-            _ => Ok(()),
-        }
+        self.sequencer_record().forget()
     }
 }

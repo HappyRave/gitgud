@@ -265,7 +265,10 @@ impl Repo {
             .next()
             .unwrap_or_default()
             .to_owned();
-        let started = self.started().filter(|s| s.onto_oid == onto_oid);
+        let started = self
+            .rebase_record()
+            .load::<Started>()?
+            .filter(|s| s.onto_oid == onto_oid);
         let now = self.conflicted_paths()?;
         let mut conflicts = match &started {
             Some(s) if s.step == step => s.conflicts.clone(),
@@ -319,7 +322,7 @@ impl Repo {
             // Stopped without a conflict (an empty commit...): say why, stay in progress.
             return Err(command_error(args, failure_message(&stdout, &stderr)));
         }
-        let previous = self.started();
+        let previous = self.rebase_record().load::<Started>()?;
         let (onto, onto_oid) = match (onto, &previous) {
             (Some((name, oid)), _) => (name.to_owned(), oid.to_owned()),
             (None, Some(s)) => (s.onto.clone(), s.onto_oid.clone()),
@@ -334,9 +337,7 @@ impl Repo {
             step: self.rebase_file("msgnum")?.parse().map_err(read_err)?,
             conflicts: self.classify(git, &paths)?,
         };
-        let file = self.git_dir().join("gitgud/rebase.json");
-        fs::create_dir_all(file.parent().expect("has a parent")).map_err(read_err)?;
-        fs::write(&file, serde_json::to_vec(&started).map_err(read_err)?).map_err(read_err)?;
+        self.rebase_record().save(&started)?;
         Ok(RebaseOutcome::Stopped)
     }
 
@@ -397,9 +398,8 @@ impl Repo {
         }
     }
 
-    fn started(&self) -> Option<Started> {
-        let bytes = fs::read(self.git_dir().join("gitgud/rebase.json")).ok()?;
-        serde_json::from_slice(&bytes).ok()
+    fn rebase_record(&self) -> crate::state_file::StateFile {
+        crate::state_file::StateFile::new(self, "rebase.json")
     }
 
     fn forget_rebase(&self) -> Result<(), Error> {
@@ -407,10 +407,7 @@ impl Repo {
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(read_err(e)),
             _ => {}
         }
-        match fs::remove_file(self.git_dir().join("gitgud/rebase.json")) {
-            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(read_err(e)),
-            _ => Ok(()),
-        }
+        self.rebase_record().forget()
     }
 }
 

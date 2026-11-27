@@ -9,6 +9,7 @@ use crate::cli::{GitCli, command_error, failure_message};
 use crate::diff::is_binary;
 use crate::lfs::{lfs_is_hydrated, parse_lfs_pointer};
 use crate::repo::{Error, Repo, read_err};
+use crate::state_file::StateFile;
 use crate::unity::{UnityMergeFile, run_smart_merge_on_conflict};
 
 /// Unity files Smart Merge handles (R4 state 4).
@@ -205,12 +206,7 @@ impl Repo {
             conflicts,
             unity_verify: Vec::new(),
         };
-        fs::create_dir_all(self.state_file().parent().expect("has a parent")).map_err(read_err)?;
-        fs::write(
-            self.state_file(),
-            serde_json::to_vec(&started).map_err(read_err)?,
-        )
-        .map_err(read_err)?;
+        self.merge_record().save(&started)?;
         Ok(MergeOutcome::Conflicts)
     }
 
@@ -340,12 +336,7 @@ impl Repo {
             }
         }
 
-        fs::create_dir_all(self.state_file().parent().expect("has a parent")).map_err(read_err)?;
-        fs::write(
-            self.state_file(),
-            serde_json::to_vec(&started).map_err(read_err)?,
-        )
-        .map_err(read_err)?;
+        self.merge_record().save(&started)?;
         Ok(merged_count)
     }
 
@@ -356,14 +347,10 @@ impl Repo {
     /// [`Error::Read`] when the record exists but can't be read: the Smart Merge
     /// items it holds must not be skipped silently.
     fn merge_started(&self, merge_head: &str) -> Result<Option<Started>, Error> {
-        match fs::read(self.state_file()) {
-            Ok(bytes) => Ok(
-                Some(serde_json::from_slice::<Started>(&bytes).map_err(read_err)?)
-                    .filter(|s| s.merge_head == merge_head),
-            ),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(e) => Err(read_err(e)),
-        }
+        Ok(self
+            .merge_record()
+            .load::<Started>()?
+            .filter(|s| s.merge_head == merge_head))
     }
 
     /// Marks Smart Merge verification items confirmed or unconfirmed on `path`.
@@ -380,13 +367,11 @@ impl Repo {
         let Some(merge_head) = self.merge_head()? else {
             return Err(Error::Refused("no merge is in progress".into()));
         };
-        let bytes = fs::read(self.state_file()).map_err(|_| {
-            Error::Refused("no Smart Merge verification data for this merge".into())
-        })?;
-        let mut started: Started = serde_json::from_slice(&bytes).map_err(read_err)?;
-        if started.merge_head != merge_head {
-            return Err(Error::Refused("merge state is stale".into()));
-        }
+        let Some(mut started) = self.merge_started(&merge_head)? else {
+            return Err(Error::Refused(
+                "no Smart Merge verification data for this merge".into(),
+            ));
+        };
         let mut updated = 0usize;
         for file in &mut started.unity_verify {
             if file.path != path {
@@ -406,11 +391,7 @@ impl Repo {
                 "no Smart Merge verification item matched {path}"
             )));
         }
-        fs::write(
-            self.state_file(),
-            serde_json::to_vec(&started).map_err(read_err)?,
-        )
-        .map_err(read_err)
+        self.merge_record().save(&started)
     }
 
     /// The conflicted text file `path` chunked by git's own merge (`merge-file
@@ -563,15 +544,12 @@ impl Repo {
         self.gix().git_dir().to_owned()
     }
 
-    fn state_file(&self) -> PathBuf {
-        self.git_dir().join("gitgud").join("merge.json")
+    fn merge_record(&self) -> StateFile {
+        StateFile::new(self, "merge.json")
     }
 
     fn forget_merge(&self) -> Result<(), Error> {
-        match fs::remove_file(self.state_file()) {
-            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(read_err(e)),
-            _ => Ok(()),
-        }
+        self.merge_record().forget()
     }
 
     pub(crate) fn merge_head(&self) -> Result<Option<String>, Error> {

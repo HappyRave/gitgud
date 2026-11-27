@@ -41,6 +41,7 @@ pub mod session;
 pub mod snapshot;
 pub mod stacks;
 pub mod stash;
+mod state_file;
 pub mod table;
 pub mod tags;
 pub mod task;
