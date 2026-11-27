@@ -426,8 +426,9 @@ replaying at most 255 rows (spike 4.3).
   `refs/gitgud/proposals/<id>` + `.git/gitgud/proposals/<id>.json` without touching the user's index
   or branches. Never exposes commit/checkout/merge/rebase/push over CLI/MCP. Non-blocking Unity risk
   flags (`.meta` pairs, unlocked LFS files, deleted files), sidebar Inbox (`Sidebar.svelte`), dashed
-  ghost rows (`Graph.svelte` / `topology.rs`), 3-way replay onto moved `HEAD`, and undoable `approve` /
-  `request_changes` / `reject` in `ProposalView.svelte`.
+  ghost rows (`Graph.svelte` / `topology.rs`), 3-way replay onto moved `HEAD`, and `approve` (undoable;
+  refused while other changes are staged) / `request_changes` / `reject` in `ProposalView.svelte`.
+  Only pending proposals can be withdrawn or rejected; ids are checked before they become file names.
 
 ## Commands
 

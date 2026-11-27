@@ -354,3 +354,39 @@ fn approve_keeps_non_utf8_bytes() {
         .stdout;
     assert_eq!(blob, latin1);
 }
+
+#[test]
+fn finalized_proposals_stay_final_and_ids_must_be_ours() {
+    let repo = TestRepo::init();
+    repo.write("a.txt", "a\n")
+        .write("b.txt", "b\n")
+        .commit_all("base");
+    repo.write("a.txt", "a agent\n").write("b.txt", "b agent\n");
+    let git = GitCli::new(&locate().unwrap());
+    let opened = repo::open(repo.path()).unwrap();
+    let approved = propose(&opened, &git, "a.txt");
+    let rejected = propose(&opened, &git, "b.txt");
+
+    let session = Session::default();
+    let sid = session.open(repo.path()).unwrap().id;
+    session.proposal_approve(sid, &approved, None, &[]).unwrap();
+    assert!(withdraw_proposal(&opened, &git, &approved).is_err());
+    assert_eq!(
+        get_proposal(&opened, &approved).unwrap().status,
+        ProposalStatus::Approved
+    );
+
+    let closed = reject_proposal(&opened, &git, &rejected, Some("not now")).unwrap();
+    assert_eq!(closed.comments[0].author, "gitgud tests");
+    assert!(withdraw_proposal(&opened, &git, &rejected).is_err());
+
+    for bad in ["../../config", "a/b", ""] {
+        assert!(
+            matches!(
+                get_proposal(&opened, bad),
+                Err(gitgud_core::repo::Error::Refused(_))
+            ),
+            "{bad}"
+        );
+    }
+}

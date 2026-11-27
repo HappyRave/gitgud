@@ -532,6 +532,16 @@ pub fn wait_for_proposal(
 /// # Errors
 /// [`Error::Refused`] if not found.
 pub fn get_proposal(repo: &Repo, proposal_id: &str) -> Result<ProposalSummary, Error> {
+    // Ids come from agents and become file names: only what `unique_proposal_id` makes.
+    if proposal_id.is_empty()
+        || !proposal_id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+    {
+        return Err(Error::Refused(format!(
+            "'{proposal_id}' is not a proposal id"
+        )));
+    }
     let path = summary_path(repo, proposal_id);
     if !path.is_file() {
         return Err(Error::Refused(format!(
@@ -588,7 +598,7 @@ pub fn request_changes(
     let now = now_secs();
     prop.comments.push(ProposalComment {
         id: format!("c-{now}-{}", prop.comments.len() + 1),
-        author: "Max".into(),
+        author: reviewer(repo),
         text: text.to_owned(),
         path: path
             .map(str::trim)
@@ -724,7 +734,7 @@ pub fn approve_proposal(
     git.run(root, &["commit", "-m", &final_msg], None)?;
 
     let ref_name = format!("{PROPOSAL_REF_PREFIX}{proposal_id}");
-    let _ = git.run_status(root, &["update-ref", "-d", &ref_name], None);
+    git.run(root, &["update-ref", "-d", &ref_name], None)?;
 
     prop.status = ProposalStatus::Approved;
     prop.message = final_msg;
@@ -770,23 +780,39 @@ fn finalize_close(
     reason: Option<&str>,
 ) -> Result<ProposalSummary, Error> {
     let mut prop = get_proposal(repo, proposal_id)?;
+    if !matches!(
+        prop.status,
+        ProposalStatus::Pending | ProposalStatus::ChangesRequested
+    ) {
+        return Err(Error::Refused(format!(
+            "Proposal '{proposal_id}' is already finalized"
+        )));
+    }
     let now = now_secs();
     if let Some(note) = reason.map(str::trim).filter(|s| !s.is_empty()) {
         prop.comments.push(ProposalComment {
             id: format!("c-{now}-{}", prop.comments.len() + 1),
-            author: "Max".into(),
+            author: reviewer(repo),
             text: note.to_owned(),
             path: None,
             time: now,
         });
     }
     let ref_name = format!("{PROPOSAL_REF_PREFIX}{proposal_id}");
-    let _ = git.run_status(repo.root(), &["update-ref", "-d", &ref_name], None);
+    git.run(repo.root(), &["update-ref", "-d", &ref_name], None)?;
     prop.status = status;
     prop.updated_at = now;
     prop.head_moved = false;
     save_summary(repo, &prop)?;
     Ok(prop)
+}
+
+/// The reviewer's name for comments: git's `user.name`.
+fn reviewer(repo: &Repo) -> String {
+    repo.gix()
+        .config_snapshot()
+        .string("user.name")
+        .map_or_else(|| "You".to_owned(), |name| name.to_string())
 }
 
 fn diff_bytes_for_proposal(
