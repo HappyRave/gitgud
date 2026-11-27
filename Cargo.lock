@@ -1940,7 +1940,7 @@ dependencies = [
 
 [[package]]
 name = "gitgud"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "gitgud-core",
  "image",
@@ -1959,7 +1959,7 @@ dependencies = [
 
 [[package]]
 name = "gitgud-cli"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "gitgud-core",
  "serde",
@@ -1969,7 +1969,7 @@ dependencies = [
 
 [[package]]
 name = "gitgud-core"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "csv",
  "ebur128",
