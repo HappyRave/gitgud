@@ -57,6 +57,43 @@
 
   const lockByPath = $derived(new Map(locks.map((l) => [l.path, l])));
 
+  /** Rows drawn per group at first, and added each time the list scrolls near its end:
+   * 9,000 rows cost ~0.5 s to draw on every status read (they are all still selectable,
+   * stageable and counted; only drawing waits). */
+  const ROWS_STEP = 300;
+  let shown = $state<Record<string, number>>({});
+  const shownOf = (title: string) => shown[title] ?? ROWS_STEP;
+
+  function showMore(title: string) {
+    shown[title] = shownOf(title) + ROWS_STEP;
+  }
+
+  // The selected row is always drawn (arrow keys can move past the drawn rows).
+  $effect(() => {
+    const path = selected?.path;
+    if (!path) {
+      return;
+    }
+    for (const g of groups) {
+      const at = g.rows.findIndex((e) => e.path === path);
+      if (at >= shownOf(g.title)) {
+        shown[g.title] = (Math.floor(at / ROWS_STEP) + 1) * ROWS_STEP;
+      }
+    }
+  });
+
+  /** Calls `load` when the element comes near view, again while it stays there. */
+  function nearView(load: () => void) {
+    return (el: HTMLElement) => {
+      if (typeof IntersectionObserver === "undefined") {
+        return;
+      }
+      const io = new IntersectionObserver((entries) => entries.some((e) => e.isIntersecting) && load(), { rootMargin: "400px" });
+      io.observe(el);
+      return () => io.disconnect();
+    };
+  }
+
   let fileMenu = $state<{ x: number; y: number; items: MenuItem[] } | null>(null);
 
   function openFileMenu(event: MouseEvent, entry: Entry) {
@@ -235,7 +272,7 @@
       {/if}
     </h2>
     <ul aria-label={group.title}>
-      {#each group.rows as entry (entry.path)}
+      {#each group.rows.slice(0, shownOf(group.title)) as entry (entry.path)}
         {@const letter = group.change(entry)}
         {@const cut = entry.path.lastIndexOf("/") + 1}
         {@const lock = lockByPath.get(entry.path)}
@@ -316,6 +353,12 @@
           >
         </li>
       {/each}
+      {#if group.rows.length > shownOf(group.title)}
+        {@const more = group.rows.length - shownOf(group.title)}
+        <li class="more" {@attach nearView(() => showMore(group.title))}>
+          <button type="button" class="bare" onclick={() => showMore(group.title)}>{more.toLocaleString("en-US")} more…</button>
+        </li>
+      {/if}
     </ul>
   {/each}
 </section>
@@ -481,6 +524,11 @@
     border-radius: 3px;
     background: var(--sel);
     color: var(--l0);
+  }
+  li.more button {
+    color: var(--muted);
+    font-size: 11.5px;
+    padding: 0 6px;
   }
   li.overlap-bad:not(.selected) {
     background: color-mix(in srgb, var(--bad) 45%, transparent);

@@ -206,6 +206,36 @@ export function installMock(scenario: string) {
   if (merge) {
     status = { ...status, head: { kind: "branch", name: "conflict/ours" } };
   }
+  // `/?mock&files=9000`: a big working copy (half edits, half new files) for timing the UI.
+  const manyFiles = Number(new URLSearchParams(globalThis.location?.search ?? "").get("files") ?? 0);
+  if (manyFiles > 0) {
+    status = {
+      ...status,
+      entries: Array.from({ length: manyFiles }, (_, i) =>
+        i % 2
+          ? { path: `Assets/New/Sounds/clip_${i}.wav`, kind: "untracked" as const, index: null, worktree: null }
+          : { path: `Assets/Old/Scripts/File${i}.cs`, kind: "tracked" as const, index: null, worktree: "modified" as const },
+      ).sort((a, b) => a.path.localeCompare(b.path)),
+    };
+  }
+  /** Stage / unstage move entries between the sides, as the real backend's status would. */
+  function moveSide(paths: string[], toIndex: boolean) {
+    const set = new Set(paths);
+    status = {
+      ...status,
+      entries: status.entries.map((e) => {
+        if (!set.has(e.path)) {
+          return e;
+        }
+        if (toIndex) {
+          return { ...e, kind: "tracked" as const, index: e.kind === "untracked" ? ("added" as const) : (e.worktree ?? e.index), worktree: null };
+        }
+        return e.index === "added"
+          ? { ...e, kind: "untracked" as const, index: null, worktree: null }
+          : { ...e, worktree: e.worktree ?? e.index, index: null };
+      }),
+    };
+  }
   const log: OpEntry[] = [
     { id: 3, time: now - 300, action: "Stage Assets/Scripts/Boat/Engine.cs", undone: false, paths: [] },
     { id: 2, time: now - 900, action: "Discard Assets/Scripts/Boat/Old.cs", undone: false, paths: ["Assets/Scripts/Boat/Old.cs"] },
@@ -414,8 +444,14 @@ export function installMock(scenario: string) {
       merge = null;
       return opened();
     },
-    stage: () => opened(),
-    unstage: () => opened(),
+    stage: ({ paths }) => {
+      moveSide(paths, true);
+      return opened();
+    },
+    unstage: ({ paths }) => {
+      moveSide(paths, false);
+      return opened();
+    },
     discard: () => opened(),
     stage_hunk: () => opened(),
     unstage_hunk: () => opened(),

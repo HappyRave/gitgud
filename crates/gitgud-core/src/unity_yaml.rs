@@ -107,6 +107,18 @@ impl GuidIndex {
         }
     }
 
+    /// Every `.meta` file (project-relative) by the GUID it holds; more than one is a collision.
+    #[must_use]
+    pub(crate) fn metas_by_guid(&self) -> HashMap<&str, Vec<&str>> {
+        let mut out: HashMap<&str, Vec<&str>> = HashMap::new();
+        for (path, stamp) in &self.metas {
+            if let Some(g) = &stamp.guid {
+                out.entry(g).or_default().push(path);
+            }
+        }
+        out
+    }
+
     /// How many `.meta` files the index knows.
     #[must_use]
     pub fn meta_count(&self) -> usize {

@@ -29,6 +29,7 @@ pub mod ops;
 pub mod overlap;
 pub mod partial_lfs;
 pub mod preview;
+mod prewarm;
 pub mod proposals;
 pub mod rebase;
 pub mod remote;

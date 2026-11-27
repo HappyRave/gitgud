@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::cli::GitCli;
 use crate::library::is_unity_project;
 use crate::repo::{EntryKind, Error, Repo, Status, read_err};
+use crate::unity_yaml::repo_guid_index;
 
 /// File extensions handled by UnityYAMLMerge.
 pub const UNITY_YAML_EXTENSIONS: [&str; 7] = [
@@ -288,7 +289,8 @@ pub fn check_meta_issues(repo: &Repo, status: &Status) -> Vec<MetaIssue> {
 
     let mut issues = Vec::new();
     let mut changed_meta_guids: Vec<(String, String)> = Vec::new();
-    let mut checked_parents: HashMap<PathBuf, Vec<String>> = HashMap::new();
+    // Per folder: the lowercased names more than one file shares.
+    let mut clashing_in: HashMap<PathBuf, HashSet<String>> = HashMap::new();
 
     for entry in &status.entries {
         let p = &entry.path;
@@ -331,22 +333,24 @@ pub fn check_meta_issues(repo: &Repo, status: &Status) -> Vec<MetaIssue> {
             if let Some(parent) = full.parent()
                 && let Some(fname) = full.file_name().and_then(|n| n.to_str())
             {
-                let siblings = checked_parents
-                    .entry(parent.to_path_buf())
-                    .or_insert_with(|| {
-                        fs::read_dir(parent)
-                            .ok()
-                            .into_iter()
-                            .flatten()
-                            .flatten()
-                            .filter_map(|e| e.file_name().into_string().ok())
-                            .collect()
-                    });
-                let lower = fname.to_ascii_lowercase();
-                if siblings
-                    .iter()
-                    .any(|s| s.to_ascii_lowercase() == lower && s != fname)
-                {
+                let clashing = clashing_in.entry(parent.to_path_buf()).or_insert_with(|| {
+                    let mut seen = HashSet::new();
+                    let mut twice = HashSet::new();
+                    for name in fs::read_dir(parent)
+                        .ok()
+                        .into_iter()
+                        .flatten()
+                        .flatten()
+                        .filter_map(|e| e.file_name().into_string().ok())
+                    {
+                        let lower = name.to_ascii_lowercase();
+                        if !seen.insert(lower.clone()) {
+                            twice.insert(lower);
+                        }
+                    }
+                    twice
+                });
+                if clashing.contains(&fname.to_ascii_lowercase()) {
                     issues.push(MetaIssue {
                         kind: MetaIssueKind::CaseMismatch,
                         path: p.clone(),
@@ -358,12 +362,20 @@ pub fn check_meta_issues(repo: &Repo, status: &Status) -> Vec<MetaIssue> {
     }
 
     if !changed_meta_guids.is_empty() {
-        let assets_dir = project.join("Assets");
-        if assets_dir.is_dir() {
-            let mut guid_owners: HashMap<String, Vec<String>> = HashMap::new();
-            collect_asset_guids(root, &assets_dir, &mut guid_owners);
+        // The GUID index re-reads only `.meta` files whose size or time moved.
+        let index = repo_guid_index(repo);
+        let guid_owners = index.metas_by_guid();
+        let in_repo = |p: &str| {
+            if proj_prefix.as_os_str().is_empty() {
+                p.to_owned()
+            } else {
+                format!("{}/{p}", proj_prefix.to_string_lossy().replace('\\', "/"))
+            }
+        };
+        {
             for (meta_path, guid) in changed_meta_guids {
-                if let Some(owners) = guid_owners.get(&guid) {
+                if let Some(owners) = guid_owners.get(guid.as_str()) {
+                    let owners: Vec<String> = owners.iter().map(|o| in_repo(o)).collect();
                     let others: Vec<&str> = owners
                         .iter()
                         .map(String::as_str)
@@ -761,34 +773,6 @@ pub(crate) fn read_meta_guid(path: &Path) -> Option<String> {
         }
     }
     None
-}
-
-pub(crate) fn collect_asset_guids(
-    repo_root: &Path,
-    dir: &Path,
-    out: &mut HashMap<String, Vec<String>>,
-) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let name_str = name.to_string_lossy();
-        if name_str.starts_with('.') || name_str.ends_with('~') {
-            continue;
-        }
-        let p = entry.path();
-        if p.is_dir() {
-            collect_asset_guids(repo_root, &p, out);
-        } else if p.extension().and_then(|e| e.to_str()) == Some("meta")
-            && let Some(guid) = read_meta_guid(&p)
-            && let Ok(rel) = p.strip_prefix(repo_root)
-        {
-            out.entry(guid)
-                .or_default()
-                .push(rel.to_string_lossy().replace('\\', "/"));
-        }
-    }
 }
 
 #[cfg(test)]

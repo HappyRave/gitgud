@@ -109,6 +109,39 @@ fn unity_detection_lockfile_meta_guard_and_smart_merge_setup() {
 }
 
 #[test]
+fn guid_collisions_in_a_nested_project_name_repo_paths() {
+    let repo = TestRepo::init();
+    repo.write(
+        "Game/ProjectSettings/ProjectVersion.txt",
+        "m_EditorVersion: 6000.0.1f1\n",
+    )
+    .write("Game/Assets/A.cs", "class A {}")
+    .write(
+        "Game/Assets/A.cs.meta",
+        "fileFormatVersion: 2\nguid: 0000000000000000000000000000000a\n",
+    )
+    .commit_all("project");
+    repo.write("Game/Assets/B.cs", "class B {}").write(
+        "Game/Assets/B.cs.meta",
+        "fileFormatVersion: 2\nguid: 0000000000000000000000000000000a\n",
+    );
+    let opened = gitgud_core::repo::open(repo.path()).unwrap();
+    let issues = check_meta_issues(&opened, &opened.status().unwrap());
+    let collision = issues
+        .iter()
+        .find(|i| i.kind == MetaIssueKind::GuidCollision)
+        .unwrap_or_else(|| panic!("{issues:?}"));
+    assert_eq!(collision.path, "Game/Assets/B.cs.meta");
+    assert!(
+        collision
+            .detail
+            .ends_with("collides with Game/Assets/A.cs.meta"),
+        "{}",
+        collision.detail
+    );
+}
+
+#[test]
 fn smart_merge_remerge_and_v1_property_verification_gate() {
     let repo = TestRepo::init();
     let doc = |x: &str, speed: &str| {

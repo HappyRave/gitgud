@@ -114,7 +114,14 @@ replaying at most 255 rows (spike 4.3).
 - **Working copy** (`worktree.rs`): diffs per side (staged: HEAD → index; unstaged: index → work
   tree after git's to-git filters, so autocrlf files diff like `git diff`). Both hunks and individual
   clicked/Shift+clicked lines stage, unstage, and undoably discard through `git apply --cached` /
-  worktree patches rebuilt from exact bytes; stale hunks are refused (`Error::Stale`).
+  worktree patches rebuilt from exact bytes; stale hunks are refused (`Error::Stale`). Staging 100+
+  paths first writes their blobs into one pack with `git fast-import` (`prewarm.rs`: gix's to-git
+  conversion, LFS files left out), then runs the usual `git add`, which finds them present: one loose
+  object file per new blob costs 3+ ms on Windows (9,000 entries: 30 s → 2 s). `core.bigFileThreshold`
+  bulk check-in would do the same but skips files git converts, i.e. everything under `autocrlf=true`.
+  `stage_perf` (ignored) times the whole chain. `StatusList` draws 300 rows per group and more as the
+  list scrolls (the selected row is always drawn); `?mock&files=9000` loads a big working copy in the
+  browser mock.
 - **Config & diagnostics** (`config.rs`): reads/writes `user.name` and `user.email` at global or
   repo-local scope (`Session::set_repo_identity` triggers config reload), and reports installed git
   and git-lfs paths/versions.

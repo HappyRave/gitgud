@@ -210,6 +210,30 @@ describe("StatusList actions", () => {
     expect(onselectfile).toHaveBeenCalledWith("gone.txt", "unstaged", { ctrl: false, shift: true });
   });
 
+  it("draws 300 rows of a big group at first, more on demand, and always the selected one", async () => {
+    const many: Entry[] = Array.from({ length: 1000 }, (_, i) => ({
+      path: `f${String(i).padStart(4, "0")}.cs`,
+      kind: "untracked",
+      index: null,
+      worktree: null,
+    }));
+    const onstage = vi.fn();
+    const view = renderComponent(StatusList, { status: status(many), onstage, onunstage: vi.fn() });
+    const list = () => screen.getByRole("list", { name: "Untracked" });
+    expect(within(list()).getAllByRole("listitem")).toHaveLength(301);
+    expect(screen.getByRole("heading", { name: /Untracked 1000/ })).toBeInTheDocument();
+
+    await fireEvent.click(within(list()).getByRole("button", { name: "700 more…" }));
+    expect(within(list()).getAllByRole("listitem")).toHaveLength(601);
+
+    await view.rerender({ status: status(many), onstage, onunstage: vi.fn(), selected: { path: "f0950.cs", side: "unstaged" } });
+    expect(within(list()).getByText("f0950.cs")).toBeInTheDocument();
+    expect(within(list()).queryByRole("button", { name: /more…/ })).toBeNull();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Stage all (Untracked)" }));
+    expect(onstage.mock.calls[0][0]).toHaveLength(1000);
+  });
+
   it("right-click on a file offers Explorer, a terminal in its folder, the editor and its path", async () => {
     const calls = mockCommands({ open_terminal: () => null });
     render({ status: status(ENTRIES) });

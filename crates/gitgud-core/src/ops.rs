@@ -33,6 +33,12 @@ impl Repo {
     /// # Errors
     /// [`Error::Command`] with git's message.
     pub fn stage(&self, git: &GitCli, paths: &[String]) -> Result<(), Error> {
+        if paths.len() >= crate::prewarm::PREWARM_MIN
+            && let Err(e) = crate::prewarm::prewarm_blobs(git, self, paths)
+        {
+            // Only a head start for `git add` below, which writes whatever is missing.
+            eprintln!("gitgud: writing blobs ahead of git add failed, staging the slow way: {e}");
+        }
         self.with_paths(git, &["add", "-A"], paths)
     }
 
