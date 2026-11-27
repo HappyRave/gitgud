@@ -223,54 +223,26 @@ pub(crate) fn mesh_asset_to_glb(text: &str) -> Result<Vec<u8>, Error> {
             .collect()
     };
 
-    let mut bin: Vec<u8> = Vec::new();
-    let mut views = Vec::new();
-    let mut accessors = Vec::new();
-    let mut push = |bytes: Vec<u8>, accessor: serde_json::Value, target: u32| -> usize {
-        while !bin.len().is_multiple_of(4) {
-            bin.push(0);
-        }
-        views.push(json!({ "buffer": 0, "byteOffset": bin.len(), "byteLength": bytes.len(), "target": target }));
-        bin.extend(bytes);
-        let mut a = accessor;
-        a["bufferView"] = json!(views.len() - 1);
-        accessors.push(a);
-        accessors.len() - 1
-    };
-    let floats = |v: &[f32]| v.iter().flat_map(|f| f.to_le_bytes()).collect::<Vec<u8>>();
-    let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
-    for p in positions.as_chunks::<3>().0 {
-        for i in 0..3 {
-            lo[i] = lo[i].min(p[i]);
-            hi[i] = hi[i].max(p[i]);
-        }
-    }
+    let mut buf = GlbBuffers::default();
     let mut attributes = serde_json::Map::new();
-    attributes.insert(
-        "POSITION".into(),
-        json!(push(
-            floats(&positions),
-            json!({ "componentType": 5126, "count": count, "type": "VEC3", "min": lo, "max": hi }),
-            34962
-        )),
-    );
+    attributes.insert("POSITION".into(), json!(buf.positions(&positions)));
     if let Some(n) = &normals {
         attributes.insert(
             "NORMAL".into(),
-            json!(push(
-                floats(n),
+            json!(buf.accessor(
+                f32_bytes(n),
                 json!({ "componentType": 5126, "count": count, "type": "VEC3" }),
-                34962
+                VERTICES
             )),
         );
     }
     if let Some(t) = &uvs {
         attributes.insert(
             "TEXCOORD_0".into(),
-            json!(push(
-                floats(t),
+            json!(buf.accessor(
+                f32_bytes(t),
                 json!({ "componentType": 5126, "count": count, "type": "VEC2" }),
-                34962
+                VERTICES
             )),
         );
     }
@@ -318,10 +290,10 @@ pub(crate) fn mesh_asset_to_glb(text: &str) -> Result<Vec<u8>, Error> {
             other => return Err(Error::Read(format!("mesh topology {other} is unknown"))),
         };
         let bytes: Vec<u8> = indices.iter().flat_map(|i| i.to_le_bytes()).collect();
-        let acc = push(
+        let acc = buf.accessor(
             bytes,
             json!({ "componentType": 5125, "count": indices.len(), "type": "SCALAR" }),
-            34963,
+            INDICES,
         );
         primitives.push(json!({ "attributes": attributes, "indices": acc, "mode": mode }));
     }
@@ -332,11 +304,80 @@ pub(crate) fn mesh_asset_to_glb(text: &str) -> Result<Vec<u8>, Error> {
         "scenes": [{ "nodes": [0] }],
         "nodes": [{ "name": name, "mesh": 0 }],
         "meshes": [{ "name": name, "primitives": primitives }],
-        "buffers": [{ "byteLength": bin.len() }],
-        "bufferViews": views,
-        "accessors": accessors,
     });
-    Ok(glb(&gltf, bin))
+    Ok(buf.finish(gltf))
+}
+
+/// The binary chunk of a GLB being written, with its buffer views and accessors.
+#[derive(Default)]
+pub(crate) struct GlbBuffers {
+    bin: Vec<u8>,
+    views: Vec<serde_json::Value>,
+    accessors: Vec<serde_json::Value>,
+}
+
+/// glTF buffer view targets.
+pub(crate) const VERTICES: u32 = 34962;
+pub(crate) const INDICES: u32 = 34963;
+
+impl GlbBuffers {
+    /// Appends `bytes` (4-byte aligned) as a buffer view, `target` naming vertex or
+    /// index data; returns the view's index.
+    pub(crate) fn view(&mut self, bytes: Vec<u8>, target: Option<u32>) -> usize {
+        while !self.bin.len().is_multiple_of(4) {
+            self.bin.push(0);
+        }
+        let mut view =
+            json!({ "buffer": 0, "byteOffset": self.bin.len(), "byteLength": bytes.len() });
+        if let Some(t) = target {
+            view["target"] = json!(t);
+        }
+        self.bin.extend(bytes);
+        self.views.push(view);
+        self.views.len() - 1
+    }
+
+    /// As [`Self::view`], with `accessor` over it; returns the accessor's index.
+    pub(crate) fn accessor(
+        &mut self,
+        bytes: Vec<u8>,
+        mut accessor: serde_json::Value,
+        target: u32,
+    ) -> usize {
+        accessor["bufferView"] = json!(self.view(bytes, Some(target)));
+        self.accessors.push(accessor);
+        self.accessors.len() - 1
+    }
+
+    /// A float VEC3 accessor of `positions` (x, y, z, ...), with the bounds glTF
+    /// requires of positions.
+    pub(crate) fn positions(&mut self, positions: &[f32]) -> usize {
+        let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
+        for p in positions.as_chunks::<3>().0 {
+            for k in 0..3 {
+                lo[k] = lo[k].min(p[k]);
+                hi[k] = hi[k].max(p[k]);
+            }
+        }
+        let count = positions.len() / 3;
+        self.accessor(
+            f32_bytes(positions),
+            json!({ "componentType": 5126, "count": count, "type": "VEC3", "min": lo, "max": hi }),
+            VERTICES,
+        )
+    }
+
+    /// The GLB of `gltf` with these buffers, views and accessors.
+    pub(crate) fn finish(self, mut gltf: serde_json::Value) -> Vec<u8> {
+        gltf["buffers"] = json!([{ "byteLength": self.bin.len() }]);
+        gltf["bufferViews"] = json!(self.views);
+        gltf["accessors"] = json!(self.accessors);
+        glb(&gltf, self.bin)
+    }
+}
+
+pub(crate) fn f32_bytes(v: &[f32]) -> Vec<u8> {
+    v.iter().flat_map(|f| f.to_le_bytes()).collect()
 }
 
 pub(crate) fn glb(json: &serde_json::Value, mut bin: Vec<u8>) -> Vec<u8> {

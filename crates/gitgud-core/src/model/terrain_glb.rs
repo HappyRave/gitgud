@@ -2,7 +2,7 @@ use image::{Rgba, RgbaImage, imageops::FilterType};
 use rayon::prelude::*;
 use serde_json::json;
 
-use super::mesh_asset::glb;
+use super::mesh_asset::{GlbBuffers, INDICES, VERTICES, f32_bytes};
 use super::terrain::TerrainData;
 
 /// The most heightmap samples drawn along a side: a 2049 heightmap is thinned to 513.
@@ -57,64 +57,28 @@ pub(crate) fn terrain_glb(t: &TerrainData, name: &str, texture: Option<&[u8]>) -
         }
     }
 
-    let mut bin = Vec::new();
-    let mut views = Vec::new();
-    let mut accessors = Vec::new();
-    let mut push = |bytes: Vec<u8>, accessor: Option<serde_json::Value>, target: Option<u32>| {
-        while !bin.len().is_multiple_of(4) {
-            bin.push(0);
-        }
-        let mut view = json!({ "buffer": 0, "byteOffset": bin.len(), "byteLength": bytes.len() });
-        if let Some(t) = target {
-            view["target"] = json!(t);
-        }
-        bin.extend(bytes);
-        views.push(view);
-        let view_ix = views.len() - 1;
-        match accessor {
-            Some(mut a) => {
-                a["bufferView"] = json!(view_ix);
-                accessors.push(a);
-                accessors.len() - 1
-            }
-            None => view_ix,
-        }
-    };
-    let floats = |v: &[f32]| v.iter().flat_map(|f| f.to_le_bytes()).collect::<Vec<u8>>();
+    let mut buf = GlbBuffers::default();
     let count = positions.len() / 3;
-    let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
-    for p in positions.as_chunks::<3>().0 {
-        for k in 0..3 {
-            lo[k] = lo[k].min(p[k]);
-            hi[k] = hi[k].max(p[k]);
-        }
-    }
-    let pos = push(
-        floats(&positions),
-        Some(
-            json!({ "componentType": 5126, "count": count, "type": "VEC3", "min": lo, "max": hi }),
-        ),
-        Some(34962),
+    let pos = buf.positions(&positions);
+    let nor = buf.accessor(
+        f32_bytes(&normals),
+        json!({ "componentType": 5126, "count": count, "type": "VEC3" }),
+        VERTICES,
     );
-    let nor = push(
-        floats(&normals),
-        Some(json!({ "componentType": 5126, "count": count, "type": "VEC3" })),
-        Some(34962),
+    let uv = buf.accessor(
+        f32_bytes(&uvs),
+        json!({ "componentType": 5126, "count": count, "type": "VEC2" }),
+        VERTICES,
     );
-    let uv = push(
-        floats(&uvs),
-        Some(json!({ "componentType": 5126, "count": count, "type": "VEC2" })),
-        Some(34962),
-    );
-    let idx = push(
+    let idx = buf.accessor(
         indices.iter().flat_map(|i| i.to_le_bytes()).collect(),
-        Some(json!({ "componentType": 5125, "count": indices.len(), "type": "SCALAR" })),
-        Some(34963),
+        json!({ "componentType": 5125, "count": indices.len(), "type": "SCALAR" }),
+        INDICES,
     );
     let mut material = json!({ "name": name, "pbrMetallicRoughness": { "metallicFactor": 0.0, "roughnessFactor": 1.0 } });
     let mut extra = serde_json::Map::new();
     if let Some(png) = texture {
-        let view = push(png.to_vec(), None, None);
+        let view = buf.view(png.to_vec(), None);
         material["pbrMetallicRoughness"]["baseColorTexture"] = json!({ "index": 0 });
         extra.insert(
             "images".into(),
@@ -137,14 +101,11 @@ pub(crate) fn terrain_glb(t: &TerrainData, name: &str, texture: Option<&[u8]>) -
             "material": 0,
         }] }],
         "materials": [material],
-        "buffers": [{ "byteLength": bin.len() }],
-        "bufferViews": views,
-        "accessors": accessors,
     });
     for (k, v) in extra {
         gltf[k] = v;
     }
-    glb(&gltf, bin)
+    buf.finish(gltf)
 }
 
 /// A layer texture ready to sample: shrunk so one tile has about as many texels as the
