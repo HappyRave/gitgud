@@ -220,13 +220,7 @@ fn parse(text: &str) -> Result<File, String> {
 
 /// `--- !u!<class> &<id>[ stripped]` → (class, id).
 pub(crate) fn parse_header(line: &str) -> Option<(u32, String)> {
-    let rest = line.strip_prefix("--- !u!")?;
-    let (class, rest) = rest.split_once(" &")?;
-    let id = rest.split(' ').next()?;
-    if id.is_empty() {
-        return None;
-    }
-    Some((class.parse().ok()?, id.to_owned()))
+    crate::unity_yaml::parse_doc_header(line).map(|(class, id, _)| (class, id))
 }
 
 fn indent(line: &str) -> usize {
