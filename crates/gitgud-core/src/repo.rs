@@ -38,6 +38,9 @@ pub struct Repo {
     pub(crate) listings: Mutex<Vec<(crate::model::cache::Origin, Arc<crate::model::tree::Listed>)>>,
     /// Property merge results not saved yet, by path; see `Version::Draft`.
     pub(crate) drafts: Mutex<HashMap<String, Arc<Vec<u8>>>>,
+    /// The op log's LFS objects no ref or the index reaches, with the key of the
+    /// refs, index and objects it was walked for; see `OpLog::stats`.
+    pub(crate) oplog_only_lfs: Mutex<Option<(u64, std::collections::HashSet<String>)>>,
 }
 
 /// GUID -> asset path, from one tree's `.meta` files.
@@ -66,6 +69,7 @@ pub fn open(path: impl AsRef<Path>) -> Result<Repo, Error> {
         inline_sources: Mutex::new(Vec::new()),
         listings: Mutex::new(Vec::new()),
         drafts: Mutex::new(HashMap::new()),
+        oplog_only_lfs: Mutex::new(None),
     })
 }
 

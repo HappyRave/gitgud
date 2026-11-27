@@ -1138,13 +1138,76 @@ fn oplog_only_lfs_bytes(repo: &Repo, entries: &[Entry], prune_end: usize) -> (u6
         return (0, 0);
     }
 
-    let mut remaining: HashSet<String> = snapshot_sizes.keys().cloned().collect();
+    // Walking the history is the slow part, and its answer only changes when a
+    // ref, the index or the op log's objects do.
+    let key = reachability_key(gix, &snapshot_sizes);
+    let remaining = {
+        let mut kept = repo
+            .oplog_only_lfs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match kept.as_ref() {
+            Some((k, set)) if *k == key => set.clone(),
+            _ => {
+                let wanted = snapshot_sizes.keys().cloned().collect();
+                let set = unreachable_lfs(gix, wanted, &mut blob_cache);
+                *kept = Some((key, set.clone()));
+                set
+            }
+        }
+    };
+
+    let total_lfs: u64 = remaining
+        .iter()
+        .filter_map(|oid| snapshot_sizes.get(oid))
+        .copied()
+        .sum();
+    let reclaimable_lfs: u64 = remaining
+        .iter()
+        .filter(|oid| prunable_oids.contains(*oid) && !kept_oids.contains(*oid))
+        .filter_map(|oid| snapshot_sizes.get(oid))
+        .copied()
+        .sum();
+    (total_lfs, reclaimable_lfs)
+}
+
+/// A hash of every ref tip, HEAD, the index file's size and time, and `objects`.
+fn reachability_key(gix: &gix::Repository, objects: &HashMap<String, u64>) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    let mut tips: Vec<(String, String)> = Vec::new();
+    if let Ok(refs) = gix.references()
+        && let Ok(iter) = refs.all()
+    {
+        for r in iter.flatten() {
+            tips.push((r.name().as_bstr().to_string(), format!("{:?}", r.target())));
+        }
+    }
+    tips.sort();
+    tips.hash(&mut h);
+    gix.head_id().ok().map(|id| id.detach()).hash(&mut h);
+    if let Ok(meta) = fs::metadata(gix.index_path()) {
+        meta.len().hash(&mut h);
+        meta.modified().ok().hash(&mut h);
+    }
+    let mut oids: Vec<&String> = objects.keys().collect();
+    oids.sort();
+    oids.hash(&mut h);
+    h.finish()
+}
+
+/// Which of `wanted` (LFS oids) neither the index nor any ref's history reaches.
+fn unreachable_lfs(
+    gix: &gix::Repository,
+    mut remaining: HashSet<String>,
+    blob_cache: &mut HashMap<gix::ObjectId, Option<String>>,
+) -> HashSet<String> {
     if let Ok(index) = gix.index_or_empty() {
         for entry in index.entries() {
-            if let Some(oid) = blob_lfs_oid(gix, entry.id, &mut blob_cache) {
+            if let Some(oid) = blob_lfs_oid(gix, entry.id, blob_cache) {
                 remaining.remove(&oid);
                 if remaining.is_empty() {
-                    return (0, 0);
+                    return remaining;
                 }
             }
         }
@@ -1173,7 +1236,7 @@ fn oplog_only_lfs_bytes(repo: &Repo, entries: &[Entry], prune_end: usize) -> (u6
                 gix::object::Kind::Commit => commit_stack.push(oid),
                 gix::object::Kind::Tree => live_tree_stack.push(oid),
                 gix::object::Kind::Blob => {
-                    if let Some(lfs_oid) = blob_lfs_oid(gix, oid, &mut blob_cache) {
+                    if let Some(lfs_oid) = blob_lfs_oid(gix, oid, blob_cache) {
                         remaining.remove(&lfs_oid);
                     }
                 }
@@ -1189,7 +1252,7 @@ fn oplog_only_lfs_bytes(repo: &Repo, entries: &[Entry], prune_end: usize) -> (u6
             gix,
             &mut live_tree_stack,
             &mut live_trees_seen,
-            &mut blob_cache,
+            blob_cache,
             |lfs_oid| {
                 remaining.remove(lfs_oid);
                 !remaining.is_empty()
@@ -1216,26 +1279,14 @@ fn oplog_only_lfs_bytes(repo: &Repo, entries: &[Entry], prune_end: usize) -> (u6
             gix,
             &mut live_tree_stack,
             &mut live_trees_seen,
-            &mut blob_cache,
+            blob_cache,
             |lfs_oid| {
                 remaining.remove(lfs_oid);
                 !remaining.is_empty()
             },
         );
     }
-
-    let total_lfs: u64 = remaining
-        .iter()
-        .filter_map(|oid| snapshot_sizes.get(oid))
-        .copied()
-        .sum();
-    let reclaimable_lfs: u64 = remaining
-        .iter()
-        .filter(|oid| prunable_oids.contains(*oid) && !kept_oids.contains(*oid))
-        .filter_map(|oid| snapshot_sizes.get(oid))
-        .copied()
-        .sum();
-    (total_lfs, reclaimable_lfs)
+    remaining
 }
 
 fn collect_state_lfs_oids(

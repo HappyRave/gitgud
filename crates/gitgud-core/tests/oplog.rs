@@ -590,4 +590,13 @@ fn stats_counts_op_log_only_lfs_objects_and_reclaimable_preview() {
     assert_eq!(pruned.prunable_count, 0);
     assert_eq!(pruned.reclaimable_bytes, 0);
     assert_eq!(pruned.total_bytes, oplog_dir_after + 6_000);
+
+    // The walk's answer is kept, and a commit that reaches the object retires it.
+    assert_eq!(log.stats(&r).unwrap().total_bytes, oplog_dir_after + 6_000);
+    repo.write("kept.png", &ptr(&kept_oid, 6_000))
+        .commit_all("commit kept pointer");
+    assert_eq!(
+        log.stats(&r).unwrap().total_bytes,
+        dir_files_bytes(&oplog_dir)
+    );
 }
