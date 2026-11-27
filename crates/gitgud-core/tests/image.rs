@@ -80,6 +80,27 @@ fn refuses_non_images_and_missing_versions() {
 }
 
 #[test]
+fn files_inside_git_are_refused_under_any_spelling_windows_accepts() {
+    let repo = TestRepo::init();
+    put(&repo, "t.png", V1);
+    repo.commit_all("one");
+    let r = repo::open(repo.path()).unwrap();
+    for path in [
+        ".git/config",
+        ".GIT/config",
+        ".git./config",
+        ".git /config",
+        "GIT~1/config",
+    ] {
+        assert!(
+            matches!(r.file_at(path, &Version::Worktree), Err(Error::Refused(_))),
+            "{path}"
+        );
+    }
+    assert_eq!(r.file_at("t.png", &Version::Worktree).unwrap(), V1);
+}
+
+#[test]
 fn lfs_pointers_resolve_to_the_local_object() {
     let repo = TestRepo::init();
     let oid = "ab".repeat(32);

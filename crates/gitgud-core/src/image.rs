@@ -306,13 +306,16 @@ impl Repo {
     /// [`Error::Refused`] when `path` escapes the repo, is inside `.git`, or isn't in
     /// that version; [`Error::Read`] otherwise.
     pub fn file_at(&self, path: &str, version: &Version) -> Result<Vec<u8>, Error> {
-        let mut parts = Path::new(path).components();
-        let inside = parts
-            .clone()
-            .all(|c| matches!(c, std::path::Component::Normal(_)))
-            && !parts
-                .next()
-                .is_some_and(|c| c.as_os_str().eq_ignore_ascii_case(".git"));
+        // Windows opens `.git.`, `.git ` and the short name `GIT~1` as `.git`.
+        let is_git_dir = |name: &std::ffi::OsStr| {
+            let name = name.to_string_lossy();
+            let trimmed = name.trim_end_matches(['.', ' ']);
+            trimmed.eq_ignore_ascii_case(".git") || trimmed.to_ascii_uppercase().starts_with("GIT~")
+        };
+        let inside = Path::new(path).components().all(|c| match c {
+            std::path::Component::Normal(name) => !is_git_dir(name),
+            _ => false,
+        });
         if !inside {
             return Err(Error::Refused(format!(
                 "{path} is not a path inside the repo"
