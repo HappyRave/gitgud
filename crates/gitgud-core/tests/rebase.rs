@@ -43,6 +43,17 @@ fn diverged(conflict: bool) -> (TestRepo, Session, u32) {
 }
 
 #[test]
+fn a_target_git_would_read_as_an_option_or_that_names_nothing_is_refused() {
+    let (repo, session, id) = diverged(false);
+    let head = rev(&repo, "HEAD");
+    for onto in ["--abort", "no-such-branch"] {
+        assert!(session.rebase(id, onto).is_err(), "{onto}");
+    }
+    assert_eq!(rev(&repo, "HEAD"), head);
+    assert!(!rebasing(&repo));
+}
+
+#[test]
 fn prediction_counts_steps_and_names_the_first_conflict_without_touching_anything() {
     let (repo, session, id) = diverged(false);
     let r = session.get(id).unwrap().repo.clone();

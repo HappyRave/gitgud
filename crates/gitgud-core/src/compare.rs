@@ -221,24 +221,10 @@ fn versions(repo: &Repo, from: &Point, to: &Point, path: &str) -> Result<Version
 /// The commit a side stands for; the working copy stands on HEAD.
 fn commit_of(git: &GitCli, repo: &Repo, p: &Point) -> Result<String, Error> {
     let rev = match p {
-        Point::Rev { rev } => rev.trim(),
+        Point::Rev { rev } => rev.as_str(),
         Point::Worktree => "HEAD",
     };
-    if rev.is_empty() || rev.starts_with('-') {
-        return Err(Error::Refused(format!("{rev:?} isn't a commit")));
-    }
-    let spec = format!("{rev}^{{commit}}");
-    let (code, out, _) = git.run_status(
-        repo.root(),
-        &["rev-parse", "--verify", "-q", "--end-of-options", &spec],
-        None,
-    )?;
-    if code != 0 {
-        return Err(Error::Refused(format!(
-            "{rev} isn't a branch, tag or commit here"
-        )));
-    }
-    Ok(out.trim().to_owned())
+    repo.resolve_commit(git, rev)
 }
 
 fn merge_base(git: &GitCli, repo: &Repo, a: &str, b: &str) -> Result<Option<String>, Error> {

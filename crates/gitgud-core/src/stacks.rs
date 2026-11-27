@@ -191,14 +191,7 @@ impl Repo {
         onto: &str,
     ) -> Result<RebaseOutcome, Error> {
         self.ensure_idle()?;
-        let onto_oid = git
-            .run(
-                self.root(),
-                &["rev-parse", "--verify", &format!("{onto}^{{commit}}")],
-                None,
-            )?
-            .trim()
-            .to_owned();
+        let onto_oid = self.resolve_commit(git, onto)?;
         self.run_rebase(
             git,
             &[

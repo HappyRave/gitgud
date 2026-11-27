@@ -115,6 +115,34 @@ impl Repo {
         h.finish()
     }
 
+    /// The commit id `rev` (a branch, tag, id, `stash@{0}`...) names.
+    ///
+    /// # Errors
+    /// [`Error::Refused`] when it names no commit here, or starts with `-` (git
+    /// would read it as an option).
+    pub(crate) fn resolve_commit(
+        &self,
+        git: &crate::cli::GitCli,
+        rev: &str,
+    ) -> Result<String, Error> {
+        let rev = rev.trim();
+        if rev.is_empty() || rev.starts_with('-') {
+            return Err(Error::Refused(format!("{rev:?} isn't a commit")));
+        }
+        let spec = format!("{rev}^{{commit}}");
+        let (code, out, _) = git.run_status(
+            self.root(),
+            &["rev-parse", "--verify", "-q", "--end-of-options", &spec],
+            None,
+        )?;
+        if code != 0 {
+            return Err(Error::Refused(format!(
+                "{rev} isn't a branch, tag or commit here"
+            )));
+        }
+        Ok(out.trim().to_owned())
+    }
+
     /// The contents of blob `id`.
     pub(crate) fn blob(&self, id: gix::ObjectId) -> Result<Vec<u8>, Error> {
         let repo = self.gix();

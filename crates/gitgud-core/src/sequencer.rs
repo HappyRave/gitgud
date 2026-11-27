@@ -258,14 +258,8 @@ impl Repo {
         let repo = self.gix();
         let oid = match ObjectId::from_hex(commit.trim().as_bytes()) {
             Ok(id) => id,
-            Err(_) => {
-                let hex = git.run(
-                    self.root(),
-                    &["rev-parse", "--verify", &format!("{commit}^{{commit}}")],
-                    None,
-                )?;
-                ObjectId::from_hex(hex.trim().as_bytes()).map_err(read_err)?
-            }
+            Err(_) => ObjectId::from_hex(self.resolve_commit(git, commit)?.as_bytes())
+                .map_err(read_err)?,
         };
         let c = repo.find_commit(oid).map_err(read_err)?;
         let parents: Vec<ObjectId> = c.parent_ids().map(gix::Id::detach).collect();

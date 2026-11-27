@@ -544,19 +544,7 @@ impl Repo {
     }
 
     fn commit_id(&self, git: &GitCli, rev: &str) -> Result<String, Error> {
-        Ok(git
-            .run(
-                self.root(),
-                &[
-                    "rev-parse",
-                    "--verify",
-                    "--quiet",
-                    &format!("{rev}^{{commit}}"),
-                ],
-                None,
-            )?
-            .trim()
-            .to_owned())
+        self.resolve_commit(git, rev)
     }
 
     /// `base..HEAD`, newest first, refused if it holds a merge.

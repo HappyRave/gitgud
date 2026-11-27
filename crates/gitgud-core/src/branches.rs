@@ -153,12 +153,8 @@ impl Repo {
     /// # Errors
     /// [`Error::Command`] when `rev` doesn't resolve to a commit.
     pub fn checkout_rev_paths(&self, git: &GitCli, rev: &str) -> Result<Vec<String>, Error> {
-        let hex = git.run(
-            self.root(),
-            &["rev-parse", "--verify", &format!("{rev}^{{commit}}")],
-            None,
-        )?;
-        let id = ObjectId::from_hex(hex.trim().as_bytes()).map_err(read_err)?;
+        let hex = self.resolve_commit(git, rev)?;
+        let id = ObjectId::from_hex(hex.as_bytes()).map_err(read_err)?;
         self.diff_head_to_oid(id)
     }
 
