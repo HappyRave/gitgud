@@ -29,6 +29,38 @@ fn folder_id(store: &LibraryStore, name: &str) -> String {
 }
 
 #[test]
+fn a_library_file_left_broken_by_a_crash_loads_its_backup() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("library.json");
+    let repos = [TestRepo::init(), TestRepo::init()];
+    let store = LibraryStore::load(file.clone()).unwrap();
+    add(&store, repos[0].path(), "Work");
+    add(&store, repos[1].path(), "Work");
+    drop(store);
+    // A crash mid-save: the new file is cut short, the previous one is the backup.
+    std::fs::write(&file, "{\"folders\": [").unwrap();
+
+    let store = LibraryStore::load(file.clone()).unwrap();
+
+    assert_eq!(
+        store.existing_paths().unwrap().len(),
+        1,
+        "the save before the last"
+    );
+    assert!(dir.path().join("library.json.corrupt").exists());
+    let leftovers = std::fs::read_dir(dir.path())
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+        .count();
+    assert_eq!(leftovers, 0);
+
+    std::fs::write(&file, "garbage").unwrap();
+    std::fs::write(dir.path().join("library.json.bak"), "garbage").unwrap();
+    assert!(LibraryStore::load(file).is_err(), "no good copy: say so");
+}
+
+#[test]
 fn rescan_finds_new_repos_and_gone_ones_and_applies_in_one_undo() {
     let dir = tempfile::tempdir().unwrap();
     let projects = dir.path().join("Projects");

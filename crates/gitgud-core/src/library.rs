@@ -177,13 +177,7 @@ impl LibraryStore {
     /// # Errors
     /// [`Error::Read`] when `file` exists but cannot be read or parsed.
     pub fn load(file: PathBuf) -> Result<Self, Error> {
-        let state = if file.exists() {
-            let text = std::fs::read_to_string(&file).map_err(read_err)?;
-            serde_json::from_str::<LibraryState>(&text)
-                .map_err(|e| Error::Read(format!("corrupt library file: {e}")))?
-        } else {
-            LibraryState::default()
-        };
+        let state = load_state(&file)?;
         let next_id = next_numeric_id(&state);
         Ok(Self {
             file,
@@ -1272,16 +1266,65 @@ fn make_snapshot(guard: &StoreInner) -> LibrarySnapshot {
     }
 }
 
+/// The previous good library file, kept so a crash mid-save can't lose the Library.
+fn backup_file(file: &Path) -> PathBuf {
+    file.with_extension("json.bak")
+}
+
+/// Writes `state` through a synced temporary file, after copying the current file
+/// to its backup.
 fn save_atomic(file: &Path, state: &LibraryState) -> Result<(), Error> {
+    use std::io::Write;
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     if let Some(parent) = file.parent() {
         std::fs::create_dir_all(parent).map_err(read_err)?;
     }
-    let tmp = file.with_extension("json.tmp");
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    // Unique per writer: two gitgud windows share one library file.
+    let tmp = file.with_extension(format!("json.{}-{n}.tmp", std::process::id()));
     let data = serde_json::to_vec_pretty(state)
         .map_err(|e| Error::Read(format!("serialize library: {e}")))?;
-    std::fs::write(&tmp, data).map_err(read_err)?;
-    std::fs::rename(&tmp, file).map_err(read_err)?;
-    Ok(())
+    let written = std::fs::File::create(&tmp)
+        .and_then(|mut f| f.write_all(&data).and_then(|()| f.sync_all()))
+        .and_then(|()| match std::fs::copy(file, backup_file(file)) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+            _ => Ok(()),
+        })
+        .and_then(|()| std::fs::rename(&tmp, file));
+    if written.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    written.map_err(read_err)
+}
+
+/// The Library in `file`, or in its backup when `file` was left broken (a crash
+/// mid-save). The broken file is kept beside it as `.corrupt`.
+fn load_state(file: &Path) -> Result<LibraryState, Error> {
+    let parse = |path: &Path| -> Result<LibraryState, String> {
+        let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+        serde_json::from_str(&text).map_err(|e| e.to_string())
+    };
+    if !file.exists() {
+        return Ok(LibraryState::default());
+    }
+    let broken = match parse(file) {
+        Ok(state) => return Ok(state),
+        Err(e) => e,
+    };
+    let backup = backup_file(file);
+    match parse(&backup) {
+        Ok(state) => {
+            let aside = file.with_extension("json.corrupt");
+            std::fs::rename(file, &aside).map_err(read_err)?;
+            eprintln!(
+                "gitgud: {} was broken ({broken}); loaded its backup, kept it as {}",
+                file.display(),
+                aside.display()
+            );
+            Ok(state)
+        }
+        Err(_) => Err(Error::Read(format!("corrupt library file: {broken}"))),
+    }
 }
 
 fn alloc_id(counter: &mut u64) -> u64 {
