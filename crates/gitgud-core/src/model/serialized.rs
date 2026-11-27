@@ -535,8 +535,16 @@ fn read_node(r: &mut Reader<'_>, nodes: &[TypeNode], at: usize) -> Result<Value,
             }
         } else {
             let mut out = Vec::with_capacity(n.min(MAX_RESERVE));
-            for _ in 0..n {
+            for i in 0..n {
+                let before = r.pos;
                 out.push(read_node(r, nodes, element)?);
+                // An element that reads no bytes would let a lying count spin for billions.
+                if i == 0 && r.pos == before && n > 1 {
+                    return Err(Error::Read(format!(
+                        "{}: an array of {n} elements that take no bytes",
+                        node.name
+                    )));
+                }
             }
             Value::List(out)
         }
@@ -804,6 +812,34 @@ mod tests {
             assert_eq!(v.get("m_Flag"), &Value::Bool(true));
             assert_eq!(v.get("nothing"), &Value::Null);
         }
+    }
+
+    #[test]
+    fn an_array_of_empty_elements_with_a_huge_count_is_refused() {
+        let empty = Type {
+            class_id: 156,
+            nodes: vec![
+                N("Thing", "Base", 0, false),
+                N("vector", "m_Nothing", 1, false),
+                N("Array", "Array", 2, false),
+                N("int", "size", 3, false),
+                N("Empty", "data", 3, false),
+            ],
+        };
+        let bytes = file(
+            22,
+            &[empty],
+            &[Object {
+                path_id: 1,
+                type_ix: 0,
+                data: Bytes::default().i32(i32::MAX).0,
+            }],
+            &[],
+        );
+        let f = SerializedFile::parse(&bytes).unwrap();
+        let started = std::time::Instant::now();
+        assert!(f.read(f.first_of(156).unwrap()).is_err());
+        assert!(started.elapsed().as_secs() < 1);
     }
 
     #[test]

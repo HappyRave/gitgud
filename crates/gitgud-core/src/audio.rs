@@ -67,7 +67,12 @@ pub fn to_wav(bytes: Vec<u8>, ext: &str) -> Result<Vec<u8>, String> {
     out.extend_from_slice(&1u16.to_le_bytes());
     out.extend_from_slice(&ch.to_le_bytes());
     out.extend_from_slice(&d.info.sample_rate.to_le_bytes());
-    out.extend_from_slice(&(d.info.sample_rate * u32::from(ch) * 2).to_le_bytes());
+    let byte_rate = d
+        .info
+        .sample_rate
+        .checked_mul(u32::from(ch) * 2)
+        .ok_or_else(|| format!("a sample rate of {} Hz can't be right", d.info.sample_rate))?;
+    out.extend_from_slice(&byte_rate.to_le_bytes());
     out.extend_from_slice(&(ch * 2).to_le_bytes());
     out.extend_from_slice(&16u16.to_le_bytes());
     out.extend_from_slice(b"data");

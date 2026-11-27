@@ -534,6 +534,11 @@ fn decode_tga_to_png(data: &[u8]) -> Result<Vec<u8>, String> {
         _ => return Err(format!("unsupported bit depth {bpp}")),
     };
     let pixel_count = (width as usize) * (height as usize);
+    // RLE packs at most 128 pixels per packet: a short file can't hold a big image,
+    // so it is refused before the pixel buffer is allocated.
+    if pixel_count > data.len().saturating_mul(128) {
+        return Err("truncated: too little data for its dimensions".into());
+    }
     let mut offset = 18 + id_len + cmap_len * cmap_entry_bytes;
     if offset > data.len() {
         return Err("truncated pixel offset".into());
@@ -665,6 +670,10 @@ fn decode_psd_to_png(data: &[u8]) -> Result<Vec<u8>, String> {
     let compression = u16::from_be_bytes([data[pos], data[pos + 1]]);
     pos += 2;
     let pixels = (width as usize) * (height as usize);
+    // PackBits expands at most 128 times: refuse a short file before allocating planes.
+    if pixels > (data.len() - pos).saturating_mul(128) {
+        return Err("truncated: too little data for its dimensions".into());
+    }
     let sample_bytes = usize::from(depth / 8);
     let row_bytes = (width as usize) * sample_bytes;
     let plane_bytes = pixels * sample_bytes;
@@ -1025,6 +1034,36 @@ mod tests {
         assert_eq!(image_type("mask.tiff"), Some("image/png"));
         assert_eq!(image_type("Ship.prefab"), None);
         assert_eq!(image_type("noext"), None);
+    }
+
+    #[test]
+    fn a_tiny_file_claiming_a_big_image_is_refused_before_allocating() {
+        let mut tga = vec![0u8; 26];
+        tga[2] = 10;
+        tga[12..14].copy_from_slice(&4096u16.to_le_bytes());
+        tga[14..16].copy_from_slice(&4096u16.to_le_bytes());
+        tga[16] = 32;
+        assert!(
+            decode_tga_to_png(&tga)
+                .unwrap_err()
+                .contains("too little data")
+        );
+
+        let mut psd = b"8BPS".to_vec();
+        psd.extend_from_slice(&1u16.to_be_bytes());
+        psd.extend_from_slice(&[0u8; 6]);
+        psd.extend_from_slice(&4u16.to_be_bytes());
+        psd.extend_from_slice(&4096u32.to_be_bytes());
+        psd.extend_from_slice(&4096u32.to_be_bytes());
+        psd.extend_from_slice(&8u16.to_be_bytes());
+        psd.extend_from_slice(&3u16.to_be_bytes());
+        psd.extend_from_slice(&[0u8; 12]);
+        psd.extend_from_slice(&1u16.to_be_bytes());
+        assert!(
+            decode_psd_to_png(&psd)
+                .unwrap_err()
+                .contains("too little data")
+        );
     }
 
     #[test]

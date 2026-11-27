@@ -131,8 +131,19 @@ pub fn read_font(bytes: &[u8], face: u32) -> Result<FontInfo, String> {
 /// The plain sfnt inside a WOFF or WOFF2 file, and which wrapper it came in.
 fn unwrap_web_font(bytes: &[u8]) -> Result<(Vec<u8>, Option<&'static str>), String> {
     if bytes.starts_with(b"wOF2") {
-        let sfnt = woff2_patched::decode::convert_woff2_to_ttf(&mut &bytes[..])
-            .map_err(|e| format!("this WOFF2 file can't be decoded ({e})"))?;
+        // The decoder reserves what the header claims before reading anything.
+        let total = be32(bytes, 16).ok_or("this WOFF2 file is damaged")? as usize;
+        if total > MAX_SFNT_BYTES {
+            return Err(format!(
+                "this WOFF2 file unpacks to over {} MiB",
+                MAX_SFNT_BYTES >> 20
+            ));
+        }
+        let decoded = std::panic::catch_unwind(|| {
+            woff2_patched::decode::convert_woff2_to_ttf(&mut &bytes[..])
+        })
+        .map_err(|_| "this WOFF2 file is damaged".to_owned())?;
+        let sfnt = decoded.map_err(|e| format!("this WOFF2 file can't be decoded ({e})"))?;
         return Ok((sfnt, Some("WOFF2")));
     }
     if bytes.starts_with(b"wOFF") {
@@ -431,6 +442,15 @@ mod tests {
         assert_eq!(woff.outlines, read_font(&sfnt, 0).unwrap().outlines);
         assert!(read_font(b"not a font at all", 0).is_err());
         assert!(read_font(b"wOF2 broken", 0).is_err());
+    }
+
+    #[test]
+    fn refuses_a_woff2_that_claims_gigabytes() {
+        let mut woff2 = b"wOF2\0\x01\0\0".to_vec();
+        woff2.resize(48, 0);
+        woff2[16..20].copy_from_slice(&u32::MAX.to_be_bytes());
+        let err = read_font(&woff2, 0).unwrap_err();
+        assert!(err.contains("unpacks to over"), "{err}");
     }
 
     #[test]

@@ -326,7 +326,10 @@ fn texture(tex: &Value) -> Result<RgbaImage, Error> {
         return Err(Error::Read(format!("{name} is {w} × {h} pixels")));
     }
     let data = tex.get("image data").bytes().unwrap_or_default();
-    let n = w as usize * h as usize * 4;
+    let n = (w as usize)
+        .checked_mul(h as usize)
+        .and_then(|p| p.checked_mul(4))
+        .ok_or_else(|| Error::Read(format!("{name} is {w} × {h} pixels")))?;
     if data.len() < n {
         return Err(Error::Read(format!(
             "{name}'s pixels aren't in the file ({} of {n} bytes)",
