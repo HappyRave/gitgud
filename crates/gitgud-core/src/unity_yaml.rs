@@ -140,7 +140,7 @@ impl GuidIndex {
             let guid = s.guid.as_deref().unwrap_or("-");
             let _ = writeln!(out, "{}\t{time}\t{guid}\t{path}", s.len);
         }
-        crate::atomic_file::write_atomic(file, out.as_bytes())
+        crate::atomic_file::write_atomic(file, out.as_bytes(), false)
     }
 
     /// The stamps [`Self::save`] wrote, to update from; `None` when there's no usable file.

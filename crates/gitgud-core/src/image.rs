@@ -899,8 +899,17 @@ mod tests {
     use super::*;
     use image::GenericImageView;
 
+    /// Tests that clear or count the shared texture cache run one at a time: a
+    /// clear in one would make another prepare a texture twice.
+    fn shared_cache() -> std::sync::MutexGuard<'static, ()> {
+        static ONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        ONE.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     #[test]
     fn shrinks_big_textures_for_3d_and_leaves_small_ones() {
+        let _one = shared_cache();
         let encode = |w: u32, h: u32| {
             let img =
                 image::RgbaImage::from_fn(w, h, |x, _| image::Rgba([(x % 256) as u8, 0, 0, 255]));
@@ -928,6 +937,7 @@ mod tests {
 
     #[test]
     fn keeps_shrunk_textures_on_disk() {
+        let _one = shared_cache();
         let repo = crate::testing::TestRepo::init();
         let r = crate::repo::open(repo.path()).unwrap();
         let mut big = Cursor::new(Vec::new());
@@ -953,6 +963,7 @@ mod tests {
 
     #[test]
     fn a_kept_preview_texture_is_found_by_the_stored_file_without_decoding() {
+        let _one = shared_cache();
         let repo = crate::testing::TestRepo::init();
         let r = crate::repo::open(repo.path()).unwrap();
         let png = |w: u32, seed: u8| {
@@ -1002,6 +1013,7 @@ mod tests {
 
     #[test]
     fn prepares_a_texture_once_for_concurrent_requests() {
+        let _one = shared_cache();
         let repo = crate::testing::TestRepo::init();
         let r = crate::repo::open(repo.path()).unwrap();
         let mut png = Cursor::new(Vec::new());
@@ -1018,7 +1030,8 @@ mod tests {
         assert!(outs[0].is_some());
         assert!(outs.iter().all(|o| *o == outs[0]));
         let key = xxhash_rust::xxh64::xxh64(&png, 512 | ((Prepared::Bc as u64) << 32));
-        assert_eq!(PREPARED.lock().unwrap().get(&key), Some(&1));
+        let prepared = PREPARED.lock().unwrap().get(&key).copied();
+        assert_eq!(prepared, Some(1));
     }
 
     #[test]

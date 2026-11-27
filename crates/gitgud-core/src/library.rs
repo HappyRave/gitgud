@@ -1280,7 +1280,7 @@ fn save_atomic(file: &Path, state: &LibraryState) -> Result<(), Error> {
         Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(read_err(e)),
         _ => {}
     }
-    crate::atomic_file::write_atomic(file, &data).map_err(read_err)
+    crate::atomic_file::write_atomic(file, &data, true).map_err(read_err)
 }
 
 /// The Library in `file`, or in its backup when `file` was left broken (a crash

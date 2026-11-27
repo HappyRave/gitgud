@@ -201,7 +201,7 @@ fn read(file: &Path) -> Option<Vec<u8>> {
 
 /// Writes through a temporary file, so a concurrent reader never sees half a file.
 fn write(file: &Path, bytes: &[u8]) {
-    if let Err(e) = crate::atomic_file::write_atomic(file, bytes) {
+    if let Err(e) = crate::atomic_file::write_atomic(file, bytes, false) {
         eprintln!("gitgud: cannot write cache file {}: {e}", file.display());
     }
 }

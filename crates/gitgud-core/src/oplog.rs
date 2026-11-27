@@ -701,7 +701,7 @@ impl OpLog {
 
     fn save(&self, entries: &[Entry]) -> Result<(), Error> {
         let json = serde_json::to_vec(entries).map_err(read_err)?;
-        crate::atomic_file::write_atomic(&self.dir.join("log.json"), &json).map_err(read_err)
+        crate::atomic_file::write_atomic(&self.dir.join("log.json"), &json, true).map_err(read_err)
     }
 }
 

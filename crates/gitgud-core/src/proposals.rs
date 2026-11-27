@@ -1008,7 +1008,8 @@ fn summary_path(repo: &Repo, id: &str) -> PathBuf {
 
 fn save_summary(repo: &Repo, summary: &ProposalSummary) -> Result<(), Error> {
     let json = serde_json::to_vec_pretty(summary).map_err(read_err)?;
-    crate::atomic_file::write_atomic(&summary_path(repo, &summary.id), &json).map_err(read_err)
+    crate::atomic_file::write_atomic(&summary_path(repo, &summary.id), &json, true)
+        .map_err(read_err)
 }
 
 fn unique_proposal_id(repo: &Repo, now: i64) -> String {
