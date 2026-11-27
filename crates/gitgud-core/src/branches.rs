@@ -35,6 +35,21 @@ pub struct Remote {
     pub branches: Vec<String>,
 }
 
+/// A name typed for a new branch or tag, trimmed. One starting with `-` would
+/// reach git as an option (`-D main` deletes main), so it is refused.
+pub(crate) fn new_ref_name<'a>(name: &'a str, what: &str) -> Result<&'a str, Error> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(Error::Refused(format!("{what} name can't be empty")));
+    }
+    if name.starts_with('-') {
+        return Err(Error::Refused(format!(
+            "a {what} name can't start with '-'"
+        )));
+    }
+    Ok(name)
+}
+
 impl Repo {
     /// Local branches with their upstream and ahead / behind counts, and each
     /// remote's branches.
@@ -197,10 +212,7 @@ impl Repo {
         at: Option<&str>,
         checkout: bool,
     ) -> Result<(), Error> {
-        let name = name.trim();
-        if name.is_empty() {
-            return Err(Error::Refused("branch name can't be empty".into()));
-        }
+        let name = new_ref_name(name, "branch")?;
         if checkout {
             let mut args = vec!["switch", "-c", name];
             if let Some(target) = at {
@@ -221,10 +233,7 @@ impl Repo {
     /// # Errors
     /// [`Error::Refused`] for an empty name, or [`Error::Command`] with git's message.
     pub fn rename_branch(&self, git: &GitCli, old: &str, new: &str) -> Result<(), Error> {
-        let new = new.trim();
-        if new.is_empty() {
-            return Err(Error::Refused("branch name can't be empty".into()));
-        }
+        let new = new_ref_name(new, "branch")?;
         git.run(self.root(), &["branch", "-m", old, new], None)
             .map(drop)
     }

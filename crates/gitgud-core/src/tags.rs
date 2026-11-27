@@ -96,10 +96,7 @@ impl Repo {
         target: Option<&str>,
         message: Option<&str>,
     ) -> Result<(), Error> {
-        let name = name.trim();
-        if name.is_empty() {
-            return Err(Error::Refused("Tag name cannot be empty".into()));
-        }
+        let name = crate::branches::new_ref_name(name, "tag")?;
         let msg = message.map(str::trim).filter(|m| !m.is_empty());
         let mut args = vec!["tag"];
         if let Some(m) = msg {

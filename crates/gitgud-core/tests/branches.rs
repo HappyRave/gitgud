@@ -261,6 +261,25 @@ fn checkout_refuses_to_overwrite_local_changes_and_records_nothing() {
 }
 
 #[test]
+fn a_name_that_git_would_read_as_an_option_is_refused() {
+    let (repo, session, id) = two_branches();
+    let main = repo.git(&["rev-parse", "main"]);
+    assert!(matches!(
+        session.create_branch(id, "-D", Some("main"), false),
+        Err(gitgud_core::repo::Error::Refused(_))
+    ));
+    assert!(matches!(
+        session.create_tag(id, "-d", Some("main"), None),
+        Err(gitgud_core::repo::Error::Refused(_))
+    ));
+    assert_eq!(
+        repo.git(&["rev-parse", "main"]),
+        main,
+        "main is still there"
+    );
+}
+
+#[test]
 fn create_rename_delete_and_undo_branches_including_from_detached_head() {
     let (repo, session, id) = two_branches();
 
