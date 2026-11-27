@@ -532,11 +532,7 @@ impl Repo {
 
     /// The current branch, if history can be edited now.
     pub(crate) fn ensure_can_edit(&self) -> Result<String, Error> {
-        if self.rebasing() || self.git_dir().join("MERGE_HEAD").exists() {
-            return Err(Error::Refused(
-                "finish or abort the operation in progress first".into(),
-            ));
-        }
+        self.ensure_idle()?;
         let repo = self.gix();
         let head = repo.head().map_err(read_err)?;
         match head.referent_name() {

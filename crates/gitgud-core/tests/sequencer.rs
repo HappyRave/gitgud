@@ -49,6 +49,32 @@ fn cherry_pick_and_revert_clean_and_undoable() {
 }
 
 #[test]
+fn a_stopped_cherry_pick_blocks_merges_rebases_and_history_edits() {
+    let repo = TestRepo::init();
+    repo.write("a.txt", "1\n2\n3\n").commit_all("base");
+    repo.git(&["checkout", "-q", "-b", "other"]);
+    repo.write("a.txt", "1\nother\n3\n")
+        .commit_all("other edit");
+    let target = repo.git(&["rev-parse", "HEAD"]).trim().to_owned();
+    repo.git(&["checkout", "-q", "main"]);
+    repo.write("a.txt", "1\nmain\n3\n").commit_all("main edit");
+    repo.write("b.txt", "b\n").commit_all("second on main");
+    let session = Session::default();
+    let id = session.open(repo.path()).unwrap().id;
+    session.cherry_pick(id, &target).unwrap();
+    assert!(session.sequencer_state(id).unwrap().is_some());
+
+    let refused = |e: gitgud_core::repo::Error| {
+        assert!(
+            e.to_string().contains("cherry-pick is already in progress"),
+            "{e}"
+        );
+    };
+    refused(session.merge(id, "other").unwrap_err());
+    refused(session.history_plan(id, "HEAD~1").unwrap_err());
+}
+
+#[test]
 fn conflicted_cherry_pick_resolves_continues_and_undoes() {
     let repo = TestRepo::init();
     repo.write("a.txt", "1\n2\n3\n").commit_all("base");

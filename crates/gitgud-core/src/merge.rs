@@ -182,17 +182,7 @@ impl Repo {
     /// [`Error::Refused`] when a merge is already in progress, or git's error
     /// (local changes in the way, unknown branch).
     pub fn merge(&self, git: &GitCli, branch: &str) -> Result<MergeOutcome, Error> {
-        if self.rebasing() {
-            return Err(Error::Refused("finish or abort the rebase first".into()));
-        }
-        if self.sequencer_head()?.is_some() {
-            return Err(Error::Refused(
-                "finish or abort the operation in progress first".into(),
-            ));
-        }
-        if self.merge_head()?.is_some() {
-            return Err(Error::Refused("a merge is already in progress".into()));
-        }
+        self.ensure_idle()?;
         let args = ["merge", "--no-edit", "--no-stat", branch];
         let (code, out, err) = git.run_status(self.root(), &args, None)?;
         if code == 0 {
@@ -584,7 +574,7 @@ impl Repo {
         }
     }
 
-    fn merge_head(&self) -> Result<Option<String>, Error> {
+    pub(crate) fn merge_head(&self) -> Result<Option<String>, Error> {
         match fs::read_to_string(self.git_dir().join("MERGE_HEAD")) {
             Ok(s) => Ok(Some(s.trim().to_owned())),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),

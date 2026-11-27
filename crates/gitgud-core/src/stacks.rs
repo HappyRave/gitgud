@@ -190,14 +190,7 @@ impl Repo {
         top_branch: &str,
         onto: &str,
     ) -> Result<RebaseOutcome, Error> {
-        if self.rebasing()
-            || self.git_dir().join("MERGE_HEAD").exists()
-            || self.sequencer_head()?.is_some()
-        {
-            return Err(Error::Refused(
-                "finish or abort the operation in progress first".into(),
-            ));
-        }
+        self.ensure_idle()?;
         let onto_oid = git
             .run(
                 self.root(),

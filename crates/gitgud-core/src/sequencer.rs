@@ -218,14 +218,7 @@ impl Repo {
         kind: SequencerKind,
         commit: &str,
     ) -> Result<SequencerOutcome, Error> {
-        if self.rebasing()
-            || self.git_dir().join("MERGE_HEAD").exists()
-            || self.sequencer_head()?.is_some()
-        {
-            return Err(Error::Refused(
-                "finish or abort the operation in progress first".into(),
-            ));
-        }
+        self.ensure_idle()?;
         let (oid, _) = self.commit_and_parent_tree(git, commit)?;
         let args: Vec<&str> = match kind {
             SequencerKind::CherryPick => vec!["cherry-pick", &oid],
@@ -355,6 +348,30 @@ impl Repo {
             }
         }
         Ok(None)
+    }
+
+    /// Refuses while a merge, rebase, cherry-pick or revert is stopped: starting
+    /// another (or a history edit) would mix with it.
+    ///
+    /// # Errors
+    /// [`Error::Refused`] naming the operation, or a read error.
+    pub(crate) fn ensure_idle(&self) -> Result<(), Error> {
+        let busy = if self.rebasing() {
+            Some("rebase")
+        } else if self.merge_head()?.is_some() {
+            Some("merge")
+        } else {
+            self.sequencer_head()?.map(|(kind, _)| match kind {
+                SequencerKind::CherryPick => "cherry-pick",
+                SequencerKind::Revert => "revert",
+            })
+        };
+        match busy {
+            Some(op) => Err(Error::Refused(format!(
+                "a {op} is already in progress: finish or abort it first"
+            ))),
+            None => Ok(()),
+        }
     }
 
     fn sequencer_file(&self) -> PathBuf {

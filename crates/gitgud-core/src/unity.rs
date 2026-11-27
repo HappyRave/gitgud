@@ -709,7 +709,11 @@ pub(crate) fn read_meta_guid(path: &Path) -> Option<String> {
 /// and for any version's files, so both agree on an odd `.meta`.
 pub(crate) fn meta_guid(text: &str) -> Option<String> {
     text.lines().take(12).find_map(|line| {
-        let g = line.trim().strip_prefix("guid:")?.trim().to_ascii_lowercase();
+        let g = line
+            .trim()
+            .strip_prefix("guid:")?
+            .trim()
+            .to_ascii_lowercase();
         (g.len() == 32 && g.bytes().all(|b| b.is_ascii_hexdigit())).then_some(g)
     })
 }
