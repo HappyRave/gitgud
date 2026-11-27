@@ -58,10 +58,50 @@ impl Repo {
     /// # Errors
     /// As [`Repo::file_bytes`].
     pub fn unity_asset_info(&self, path: &str, version: &Version) -> Result<UnityAssetInfo, Error> {
+        // A binary asset (TerrainData, hundreds of MB) is told by its head alone.
+        if let Some(file) = self.local_file(path, version)? {
+            use std::io::Read;
+            let size = std::fs::metadata(&file).map_err(read_err)?.len();
+            let mut head = Vec::with_capacity(HEAD);
+            std::fs::File::open(&file)
+                .and_then(|f| f.take(HEAD as u64).read_to_end(&mut head))
+                .map_err(read_err)?;
+            if head.contains(&0) {
+                return Ok(UnityAssetInfo {
+                    size,
+                    ..UnityAssetInfo::read(&head)
+                });
+            }
+        }
         let bytes = self.file_bytes(None, path, version, 0)?;
         Ok(UnityAssetInfo::read(&bytes))
     }
+
+    /// The file on disk holding `path` at `version`, when there is one to read
+    /// in part: the work tree's copy (not a pointer), or the downloaded LFS object
+    /// the version's pointer names.
+    ///
+    /// # Errors
+    /// As [`Repo::file_at`].
+    pub(crate) fn local_file(
+        &self,
+        path: &str,
+        version: &Version,
+    ) -> Result<Option<PathBuf>, Error> {
+        if matches!(version, Version::Worktree)
+            && crate::worktree::worktree_has_non_pointer(self.root(), path)
+        {
+            return Ok(Some(self.root().join(path)));
+        }
+        let stored = self.file_at(path, version)?;
+        Ok(crate::lfs::parse_lfs_pointer(&stored)
+            .filter(|(oid, _)| crate::lfs::lfs_is_hydrated(self, oid))
+            .map(|(oid, _)| crate::lfs::lfs_object_path(self, &oid)))
+    }
 }
+
+/// How much of a file [`UnityAssetInfo::read`] looks at to tell text from binary.
+const HEAD: usize = 64 * 1024;
 
 /// What a Unity YAML-extension file holds, for picking its viewer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -78,7 +118,7 @@ pub struct UnityAssetInfo {
 
 impl UnityAssetInfo {
     pub(crate) fn read(bytes: &[u8]) -> Self {
-        let head = &bytes[..bytes.len().min(64 * 1024)];
+        let head = &bytes[..bytes.len().min(HEAD)];
         let text = String::from_utf8_lossy(head);
         let binary = head.contains(&0);
         let class_id = if binary {
@@ -198,6 +238,26 @@ fn remove_copies(dir: &Path) {
 mod tests {
     use super::*;
     use crate::testing::TestRepo;
+
+    #[test]
+    fn a_big_binary_asset_is_told_by_its_head_with_its_full_size() {
+        let repo = TestRepo::init();
+        let mut terrain = vec![0u8; 300_000];
+        terrain[100] = 7;
+        std::fs::write(repo.path().join("Island.asset"), &terrain).unwrap();
+        repo.write(
+            "Ship.prefab",
+            "%YAML 1.1\n--- !u!1 &1\nGameObject:\n--- !u!1 &2\nGameObject:\n",
+        )
+        .commit_all("assets");
+        let r = crate::repo::open(repo.path()).unwrap();
+        for version in [Version::Worktree, Version::Head] {
+            let info = r.unity_asset_info("Island.asset", &version).unwrap();
+            assert_eq!((info.binary, info.size), (true, 300_000), "{version:?}");
+            let prefab = r.unity_asset_info("Ship.prefab", &version).unwrap();
+            assert_eq!((prefab.binary, prefab.objects), (false, 2), "{version:?}");
+        }
+    }
 
     #[test]
     fn tells_text_from_binary_unity_files_and_reads_the_class() {
