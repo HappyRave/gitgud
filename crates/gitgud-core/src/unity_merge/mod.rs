@@ -109,6 +109,39 @@ fn parse(path: &str, base: &str, ours: &str, theirs: &str) -> Result<Parsed, Err
     })
 }
 
+/// A value typed into the table, as one YAML scalar Unity reads back as typed:
+/// single-quoted (as Unity writes) when it would otherwise read as something
+/// else (`Boss: Phase 2`, `#2`, `a, b` inside `{x: …}`). A value typed already
+/// quoted stays as it is; numbers like `-1.5` stay plain.
+fn yaml_scalar(typed: &str) -> String {
+    let quoted = |q: char| {
+        typed.len() >= 2
+            && typed.starts_with(q)
+            && typed.ends_with(q)
+            && !tree::still_open(&typed[1..], q, true)
+    };
+    if quoted('\'') || quoted('"') {
+        return typed.to_owned();
+    }
+    let indicator_then_space = |c: char| {
+        typed
+            .strip_prefix(c)
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with(' '))
+    };
+    let needs_quotes = typed.contains(": ")
+        || typed.contains(" #")
+        || typed.ends_with(':')
+        || typed.contains(['{', '}', '[', ']', ','])
+        || typed.starts_with(['#', '&', '*', '!', '|', '>', '\'', '"', '%', '@', '`'])
+        || ['-', '?', ':'].into_iter().any(indicator_then_space)
+        || typed != typed.trim();
+    if needs_quotes {
+        format!("'{}'", typed.replace('\'', "''"))
+    } else {
+        typed.to_owned()
+    }
+}
+
 fn run(p: &Parsed, picks: &HashMap<String, Decision>) -> (tree::File, Vec<RawRow>, usize) {
     let groups = objects::groups(&p.b, &p.o, &p.t);
     let mut engine = Engine::new(picks);
@@ -170,7 +203,7 @@ pub fn merge(
             (PickChoice::Yours, _) => Decision::Yours,
             (PickChoice::Theirs, _) => Decision::Theirs,
             (PickChoice::Custom, Some(v)) if row.editable && !v.contains('\n') => {
-                Decision::Custom(v.clone())
+                Decision::Custom(yaml_scalar(v))
             }
             (PickChoice::Custom, _) => {
                 return Err(Error::Refused(format!(

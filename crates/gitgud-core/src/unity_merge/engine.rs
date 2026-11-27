@@ -335,7 +335,8 @@ impl<'a> Engine<'a> {
             base: b.map(Val::summary),
             yours: o.map(Val::summary),
             theirs: t.map(Val::summary),
-            editable: single(o) && single(t),
+            // "(header)", "(type)", "(file header)": a document's frame, picked whole.
+            editable: single(o) && single(t) && !label.starts_with('('),
             yours_order: Vec::new(),
             theirs_order: Vec::new(),
             group: None,

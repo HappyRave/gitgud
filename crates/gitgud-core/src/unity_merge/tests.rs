@@ -140,6 +140,40 @@ fn a_clash_waits_for_a_pick_and_takes_it() {
 }
 
 #[test]
+fn a_typed_value_is_written_as_unity_reads_it() {
+    let ours = edit(SCENE, "m_Name: OldPier", "m_Name: Pier A");
+    let theirs = edit(SCENE, "m_Name: OldPier", "m_Name: Pier B");
+    let row = analyzed(SCENE, &ours, &theirs).rows.remove(0);
+    let typed = |value: &str| {
+        let custom = RowPick {
+            id: row.id.clone(),
+            choice: PickChoice::Custom,
+            value: Some(value.into()),
+        };
+        let text = merged(SCENE, &ours, &theirs, &[custom]).text;
+        let line = text
+            .lines()
+            .find(|l| l.contains("m_Name: ") && !l.contains("Lighthouse"));
+        line.unwrap().trim().to_owned()
+    };
+    assert_eq!(typed("Boss: Phase 2"), "m_Name: 'Boss: Phase 2'");
+    assert_eq!(typed("#2"), "m_Name: '#2'");
+    assert_eq!(typed("it's, here"), "m_Name: 'it''s, here'");
+    assert_eq!(typed("'already quoted'"), "m_Name: 'already quoted'");
+    assert_eq!(typed("-1.5"), "m_Name: -1.5");
+    assert_eq!(typed("Pier C"), "m_Name: Pier C");
+}
+
+#[test]
+fn a_documents_frame_is_not_editable() {
+    let ours = edit(SCENE, "--- !u!108 &202\nLight:", "--- !u!108 &202\nLightA:");
+    let theirs = edit(SCENE, "--- !u!108 &202\nLight:", "--- !u!108 &202\nLightB:");
+    let m = analyzed(SCENE, &ours, &theirs);
+    let row = m.rows.iter().find(|r| r.property == "(type)").unwrap();
+    assert!(!row.editable);
+}
+
+#[test]
 fn a_one_sided_change_can_be_turned_back() {
     let theirs = edit(SCENE, "m_Range: 24", "m_Range: 30");
     let m = analyzed(SCENE, SCENE, &theirs);
