@@ -136,12 +136,12 @@ pub fn offer(repo: &Repo, path: &str) -> Result<MergeOffer, Error> {
         Read::NeedsFetch(missing) => return Ok(MergeOffer::NeedsFetch { missing }),
         Read::Unavailable(reason) => return Ok(MergeOffer::Unavailable { reason }),
     };
-    match analyze(path, &v.base, &v.ours, &v.theirs, &repo_guid_index(repo)) {
-        Ok(m) => Ok(MergeOffer::Ready {
-            yours: m.yours,
-            theirs: m.theirs,
-            clashes: m.clashes,
-            objects: m.objects,
+    match super::counts(path, &v.base, &v.ours, &v.theirs) {
+        Ok((yours, theirs, clashes, objects)) => Ok(MergeOffer::Ready {
+            yours,
+            theirs,
+            clashes,
+            objects,
         }),
         Err(Error::Refused(reason)) => Ok(MergeOffer::Unavailable { reason }),
         Err(e) => Err(e),

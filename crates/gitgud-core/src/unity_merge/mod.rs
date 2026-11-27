@@ -18,8 +18,7 @@ use objects::{Group, GroupKind, ref_in};
 
 use crate::repo::Error;
 use crate::unity_yaml::{
-    GuidIndex, UnityIntegrityIssue, UnityScene, check_file_integrity, diff_unity_yaml,
-    format_value_display,
+    GuidIndex, UnityIntegrityIssue, UnityScene, check_file_integrity, format_value_display,
 };
 
 /// One change in a property merge (R9): a value, an object added or deleted, or a list order.
@@ -153,6 +152,28 @@ fn run(p: &Parsed, picks: &HashMap<String, Decision>) -> (tree::File, Vec<RawRow
 ///
 /// # Errors
 /// [`Error::Refused`] when a version isn't Unity YAML gitgud can write back exactly.
+/// The counts of [`analyze`] (yours, theirs, clashes, objects), without naming
+/// every row: the side picker's offer only shows these.
+///
+/// # Errors
+/// As [`analyze`].
+pub(crate) fn counts(
+    path: &str,
+    base: &str,
+    ours: &str,
+    theirs: &str,
+) -> Result<(usize, usize, usize, usize), Error> {
+    let parsed = parse(path, base, ours, theirs)?;
+    let (_, raw, _) = run(&parsed, &HashMap::new());
+    let count = |s: Source| raw.iter().filter(|r| r.source == s).count();
+    Ok((
+        count(Source::Yours),
+        count(Source::Theirs),
+        count(Source::Clash),
+        raw.iter().filter(|r| r.kind == RowKind::Object).count(),
+    ))
+}
+
 pub fn analyze(
     path: &str,
     base: &str,
@@ -227,9 +248,11 @@ pub fn merge(
 /// Turns the engine's ids and raw values into the names the table shows.
 struct Names<'a> {
     path: &'a str,
-    texts: [&'a str; 3],
     scenes: [UnityScene; 3],
     guids: &'a GuidIndex,
+    /// The structure diff of each side against the base, made once: every group
+    /// one side deleted while the other edited it reads it.
+    diffs: [std::cell::OnceCell<crate::unity_yaml::UnityYamlDiff>; 3],
 }
 
 #[derive(Clone, Copy)]
@@ -249,13 +272,13 @@ impl<'a> Names<'a> {
     ) -> Self {
         Self {
             path,
-            texts: [base, ours, theirs],
             scenes: [
                 UnityScene::parse(base),
                 UnityScene::parse(ours),
                 UnityScene::parse(theirs),
             ],
             guids,
+            diffs: Default::default(),
         }
     }
 
@@ -435,12 +458,14 @@ impl<'a> Names<'a> {
 
     /// What side `at` changed or added among a deleted object's docs.
     fn changes(&self, g: &Group, at: At) -> Vec<String> {
-        let diff = diff_unity_yaml(
-            self.path,
-            Some(self.texts[0]),
-            Some(self.texts[at as usize]),
-            self.guids,
-        );
+        let diff = self.diffs[at as usize].get_or_init(|| {
+            crate::unity_yaml::diff_scenes(
+                self.path,
+                Some(&self.scenes[0]),
+                Some(&self.scenes[at as usize]),
+                self.guids,
+            )
+        });
         let mut out = Vec::new();
         for obj in diff
             .objects

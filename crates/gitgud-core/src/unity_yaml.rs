@@ -319,19 +319,13 @@ pub struct UnityScene {
     pub game_object_names: HashMap<String, String>,
     pub transforms: HashMap<String, (Option<String>, Option<String>)>,
     pub go_to_transform: HashMap<String, String>,
-    pub raw_lines: Vec<String>,
-    pub line_ending: &'static str,
 }
 
 impl UnityScene {
     /// Parses multi-document Unity YAML text.
     #[must_use]
     pub fn parse(text: &str) -> Self {
-        let line_ending = if text.contains("\r\n") { "\r\n" } else { "\n" };
-        let raw_lines: Vec<String> = text
-            .lines()
-            .map(|l| l.trim_end_matches('\r').to_owned())
-            .collect();
+        let raw_lines: Vec<&str> = text.lines().map(|l| l.trim_end_matches('\r')).collect();
 
         let mut docs = BTreeMap::new();
         let mut ordered_ids = Vec::new();
@@ -383,8 +377,6 @@ impl UnityScene {
             game_object_names,
             transforms,
             go_to_transform,
-            raw_lines,
-            line_ending,
         }
     }
 
@@ -577,7 +569,16 @@ pub fn diff_unity_yaml(
     let a_scene = after
         .filter(|s| s.contains("--- !u!"))
         .map(UnityScene::parse);
+    diff_scenes(path, b_scene.as_ref(), a_scene.as_ref(), guids)
+}
 
+/// As [`diff_unity_yaml`], over scenes already parsed.
+pub(crate) fn diff_scenes(
+    path: &str,
+    b_scene: Option<&UnityScene>,
+    a_scene: Option<&UnityScene>,
+    guids: &GuidIndex,
+) -> UnityYamlDiff {
     let mut ids: Vec<String> = Vec::new();
     let mut seen = HashSet::new();
     if let Some(s) = &a_scene {
@@ -596,8 +597,8 @@ pub fn diff_unity_yaml(
     }
 
     let empty_scene = UnityScene::parse("");
-    let b_ref = b_scene.as_ref().unwrap_or(&empty_scene);
-    let a_ref = a_scene.as_ref().unwrap_or(&empty_scene);
+    let b_ref = b_scene.unwrap_or(&empty_scene);
+    let a_ref = a_scene.unwrap_or(&empty_scene);
 
     let mut added_objects = 0usize;
     let mut removed_objects = 0usize;
@@ -1058,7 +1059,7 @@ pub(crate) fn parse_doc_header(line: &str) -> Option<(u32, String, bool)> {
 }
 
 fn parse_single_doc(
-    lines: &[String],
+    lines: &[&str],
     start_line: usize,
     end_line: usize,
     class_id: u32,
@@ -1083,7 +1084,7 @@ fn parse_single_doc(
     let mut next = 1;
     while next < lines.len() {
         let line_idx = start_line + next;
-        let line = lines[next].as_str();
+        let line = lines[next];
         next += 1;
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
@@ -1310,7 +1311,7 @@ fn join_path(stack: &[(usize, String)]) -> String {
 /// deeper than `indent`, or up to the closing quote when `head` opens one (Unity
 /// wraps long strings and flow mappings). Folded as YAML does: a line break is a
 /// space, a blank line a newline.
-fn continued(lines: &[String], next: &mut usize, indent: usize, head: &str) -> String {
+fn continued(lines: &[&str], next: &mut usize, indent: usize, head: &str) -> String {
     if head.is_empty() {
         return String::new();
     }
@@ -1318,17 +1319,17 @@ fn continued(lines: &[String], next: &mut usize, indent: usize, head: &str) -> S
     let mut open = quote.is_some_and(|q| crate::unity_merge::tree::still_open(&head[1..], q, true));
     let mut value = head.to_owned();
     while *next < lines.len() {
-        let line = &lines[*next];
+        let line = lines[*next];
         let text = line.trim();
         if !open {
-            let deeper = |l: &String| l.len() - l.trim_start().len() > indent;
+            let deeper = |l: &&str| l.len() - l.trim_start().len() > indent;
             let goes_on = if text.is_empty() {
                 lines[*next..]
                     .iter()
                     .find(|l| !l.trim().is_empty())
                     .is_some_and(deeper)
             } else {
-                deeper(line)
+                deeper(&line)
             };
             if !goes_on {
                 break;
