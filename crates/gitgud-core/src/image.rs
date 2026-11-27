@@ -186,9 +186,6 @@ fn shrink_uncached(bytes: &[u8], max: u32) -> Option<Vec<u8>> {
     })
 }
 
-const LFS_HEADER_LF: &[u8] = b"version https://git-lfs.github.com/spec/v1\n";
-const LFS_HEADER_CRLF: &[u8] = b"version https://git-lfs.github.com/spec/v1\r\n";
-
 impl Repo {
     /// [`shrink_image`], kept in the repo's disk cache too, so 3D previews skip the
     /// work after a restart.
@@ -436,7 +433,7 @@ impl Repo {
         data: Vec<u8>,
         auto_fetch_max_bytes: u64,
     ) -> Result<Vec<u8>, Error> {
-        if !data.starts_with(LFS_HEADER_LF) && !data.starts_with(LFS_HEADER_CRLF) {
+        if !crate::lfs::has_lfs_header(&data) {
             return Ok(data);
         }
         let (oid, size) = parse_lfs_pointer(&data)

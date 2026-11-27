@@ -10,6 +10,14 @@ use crate::remote_url::HostKind;
 use crate::repo::{Error, Repo};
 
 const LFS_HEADER: &[u8] = b"version https://git-lfs.github.com/spec/v1\n";
+const LFS_HEADER_CRLF: &[u8] = b"version https://git-lfs.github.com/spec/v1\r\n";
+
+/// Whether `bytes` start like an LFS pointer file (LF or CRLF line ends): a
+/// cheap test before [`parse_lfs_pointer`].
+#[must_use]
+pub(crate) fn has_lfs_header(bytes: &[u8]) -> bool {
+    bytes.starts_with(LFS_HEADER) || bytes.starts_with(LFS_HEADER_CRLF)
+}
 
 /// Maximum LFS object size (25 MiB) auto-fetched on demand when previewed.
 pub const AUTO_FETCH_MAX_BYTES: u64 = 25 * 1024 * 1024;
@@ -62,18 +70,16 @@ struct RawLock {
 /// Returns true when `bytes` is a Git LFS pointer file.
 #[must_use]
 pub fn is_lfs_pointer(bytes: &[u8]) -> bool {
-    bytes.starts_with(LFS_HEADER) && bytes.windows(11).any(|w| w == b"oid sha256:")
+    has_lfs_header(bytes) && bytes.windows(11).any(|w| w == b"oid sha256:")
 }
 
 /// Parses a Git LFS pointer file into `(sha256_hex, size_bytes)`.
 #[must_use]
 pub fn parse_lfs_pointer(bytes: &[u8]) -> Option<(String, u64)> {
-    let text = std::str::from_utf8(bytes).ok()?;
-    if !text.starts_with("version https://git-lfs.github.com/spec/v1\n")
-        && !text.starts_with("version https://git-lfs.github.com/spec/v1\r\n")
-    {
+    if !has_lfs_header(bytes) {
         return None;
     }
+    let text = std::str::from_utf8(bytes).ok()?;
     let mut oid = None;
     let mut size = None;
     for line in text.lines() {
@@ -547,6 +553,11 @@ mod tests {
             ))
         );
         assert_eq!(parse_lfs_pointer(b"\x89PNG\r\n\x1a\n"), None);
+
+        // Pointers committed with CRLF line ends are pointers too.
+        let crlf = String::from_utf8_lossy(ptr).replace('\n', "\r\n");
+        assert!(is_lfs_pointer(crlf.as_bytes()));
+        assert_eq!(parse_lfs_pointer(crlf.as_bytes()), parse_lfs_pointer(ptr));
     }
 
     #[test]
