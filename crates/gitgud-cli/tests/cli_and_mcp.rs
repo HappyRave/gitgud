@@ -176,6 +176,57 @@ fn mcp_stdio_exposes_safe_tools_and_creates_proposals() {
 }
 
 #[test]
+fn mcp_answers_ping_while_a_proposal_wait_blocks() {
+    let repo = TestRepo::init();
+    repo.write("f.txt", "before\n").commit_all("initial");
+    repo.write("f.txt", "after\n");
+    let mut child = Command::new(bin())
+        .args(["--repo", repo.path().to_str().unwrap(), "mcp"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let mut reader = BufReader::new(child.stdout.take().unwrap());
+    let mut send = |req: Value| {
+        writeln!(stdin, "{req}").unwrap();
+        stdin.flush().unwrap();
+    };
+    let mut read = || {
+        let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+        serde_json::from_str::<Value>(&line).unwrap()
+    };
+
+    send(json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": { "name": "propose", "arguments": { "message": "m", "paths": ["f.txt"] } } }));
+    let id = read()["result"]["structuredContent"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    send(json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+        "params": { "name": "proposal_wait", "arguments": { "id": id, "timeoutSecs": 3 } } }));
+    send(json!({ "jsonrpc": "2.0", "id": 3, "method": "ping" }));
+    send(json!({ "jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {} }));
+    send(json!({ "jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": { "name": "log" } }));
+
+    let first = read();
+    assert_eq!(first["id"], 3, "ping first: {first}");
+    let rest: Vec<Value> = (0..3).map(|_| read()).collect();
+    let by_id = |id: i64| rest.iter().find(|v| v["id"] == id).unwrap();
+    assert_eq!(by_id(4)["error"]["code"], -32602, "no tool name");
+    assert!(
+        by_id(5)["result"]["structuredContent"].is_array(),
+        "log answered"
+    );
+    assert_eq!(rest[2]["id"], 2, "the wait answers last");
+    assert_eq!(by_id(2)["result"]["structuredContent"]["timedOut"], true);
+
+    drop(stdin);
+    let _ = child.wait();
+}
+
+#[test]
 fn cli_proposal_wait_and_agent_stop_hook() {
     let repo = TestRepo::init();
     repo.write("a.txt", "v1\n").commit_all("initial");
