@@ -218,6 +218,25 @@ fn session_fetch_refreshes_and_one_runs_at_a_time() {
 }
 
 #[test]
+fn a_background_fetch_shows_new_commits_and_keeps_the_repos_caches() {
+    let (local, _origin, other) = with_origin(2);
+    other.write("x.txt", "x\n").commit_all("remote work");
+    other.git(&["push", "-q", "origin", "main"]);
+    let session = Session::default();
+    let id = session.open(local.path()).unwrap().id;
+    let before = session.get(id).unwrap().repo;
+
+    assert!(session.background_refresh(id, 0).unwrap());
+
+    let open = session.get(id).unwrap();
+    assert!(std::sync::Arc::ptr_eq(&before, &open.repo), "caches kept");
+    let rows = open.graph.rows(&open.repo, 0, 10).unwrap();
+    assert!(rows[0].labels.contains(&RefLabel::Remote {
+        name: "origin/main".into()
+    }));
+}
+
+#[test]
 fn a_fetch_you_start_stops_a_hanging_background_fetch() {
     let local = TestRepo::init();
     local.write("a.txt", "a").commit_all("a");

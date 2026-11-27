@@ -1455,7 +1455,8 @@ impl Session {
             .run_background_cancellable(open.repo.root(), &["fetch", "--all", "--prune"], &cancel)
             .is_ok();
         if ok {
-            self.refresh_inner(id, true)?;
+            // As after a fetch you start: the repo and its caches stay.
+            self.refresh(id)?;
         }
         Ok(ok)
     }
