@@ -529,13 +529,17 @@ impl Session {
         let git = &self.git()?;
         let prediction = open.repo.predict_plan(git, onto, base, steps)?;
         let ghosts = open.repo.plan_ghosts(steps, &prediction)?;
+        // In-process: the plan editor asks again on every edit, one rev per step.
+        let gix = open.repo.gix();
         let oid = |rev: &str| -> Result<gix::ObjectId, Error> {
-            let hex = git.run(
-                open.repo.root(),
-                &["rev-parse", "--verify", &format!("{rev}^{{commit}}")],
-                None,
-            )?;
-            gix::ObjectId::from_hex(hex.trim().as_bytes()).map_err(repo::read_err)
+            Ok(gix
+                .rev_parse_single(rev)
+                .map_err(repo::read_err)?
+                .object()
+                .map_err(repo::read_err)?
+                .peel_to_commit()
+                .map_err(repo::read_err)?
+                .id)
         };
         let replaced = steps
             .iter()
