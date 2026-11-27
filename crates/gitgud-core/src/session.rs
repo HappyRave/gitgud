@@ -1001,14 +1001,7 @@ impl Session {
     ) -> Result<PullResult, Error> {
         let open = self.get(id)?;
         let git = &self.git()?;
-        if open.repo.merge_state(git)?.is_some()
-            || open.repo.rebase_state(git)?.is_some()
-            || open.repo.sequencer_head()?.is_some()
-        {
-            return Err(Error::Refused(
-                "finish or abort the operation in progress first".into(),
-            ));
-        }
+        open.repo.ensure_idle()?;
         let target = open.repo.pull_target()?;
         self.run_task(id, |cancel| {
             open.repo
@@ -1022,85 +1015,76 @@ impl Session {
             PullStrategy::Auto => open.repo.configured_pull_strategy(git)?,
             other => other,
         };
-        let (ahead, behind) = match open.repo.upstream_counts(&target.upstream_full) {
-            Ok(counts) => counts,
+        // The fetch moved remote refs whatever happens next: the view follows either way.
+        match self.integrate(id, &open.repo, git, &target, effective) {
+            Ok(outcome) => Ok(PullResult {
+                opened: self.refresh(id)?,
+                outcome,
+            }),
             Err(e) => {
                 let _ = self.refresh(id);
-                return Err(e);
+                Err(e)
+            }
+        }
+    }
+
+    /// Brings the fetched upstream of `target` into the current branch with
+    /// `strategy` (fast-forward when it can), as one undoable write.
+    fn integrate(
+        &self,
+        id: u32,
+        repo: &Repo,
+        git: &GitCli,
+        target: &crate::remote::PullTarget,
+        strategy: PullStrategy,
+    ) -> Result<PullOutcome, Error> {
+        let upstream = target.upstream_short.as_str();
+        let (ahead, behind) = repo.upstream_counts(&target.upstream_full)?;
+        if behind == 0 {
+            return Ok(PullOutcome::UpToDate);
+        }
+        if strategy == PullStrategy::FfOnly && ahead > 0 {
+            return Ok(PullOutcome::Diverged {
+                ahead,
+                behind,
+                upstream: upstream.to_owned(),
+            });
+        }
+        if ahead == 0 || strategy == PullStrategy::FfOnly {
+            let paths = repo.merge_paths(git, upstream)?;
+            self.write_destructive(id, &format!("Pull {upstream}"), &paths, |r, g| {
+                r.fast_forward(g, upstream)
+            })?;
+            return Ok(PullOutcome::FastForwarded);
+        }
+        let rebase = match strategy {
+            PullStrategy::Rebase => true,
+            PullStrategy::Merge => false,
+            other => {
+                return Err(Error::Read(format!(
+                    "pull strategy {other:?} wasn't resolved"
+                )));
             }
         };
-        if behind == 0 {
-            return Ok(PullResult {
-                opened: self.refresh(id)?,
-                outcome: PullOutcome::UpToDate,
-            });
-        }
-        if effective == PullStrategy::FfOnly && ahead > 0 {
-            return Ok(PullResult {
-                opened: self.refresh(id)?,
-                outcome: PullOutcome::Diverged {
-                    ahead,
-                    behind,
-                    upstream: target.upstream_short,
-                },
-            });
-        }
-        if ahead == 0 || effective == PullStrategy::FfOnly {
-            let paths = open.repo.merge_paths(git, &target.upstream_short)?;
-            let action = format!("Pull {}", target.upstream_short);
-            let opened = match self.write_destructive(id, &action, &paths, |repo, git| {
-                repo.fast_forward(git, &target.upstream_short)
-            }) {
-                Ok(o) => o,
-                Err(e) => {
-                    let _ = self.refresh(id);
-                    return Err(e);
-                }
+        let (paths, verb) = if rebase {
+            (repo.rebase_paths(git, upstream)?, "rebase")
+        } else {
+            (repo.merge_paths(git, upstream)?, "merge")
+        };
+        let mut stopped = false;
+        self.write_destructive(id, &format!("Pull ({verb}) {upstream}"), &paths, |r, g| {
+            stopped = if rebase {
+                r.rebase(g, upstream)? == RebaseOutcome::Stopped
+            } else {
+                r.merge(g, upstream)? == MergeOutcome::Conflicts
             };
-            return Ok(PullResult {
-                opened,
-                outcome: PullOutcome::FastForwarded,
-            });
-        }
-        match effective {
-            PullStrategy::Merge => {
-                let paths = open.repo.merge_paths(git, &target.upstream_short)?;
-                let action = format!("Pull (merge) {}", target.upstream_short);
-                let mut outcome = PullOutcome::Merged;
-                let opened = match self.write_destructive(id, &action, &paths, |repo, git| {
-                    if repo.merge(git, &target.upstream_short)? == MergeOutcome::Conflicts {
-                        outcome = PullOutcome::Conflicts;
-                    }
-                    Ok(())
-                }) {
-                    Ok(o) => o,
-                    Err(e) => {
-                        let _ = self.refresh(id);
-                        return Err(e);
-                    }
-                };
-                Ok(PullResult { opened, outcome })
-            }
-            PullStrategy::Rebase => {
-                let paths = open.repo.rebase_paths(git, &target.upstream_short)?;
-                let action = format!("Pull (rebase) {}", target.upstream_short);
-                let mut outcome = PullOutcome::Rebased;
-                let opened = match self.write_destructive(id, &action, &paths, |repo, git| {
-                    if repo.rebase(git, &target.upstream_short)? == RebaseOutcome::Stopped {
-                        outcome = PullOutcome::Conflicts;
-                    }
-                    Ok(())
-                }) {
-                    Ok(o) => o,
-                    Err(e) => {
-                        let _ = self.refresh(id);
-                        return Err(e);
-                    }
-                };
-                Ok(PullResult { opened, outcome })
-            }
-            PullStrategy::Auto | PullStrategy::FfOnly => unreachable!(),
-        }
+            Ok(())
+        })?;
+        Ok(match (stopped, rebase) {
+            (true, _) => PullOutcome::Conflicts,
+            (false, true) => PullOutcome::Rebased,
+            (false, false) => PullOutcome::Merged,
+        })
     }
 
     /// Pushes `branch` to `remote`'s `remote_branch`, reporting progress.
