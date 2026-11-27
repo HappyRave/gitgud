@@ -115,7 +115,8 @@ replaying at most 255 rows (spike 4.3).
   `snapshot::Snapshots` records the whole work tree (tracked + untracked, not ignored) before and
   after, via a persistent snapshot index and `add -A` / `write-tree`, chained under the private ref
   `refs/gitgud/snapshots` so `git gc` keeps them. Undo restores only the action's `paths`, and
-  refuses if those files changed since. Snapshot pruning with the op log's retention isn't built.
+  refuses if those files changed since (checked with `hash-object` on just those paths, no new
+  snapshot). Pruned entries' snapshots are unlinked by `Snapshots::sync_kept` (`OpLog::prune_now`).
 - **Working copy** (`worktree.rs`): diffs per side (staged: HEAD → index; unstaged: index → work
   tree after git's to-git filters, so autocrlf files diff like `git diff`). Both hunks and individual
   clicked/Shift+clicked lines stage, unstage, and undoably discard through `git apply --cached` /
@@ -142,7 +143,8 @@ replaying at most 255 rows (spike 4.3).
   checkout/merge/rebase touching `Assets/`), Hub `UnityYAMLMerge.exe`, Smart Merge setup in local
   `.git/config` + `.git/info/attributes` (never `.gitattributes`), v1.0 per-property verification in
   `merge.json` gating `merge_commit`, `.meta` auto-pairing (`Session::{stage,unstage,discard}`) +
-  non-blocking `.meta` warnings, Git LFS locks (disabled on Bitbucket Cloud per O1) + unlock-on-push
+  non-blocking `.meta` warnings, Git LFS locks (disabled on Bitbucket Cloud per O1; yours as the
+  server says with `git lfs locks --verify`, by `user.name` where it can't) + unlock-on-push
   + inline unlock suggestion (`WorkingCopy.svelte`), quiet non-interactive 10-min `background_refresh`
   (`cli::GitCli::run_background`), pure-Rust multi-document Unity YAML structural diff (`UnityDiffView.svelte`)
   and GUID/`fileID` resolution (`GuidIndex`), post-merge duplicate-`fileID` / broken-reference check, and
@@ -395,7 +397,8 @@ replaying at most 255 rows (spike 4.3).
   (`Repo::shrink_texture`), and model files' meshes as the viewer's workers parsed them
   (`geometryCache.ts` / `packedBytes.ts`, protocol `/geometry?key=<kind>|<content key>|<PARSER_VERSION>`:
   a GET hit skips the fetch and the parse; fresh parses are POSTed back only once the worker pool
-  has been idle 1 s, since the protocol serves one request at a time); Settings › Caches › 3D
+  has been idle 1 s, since the protocol answers at most one request per core at once, and a panic
+  in a reader answers 500); Settings › Caches › 3D
   previews shows and clears it. Reopening a repo
   that is already open (a reloaded window) shares its `Repo` and caches (`Session::reuse_or_open`)
   unless its config changed. `Repo::inline_mesh` indexes each scene version's Mesh documents
@@ -436,6 +439,8 @@ replaying at most 255 rows (spike 4.3).
   ghost rows (`Graph.svelte` / `topology.rs`), 3-way replay onto moved `HEAD`, and `approve` (undoable;
   refused while other changes are staged) / `request_changes` / `reject` in `ProposalView.svelte`.
   Only pending proposals can be withdrawn or rejected; ids are checked before they become file names.
+  The MCP server opens the repo once and runs each tool call on its own thread, so a long
+  `proposal_wait` doesn't hold up `ping` or other calls.
 
 ## Commands
 
